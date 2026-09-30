@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, Folder, FolderOpen, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PanelRight, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import { ArrowLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import type { FileContent, FileEntry, Project, Thread, ToolResult } from '../../shared/schema'
+import type { OpenTarget } from './Markdown'
 import { api, isDesktop } from './bridge'
 import { useI18n } from './i18n'
+
+export type OpenRequest = { target: OpenTarget; nonce: number }
 
 export type PanelView = 'files' | 'terminal' | 'browser' | 'summary' | 'changes'
 
@@ -18,16 +21,25 @@ interface RightPanelProps {
   thread: Thread | null
   project: Project | null
   detached?: boolean
-  onCollapse?: () => void
   onDetach?: () => void
   onError: (message: string) => void
   onAddToChat?: (text: string) => void
+  openRequest?: OpenRequest | null
+  contextWindow?: number
 }
 
-export function RightPanel({ thread, project, detached, onCollapse, onDetach, onError, onAddToChat }: RightPanelProps) {
+export function RightPanel({ thread, project, detached, onDetach, onError, onAddToChat, openRequest, contextWindow }: RightPanelProps) {
   const { tr } = useI18n()
   const [view, setView] = useState<PanelView>('summary')
   const index = panelViews.findIndex((item) => item.id === view)
+
+  useEffect(() => {
+    if (!openRequest) return
+    setView(openRequest.target.kind === 'url' ? 'browser' : 'files')
+  }, [openRequest])
+
+  const fileRequest = openRequest && openRequest.target.kind !== 'url' ? openRequest : null
+  const urlRequest = openRequest && openRequest.target.kind === 'url' ? openRequest : null
 
   return (
     <aside className={`right-panel${detached ? ' detached' : ''}`} aria-label={tr('任务面板')}>
@@ -41,17 +53,16 @@ export function RightPanel({ thread, project, detached, onCollapse, onDetach, on
           ))}
         </div>
         <div className="right-panel-actions">
-          {!detached && onDetach && isDesktop && <button className="icon-button" aria-label={tr('拖出为独立窗口')} title={tr('拖出为独立置顶窗口')} onClick={onDetach}><PictureInPicture2 size={15} /></button>}
-          {!detached && onCollapse && <button className="icon-button" aria-label={tr('收起右栏')} title={tr('收起右栏')} onClick={onCollapse}><PanelRight size={15} /></button>}
+          {!detached && onDetach && isDesktop && <button className="icon-button" aria-label={tr('弹出为独立窗口')} title={tr('弹出为独立置顶窗口')} onClick={onDetach}><PictureInPicture2 size={15} /></button>}
         </div>
       </div>
       <div className="right-panel-body" role="tabpanel">
-        {view === 'files' && <FilesView project={project} onError={onError} />}
+        {view === 'files' && <FilesView project={project} onError={onError} openRequest={fileRequest} />}
         {view === 'terminal' && <TerminalView project={project} onError={onError} />}
-        {view === 'browser' && <BrowserView onAddToChat={onAddToChat} />}
+        {view === 'browser' && <BrowserView onAddToChat={onAddToChat} openRequest={urlRequest} />}
         {view === 'summary' && (
           <div className="panel-summary-wrap">
-            {thread ? <SummaryView thread={thread} project={project} /> : <PanelEmpty icon={ListChecks} text={tr('选择或新建任务后显示任务摘要')} />}
+            {thread ? <SummaryView thread={thread} project={project} contextWindow={contextWindow} onError={onError} /> : <PanelEmpty icon={ListChecks} text={tr('选择或新建任务后显示任务摘要')} />}
           </div>
         )}
         {view === 'changes' && (thread ? <ChangesView thread={thread} /> : <PanelEmpty icon={FileCode2} text={tr('选择或新建任务后显示文件变更')} />)}
@@ -60,7 +71,19 @@ export function RightPanel({ thread, project, detached, onCollapse, onDetach, on
   )
 }
 
-function FilesView({ project, onError }: { project: Project | null; onError: (message: string) => void }) {
+function normalizeRel(project: Project | null, raw: string): string {
+  let value = raw.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  if (project) {
+    const root = project.path.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (value.toLowerCase().startsWith(root.toLowerCase())) value = value.slice(root.length)
+    const name = root.split('/').pop() ?? ''
+    if (name && value.toLowerCase().startsWith(name.toLowerCase() + '/')) value = value.slice(name.length)
+  }
+  value = value.replace(/^\.?\//, '').replace(/^\/+/, '')
+  return value
+}
+
+function FilesView({ project, onError, openRequest }: { project: Project | null; onError: (message: string) => void; openRequest?: OpenRequest | null }) {
   const { tr } = useI18n()
   const [path, setPath] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
@@ -78,7 +101,23 @@ function FilesView({ project, onError }: { project: Project | null; onError: (me
     setFile(null)
   }, [project, onError])
 
+  const openFile = useCallback(async (rel: string) => {
+    if (!project || !isDesktop) return
+    setLoading(true)
+    const result = await api.readProjectFile({ projectId: project.id, path: rel })
+    setLoading(false)
+    if (!result.ok) { onError(result.error); return }
+    setFile(result.data)
+  }, [project, onError])
+
   useEffect(() => { void load('') }, [load])
+
+  useEffect(() => {
+    if (!openRequest || !project) return
+    const rel = normalizeRel(project, openRequest.target.value)
+    if (openRequest.target.kind === 'folder') void load(rel)
+    else void openFile(rel)
+  }, [openRequest, project, load, openFile])
 
   const open = async (entry: FileEntry) => {
     if (!project) return
@@ -190,12 +229,15 @@ interface ConsoleLog { id: number; level: 'log' | 'info' | 'warning' | 'error'; 
 
 const consoleLevelName: Record<number, ConsoleLog['level']> = { 0: 'log', 1: 'warning', 2: 'error' }
 
-function BrowserView({ onAddToChat }: { onAddToChat?: (text: string) => void }) {
+function BrowserView({ onAddToChat, openRequest }: { onAddToChat?: (text: string) => void; openRequest?: OpenRequest | null }) {
   const { tr } = useI18n()
   const [url, setUrl] = useState('http://localhost:3000')
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null)
   const [logs, setLogs] = useState<ConsoleLog[]>([])
   const [onlyErrors, setOnlyErrors] = useState(false)
+  const [consoleOpen, setConsoleOpen] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const seq = useRef(0)
   const logsRef = useRef<HTMLDivElement>(null)
@@ -205,8 +247,25 @@ function BrowserView({ onAddToChat }: { onAddToChat?: (text: string) => void }) 
   const open = () => {
     const target = normalize(url)
     setLogs([])
+    setLoadError(null)
     setLoadedUrl(target)
   }
+
+  const reload = () => {
+    const node = webviewRef.current
+    setLoadError(null)
+    if (node && loadedUrl) { setLoading(true); node.reload() }
+    else open()
+  }
+
+  useEffect(() => {
+    if (!openRequest) return
+    const target = normalize(openRequest.target.value)
+    setUrl(target)
+    setLogs([])
+    setLoadError(null)
+    setLoadedUrl(target)
+  }, [openRequest, normalize])
 
   useEffect(() => {
     if (!isDesktop) return
@@ -216,9 +275,24 @@ function BrowserView({ onAddToChat }: { onAddToChat?: (text: string) => void }) 
       const level = consoleLevelName[event.level as number] ?? 'log'
       setLogs((current) => [...current.slice(-199), { id: ++seq.current, level, message: event.message, source: event.sourceId, line: event.line }])
     }
+    const onStart = () => { setLoading(true); setLoadError(null) }
+    const onStop = () => setLoading(false)
+    const onFail = (event: Electron.DidFailLoadEvent) => {
+      setLoading(false)
+      if (event.errorCode === -3 || !event.validatedURL) return
+      setLoadError(tr('页面加载失败（{code}）：{desc}', { code: event.errorCode, desc: event.errorDescription || tr('无法访问该地址') }))
+    }
     node.addEventListener('console-message', onConsole as EventListener)
-    return () => { node.removeEventListener('console-message', onConsole as EventListener) }
-  }, [loadedUrl])
+    node.addEventListener('did-start-loading', onStart as EventListener)
+    node.addEventListener('did-stop-loading', onStop as EventListener)
+    node.addEventListener('did-fail-load', onFail as EventListener)
+    return () => {
+      node.removeEventListener('console-message', onConsole as EventListener)
+      node.removeEventListener('did-start-loading', onStart as EventListener)
+      node.removeEventListener('did-stop-loading', onStop as EventListener)
+      node.removeEventListener('did-fail-load', onFail as EventListener)
+    }
+  }, [loadedUrl, tr])
 
   useEffect(() => {
     const node = logsRef.current
@@ -262,42 +336,78 @@ function BrowserView({ onAddToChat }: { onAddToChat?: (text: string) => void }) 
       <form className="browser-bar" onSubmit={(event) => { event.preventDefault(); open() }}>
         <Globe size={14} />
         <input value={url} onChange={(event) => setUrl(event.target.value)} placeholder={tr('输入网址后回车加载')} aria-label={tr('网址')} spellCheck={false} />
-        <button type="submit" className="icon-button" aria-label={tr('加载页面')} title={tr('加载页面')}><RotateCw size={13} /></button>
+        <button type="button" className="icon-button" aria-label={tr('重新加载')} title={tr('重新加载')} onClick={reload}><RotateCw size={13} className={loading ? 'spin' : undefined} /></button>
         <button type="button" className="icon-button" aria-label={tr('在系统浏览器打开')} title={tr('在系统浏览器打开')} onClick={() => void api.openExternal({ url: normalize(url) })}><ExternalLink size={14} /></button>
       </form>
       <div className="browser-frame">
         {loadedUrl
-          ? <webview ref={webviewRef as never} src={loadedUrl} className="browser-webview" partition="persist:cubex-preview" />
+          ? <webview ref={webviewRef as never} src={loadedUrl} className="browser-webview" partition="persist:cubex-preview" allowpopups={'true' as never} />
           : <PanelEmpty icon={Globe} text={tr('输入本地预览地址（如 http://localhost:3000）后回车，页面控制台日志会显示在下方，可一键添加到对话让 AI 修复。')} />}
-      </div>
-      <div className="browser-console">
-        <div className="browser-console-head">
-          <span className="console-title"><Terminal size={13} />{tr('控制台')}<span className="panel-meta">{logs.length}</span>{errorCount > 0 && <span className="console-error-count"><TriangleAlert size={12} />{errorCount}</span>}</span>
-          <div className="console-actions">
-            <button className={`console-filter${onlyErrors ? ' active' : ''}`} onClick={() => setOnlyErrors((value) => !value)} title={tr('只看报错')}>{tr('只看报错')}</button>
-            <button className="icon-button" aria-label={tr('清空日志')} title={tr('清空日志')} disabled={logs.length === 0} onClick={() => setLogs([])}><Trash2 size={13} /></button>
-            <button className="console-add-all" disabled={errorCount === 0} onClick={addAllErrors} title={tr('把所有报错添加到对话')}><MessageSquarePlus size={13} />{tr('添加全部报错')}</button>
+        {loadError && (
+          <div className="browser-error">
+            <TriangleAlert size={20} />
+            <p>{loadError}</p>
+            <button className="btn-secondary" onClick={reload}><RotateCw size={13} />{tr('重试')}</button>
           </div>
-        </div>
-        <div className="browser-console-body" ref={logsRef}>
-          {shown.length === 0 ? <div className="panel-note">{loadedUrl ? tr('暂无日志') : tr('加载页面后，控制台日志会显示在这里。')}</div> : shown.map((log) => (
-            <div key={log.id} className={`console-line ${log.level}`}>
-              <span className="console-msg">{log.message}</span>
-              {log.source && <span className="console-src">{log.source}{log.line ? `:${log.line}` : ''}</span>}
-              <button className="icon-button console-add" aria-label={tr('添加到对话')} title={tr('添加到对话')} onClick={() => addOne(log)}><MessageSquarePlus size={12} /></button>
+        )}
+      </div>
+      <div className={`browser-console${consoleOpen ? '' : ' collapsed'}`}>
+        <div className="browser-console-head">
+          <button className="console-toggle" onClick={() => setConsoleOpen((value) => !value)} aria-expanded={consoleOpen} title={consoleOpen ? tr('隐藏控制台') : tr('显示控制台')}>
+            <ChevronRight size={13} className={consoleOpen ? 'rot90' : undefined} />
+            <span className="console-title"><Terminal size={13} />{tr('控制台')}<span className="panel-meta">{logs.length}</span>{errorCount > 0 && <span className="console-error-count"><TriangleAlert size={12} />{errorCount}</span>}</span>
+          </button>
+          {consoleOpen && (
+            <div className="console-actions">
+              <button className={`console-filter${onlyErrors ? ' active' : ''}`} onClick={() => setOnlyErrors((value) => !value)} title={tr('只看报错')}>{tr('只看报错')}</button>
+              <button className="icon-button" aria-label={tr('清空日志')} title={tr('清空日志')} disabled={logs.length === 0} onClick={() => setLogs([])}><Trash2 size={13} /></button>
+              <button className="console-add-all" disabled={errorCount === 0} onClick={addAllErrors} title={tr('把所有报错添加到对话')}><MessageSquarePlus size={13} />{tr('添加全部报错')}</button>
             </div>
-          ))}
+          )}
         </div>
+        {consoleOpen && (
+          <div className="browser-console-body" ref={logsRef}>
+            {shown.length === 0 ? <div className="panel-note">{loadedUrl ? tr('暂无日志') : tr('加载页面后，控制台日志会显示在这里。')}</div> : shown.map((log) => (
+              <div key={log.id} className={`console-line ${log.level}`}>
+                <span className="console-msg">{log.message}</span>
+                {log.source && <span className="console-src">{log.source}{log.line ? `:${log.line}` : ''}</span>}
+                <button className="icon-button console-add" aria-label={tr('添加到对话')} title={tr('添加到对话')} onClick={() => addOne(log)}><MessageSquarePlus size={12} /></button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function SummaryView({ thread, project }: { thread: Thread; project: Project | null }) {
+function SummaryView({ thread, project, contextWindow, onError }: { thread: Thread; project: Project | null; contextWindow?: number; onError: (message: string) => void }) {
   const { tr } = useI18n()
   const summary = useMemo(() => summarize(thread), [thread])
   const [plugins, setPlugins] = useState<string[]>([])
   const [mcp, setMcp] = useState<string[]>([])
+  const [compacting, setCompacting] = useState(false)
+
+  const window = contextWindow && contextWindow > 0 ? contextWindow : 128_000
+  const usedTokens = useMemo(() => {
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      const message = thread.messages[i]
+      if (message.role === 'assistant' && message.usage) return message.usage.input + message.usage.output
+    }
+    return 0
+  }, [thread.messages])
+  const ratio = Math.min(1, usedTokens / window)
+  const percent = Math.round(ratio * 100)
+  const canCompact = ratio >= 0.7 && thread.status === 'idle'
+
+  const compact = async () => {
+    if (!canCompact || compacting) return
+    setCompacting(true)
+    try {
+      const result = await api.compactThread({ threadId: thread.id })
+      if (!result.ok) onError(result.error)
+    } catch { onError(tr('压缩上下文失败，请重试。')) } finally { setCompacting(false) }
+  }
   useEffect(() => {
     let cancelled = false
     void api.listPlugins().then((result) => {
@@ -315,6 +425,18 @@ function SummaryView({ thread, project }: { thread: Thread; project: Project | n
   const todoDone = todos.filter((item) => item.status === 'done').length
   return (
     <div className="panel-summary">
+      <section className="summary-card context-card">
+        <header><Gauge size={14} />{tr('上下文用量')}<span className="panel-meta">{percent}%</span></header>
+        <div className={`context-bar${ratio >= 0.9 ? ' danger' : ratio >= 0.7 ? ' warn' : ''}`} role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+          <span className="context-bar-fill" style={{ width: `${percent}%` }} />
+        </div>
+        <div className="context-meta">
+          <span>{usedTokens > 0 ? tr('约 {used} / {total} tokens', { used: usedTokens.toLocaleString(), total: window.toLocaleString() }) : tr('发送一轮对话后显示用量')}</span>
+          <button type="button" className="context-compact" disabled={!canCompact || compacting} onClick={() => void compact()} title={canCompact ? tr('移除较早的消息以释放上下文') : tr('上下文使用超过 70% 后可压缩')}>
+            {compacting ? <LoaderCircle size={12} className="spin" /> : <FoldVertical size={12} />}{tr('压缩上下文')}
+          </button>
+        </div>
+      </section>
       {todos.length > 0 && (
         <section className="summary-card todo-card">
           <header><ListChecks size={14} />{tr('任务待办')}<span className="panel-meta">{todoDone}/{todos.length}</span></header>
@@ -330,16 +452,6 @@ function SummaryView({ thread, project }: { thread: Thread; project: Project | n
           {done && todoDone === todos.length && <div className="summary-done"><CircleCheck size={14} />{tr('全部待办已完成')}</div>}
         </section>
       )}
-      <section className="summary-card">
-        <header><ListChecks size={14} />{tr('回复清单')}</header>
-        {summary.todos.length === 0 ? <p className="panel-note">{tr('回复正文中出现的清单会显示在这里。')}</p> : (
-          <ul className="todo-list">
-            {summary.todos.map((item, i) => <li key={i} className={item.done ? 'done' : ''}>{item.done ? <CircleCheck size={14} /> : <CircleDashed size={14} />}<span>{item.text}</span></li>)}
-          </ul>
-        )}
-        {done && <div className="summary-done"><CircleCheck size={14} />{tr('本轮回复已完成')}</div>}
-        {thread.status === 'running' && <div className="summary-running"><LoaderCircle size={13} className="spin" />{tr('正在处理…')}</div>}
-      </section>
       <section className="summary-group">
         <header><Globe size={13} />{tr('联网搜索')}<span className="panel-meta">{summary.searches.length}</span></header>
         {summary.searches.length === 0 ? <p className="panel-note">{tr('联网搜索到的网页会显示在这里。可在设置 → 插件中开启联网搜索。')}</p> : (

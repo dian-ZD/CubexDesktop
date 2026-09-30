@@ -60,7 +60,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback<UiApi['toast']>((text, kind = 'info') => {
     const id = ++seq.current
-    setToasts((current) => [...current.slice(-3), { id, kind, text }])
+    setToasts((current) => {
+      if (current.some((item) => item.text === text && item.kind === kind)) return current
+      return [...current.slice(-3), { id, kind, text }]
+    })
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), kind === 'error' ? 6000 : 3200)
   }, [])
 

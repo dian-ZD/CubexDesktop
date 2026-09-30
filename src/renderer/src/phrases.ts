@@ -53,8 +53,26 @@ const phrases: Record<string, string> = {
   '{n} 个工具': '{n} tool(s)',
   '任务待办': 'Task to-dos',
   '全部待办已完成': 'All to-dos completed',
-  '回复清单': 'Reply checklist',
-  '回复正文中出现的清单会显示在这里。': 'Checklists found in the reply appear here.',
+  '待办': 'To-dos',
+  '回复正文中出现的待办会显示在这里。': 'To-dos found in the reply appear here.',
+  '上下文用量': 'Context usage',
+  '约 {used} / {total} tokens': '~{used} / {total} tokens',
+  '发送一轮对话后显示用量': 'Usage shows after a reply',
+  '压缩上下文': 'Compact context',
+  '移除较早的消息以释放上下文': 'Remove older messages to free up context',
+  '上下文使用超过 70% 后可压缩': 'Available once context usage exceeds 70%',
+  '压缩上下文失败，请重试。': 'Failed to compact context, please try again.',
+  '弹出为独立窗口': 'Pop out to a separate window',
+  '弹出为独立置顶窗口': 'Pop out to an always-on-top window',
+  '重新加载': 'Reload',
+  '重试': 'Retry',
+  '无法访问该地址': 'Unable to reach this address',
+  '页面加载失败（{code}）：{desc}': 'Page failed to load ({code}): {desc}',
+  '隐藏控制台': 'Hide console',
+  '显示控制台': 'Show console',
+  '回到中心': 'Recenter',
+  '回到画布中心（第一个模块处）': 'Back to canvas center (first module)',
+  '完整的接口列表、Work 模式模块扩展与 MCP 说明见项目根目录的 plugins.md 开发文档。': 'See plugins.md in the project root for the full interface list, Work-mode module extension, and MCP notes.',
   '本轮回复已完成': 'This reply is complete',
   '正在处理…': 'Working…',
   '联网搜索': 'Web search',
@@ -813,10 +831,29 @@ const settingsPhrases2: Record<string, string> = {
   '复制代码': 'Copy code',
 }
 
+const skillPhrases: Record<string, string> = {
+  '技能': 'Skills',
+  '内置': 'Built-in',
+  '↑↓ 选择 · Enter 确认 · Esc 取消': '↑↓ to move · Enter to confirm · Esc to cancel',
+  '未找到匹配的技能，可在设置中导入': 'No matching skill found — import one in Settings',
+  '（输入 / 调用技能）': ' (type / to use a skill)',
+  '上传技能文件，用 / 名称在对话中快速调用': 'Upload skill files and call them with / name in chat',
+  '上传 Markdown / 文本技能文件，在对话输入框用 / 名称即可调用其内容': 'Upload Markdown / text skill files, then type / name in the composer to insert them',
+  '打开技能目录': 'Open skills folder',
+  '导入技能': 'Import skills',
+  '支持 .md / .markdown / .txt；可用 YAML 头（name、description）自定义名称与说明。在对话输入框输入 / 加名称即可调用。': 'Supports .md / .markdown / .txt; use a YAML header (name, description) to customize. Type / plus the name in the composer to use it.',
+  '正在读取技能…': 'Loading skills…',
+  '还没有技能，点击“导入技能”添加文件': 'No skills yet — click "Import skills" to add files',
+  '预览': 'Preview',
+  '收起': 'Collapse',
+  '删除技能 {name}': 'Delete skill {name}',
+}
+
 registerPhrases(phrases)
 registerPhrases(settingsPhrases)
 registerPhrases(appPhrases)
 registerPhrases(morePhrases)
 registerPhrases(settingsPhrases2)
+registerPhrases(skillPhrases)
 
 export {}

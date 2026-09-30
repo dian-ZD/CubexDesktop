@@ -1,6 +1,6 @@
 {
   "name": "cubex-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2-dev",
   "private": true,
   "description": "CubexDesktop 智能体协作工作站",
   "type": "module",
@@ -43,6 +43,7 @@
       }
     ],
     "asar": true,
+    "publish": null,
     "win": {
       "icon": "build/icon.ico",
       "target": [

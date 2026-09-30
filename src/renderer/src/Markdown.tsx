@@ -1,6 +1,9 @@
-import { memo, useState, type ReactNode } from 'react'
+import { createContext, memo, useContext, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useI18n } from './i18n'
+
+export type OpenTarget = { kind: 'url' | 'file' | 'folder'; value: string }
+export const OpenTargetContext = createContext<((target: OpenTarget) => void) | null>(null)
 
 type Block =
   | { kind: 'code'; lang: string; text: string }
@@ -69,7 +72,7 @@ function parseBlocks(source: string): Block[] {
   return blocks
 }
 
-const inlinePattern = /(`+)([\s\S]+?)\1|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\n]+)\*|_([^_\n]+)_|\[([^\]]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g
+const inlinePattern = /(`+)([\s\S]+?)\1|\[\[(url|file|dir):([^\]]+?)(?:\|([^\]]+?))?\]\]|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\n]+)\*|_([^_\n]+)_|\[([^\]]+)\]\(([^)\s]+)\)/g
 
 function inline(text: string, keyBase = 'i'): ReactNode[] {
   const out: ReactNode[] = []
@@ -80,15 +83,38 @@ function inline(text: string, keyBase = 'i'): ReactNode[] {
     if (start > last) out.push(...breaks(text.slice(last, start), `${keyBase}t${count}`))
     const key = `${keyBase}-${count++}`
     if (match[2] !== undefined) out.push(<code key={key} className="md-inline-code">{match[2].trim()}</code>)
-    else if (match[3] !== undefined || match[4] !== undefined) out.push(<strong key={key}>{inline(match[3] ?? match[4], key)}</strong>)
-    else if (match[5] !== undefined) out.push(<del key={key}>{inline(match[5], key)}</del>)
-    else if (match[6] !== undefined || match[7] !== undefined) out.push(<em key={key}>{inline(match[6] ?? match[7], key)}</em>)
-    else if (match[8] !== undefined) out.push(link(match[9], inline(match[8], key), key))
-    else if (match[10] !== undefined) out.push(link(match[10], match[10], key))
+    else if (match[3] !== undefined) {
+      const type = match[3]
+      const value = match[4].trim()
+      const label = match[5]?.trim() || value
+      if (type === 'url') out.push(<UrlToken key={key} url={value} label={label} />)
+      else out.push(<PathToken key={key} kind={type === 'dir' ? 'folder' : 'file'} value={value} label={label} />)
+    }
+    else if (match[6] !== undefined || match[7] !== undefined) out.push(<strong key={key}>{inline(match[6] ?? match[7], key)}</strong>)
+    else if (match[8] !== undefined) out.push(<del key={key}>{inline(match[8], key)}</del>)
+    else if (match[9] !== undefined || match[10] !== undefined) out.push(<em key={key}>{inline(match[9] ?? match[10], key)}</em>)
+    else if (match[11] !== undefined) out.push(link(match[12], inline(match[11], key), key))
     last = start + match[0].length
   }
   if (last < text.length) out.push(...breaks(text.slice(last), `${keyBase}e`))
   return out
+}
+
+function PathToken({ kind, value, label }: { kind: 'file' | 'folder'; value: string; label?: string }) {
+  const open = useContext(OpenTargetContext)
+  const text = label ?? value
+  if (!open) return <span className="md-path" title={value}>{text}</span>
+  return (
+    <button type="button" className={`md-path md-path-${kind}`} title={value} onClick={() => open({ kind, value: value.trim() })}>{text}</button>
+  )
+}
+
+function UrlToken({ url, label }: { url: string; label?: string }) {
+  const open = useContext(OpenTargetContext)
+  const text = label ?? url
+  if (!/^https?:\/\//i.test(url)) return <span className="md-link-disabled" title={url}>{text}</span>
+  if (!open) return <a href={url} target="_blank" rel="noreferrer noopener">{text}</a>
+  return <button type="button" className="md-url" title={url} onClick={() => open({ kind: 'url', value: url })}>{text}</button>
 }
 
 function breaks(text: string, key: string): ReactNode[] {

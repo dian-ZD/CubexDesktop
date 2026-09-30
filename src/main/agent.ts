@@ -145,6 +145,24 @@ export class AgentRunner {
     })
   }
 
+  async compactThread(threadId: string): Promise<{ removed: number }> {
+    const thread = this.find(threadId)
+    if (thread.status !== 'idle' || this.runs.has(threadId)) throw new Error('当前会话正在运行，请先停止后再压缩上下文')
+    const keep = 10
+    if (thread.messages.length <= keep + 1) return { removed: 0 }
+    let start = thread.messages.length - keep
+    while (start > 0 && thread.messages[start].role !== 'user') start--
+    if (start <= 0) return { removed: 0 }
+    const removed = start
+    const marker: Message = { id: randomUUID(), role: 'system', time: new Date().toISOString(), level: 'info', content: `（已压缩上下文：较早的 ${removed} 条消息已从会话中移除以节省空间）` }
+    await this.store.update((draft) => {
+      const t = draft.threads.find((item) => item.id === threadId)!
+      t.messages = [marker, ...t.messages.slice(start)]
+      t.updatedAt = new Date().toISOString()
+    })
+    return { removed }
+  }
+
   private async resume(threadId: string, modelId?: string): Promise<void> {
     const thread = this.find(threadId)
     const model = this.store.get().settings.models.find((item) => item.id === (modelId || thread.modelId || this.store.get().settings.defaultModelId))
@@ -268,6 +286,8 @@ export class AgentRunner {
   private async loop(threadId: string, run: Run): Promise<void> {
     const { signal } = run.controller
     const maxSteps = this.store.get().settings.agent.maxSteps
+    const MAX_CONTINUATIONS = 5
+    let continuations = 0
     for (let step = 0; step < maxSteps && !signal.aborted; step++) {
       const state = this.store.get()
       const { agent } = state.settings
@@ -290,7 +310,7 @@ export class AgentRunner {
         model.systemPromptExtra?.trim() ? `## 模型专属提示\n${model.systemPromptExtra.trim()}` : '',
       ].filter(Boolean)
       const system = extraParts.length ? `${baseSystem}\n\n${extraParts.join('\n\n')}` : baseSystem
-      const reserve = estimateTokens(system) + (modelParams.maxTokens || 8_000) + 1_500
+      const reserve = estimateTokens(system) + (modelParams.maxTokens || 16_000) + 1_500
       const { messages: history } = fitContext(thread.messages, { contextWindow: model.contextWindow, reserve, limit: modelParams.historyLimit })
       const placeholder: AssistantMessage = { id: messageId, role: 'assistant', time: new Date().toISOString(), content: '', toolCalls: [], modelId: model.id }
       await this.store.update((draft) => {
@@ -330,11 +350,26 @@ export class AgentRunner {
         target.updatedAt = new Date().toISOString()
       })
       if (turn.usage) void this.onUsage({ input: turn.usage.input, output: turn.usage.output, modelId: model.id }).catch(() => undefined)
-      if (turn.toolCalls.length === 0 || signal.aborted) return
+      if (turn.toolCalls.length === 0) {
+        if (turn.truncated && !signal.aborted && continuations < MAX_CONTINUATIONS) {
+          continuations++
+          await this.store.update((draft) => {
+            const target = draft.threads.find((item) => item.id === threadId)
+            if (target) target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content: '你的上一条回复因达到输出长度上限被截断了。请直接从截断处继续输出剩余内容，不要重复已经写过的部分。' })
+          })
+          continue
+        }
+        return
+      }
+      if (signal.aborted) return
 
       const results: ToolResult[] = []
       for (const call of turn.toolCalls) {
         if (signal.aborted) return
+        if (typeof call.args.__raw === 'string') {
+          results.push({ callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' })
+          continue
+        }
         if (call.name === 'delegate') {
           this.activity(threadId, 'delegating', '正在协调子智能体…', { step: step + 1, detail: summarizeCall(call) })
         } else if (!interactiveTools.has(call.name) && !todoTools.has(call.name)) {
@@ -510,6 +545,10 @@ export class AgentRunner {
         const results: ToolResult[] = []
         for (const sub of turn.toolCalls) {
           if (signal.aborted) break
+          if (typeof sub.args.__raw === 'string') {
+            results.push({ callId: sub.id, name: sub.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' })
+            continue
+          }
           if (interactiveTools.has(sub.name) || todoTools.has(sub.name) || delegateTools.has(sub.name)) {
             results.push({ callId: sub.id, name: sub.name, ok: false, output: '子智能体不可使用该工具' })
             continue

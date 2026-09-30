@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { AppWindow, CircleHelp, Copy, Eye, FileText, GitBranch, Globe, Hourglass, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, StickyNote, Terminal, Trash2, Undo2, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
+import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, StickyNote, Terminal, Trash2, Undo2, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Project, Settings, Workflow, WorkflowNode, WorkflowNodeKind } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
@@ -143,7 +143,7 @@ const curve = (x1: number, y1: number, x2: number, y2: number) => {
   return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
 }
 
-export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onToggleAutoSwitch, onError }: { project: Project | null; workflows: Workflow[]; settings: Settings; onOpenThread: (threadId: string) => void; onToggleAutoSwitch: (value: boolean) => void; onError: (message: string) => void }) {
+export function WorkflowCanvas({ project, workflows, settings, panelOpen = true, onOpenThread, onToggleAutoSwitch, onError }: { project: Project | null; workflows: Workflow[]; settings: Settings; panelOpen?: boolean; onOpenThread: (threadId: string) => void; onToggleAutoSwitch: (value: boolean) => void; onError: (message: string) => void }) {
   const ui = useUi()
   const { tr } = useI18n()
   const own = useMemo(() => workflows.filter((item) => item.projectId === project?.id), [workflows, project?.id])
@@ -158,6 +158,8 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
   const [future, setFuture] = useState<Workflow[]>([])
   const canvasRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ id: string; dx: number; dy: number } | null>(null)
+  const pan = useRef<{ x: number; y: number; left: number; top: number } | null>(null)
+  const [nodesVisible, setNodesVisible] = useState(true)
 
   const saved = own.find((item) => item.id === activeId) ?? null
   const dirty = !!draft && (!saved || JSON.stringify({ ...draft, updatedAt: '' }) !== JSON.stringify({ ...saved, updatedAt: '' }))
@@ -320,6 +322,63 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
     return { x: (event.clientX - rect.left + canvasRef.current!.scrollLeft) / zoom, y: (event.clientY - rect.top + canvasRef.current!.scrollTop) / zoom }
   }
 
+  const checkVisibility = () => {
+    const container = canvasRef.current
+    if (!container || !draft || draft.nodes.length === 0) { setNodesVisible(true); return }
+    const left = container.scrollLeft / zoom
+    const top = container.scrollTop / zoom
+    const right = left + container.clientWidth / zoom
+    const bottom = top + container.clientHeight / zoom
+    const any = draft.nodes.some((n) => n.x + NODE_W > left && n.x < right && n.y + NODE_H > top && n.y < bottom)
+    setNodesVisible(any)
+  }
+
+  const recenter = () => {
+    const container = canvasRef.current
+    if (!container || !draft || draft.nodes.length === 0) return
+    const minX = Math.min(...draft.nodes.map((n) => n.x))
+    const minY = Math.min(...draft.nodes.map((n) => n.y))
+    const maxX = Math.max(...draft.nodes.map((n) => n.x + NODE_W))
+    const maxY = Math.max(...draft.nodes.map((n) => n.y + NODE_H))
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    container.scrollTo({ left: Math.max(0, cx * zoom - container.clientWidth / 2), top: Math.max(0, cy * zoom - container.clientHeight / 2), behavior: 'smooth' })
+    requestAnimationFrame(() => requestAnimationFrame(checkVisibility))
+  }
+
+  const onWheel = (event: ReactWheelEvent) => {
+    if (!event.ctrlKey && !event.metaKey && event.shiftKey) return
+    event.preventDefault()
+    const container = canvasRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const px = event.clientX - rect.left
+    const py = event.clientY - rect.top
+    const worldX = (container.scrollLeft + px) / zoom
+    const worldY = (container.scrollTop + py) / zoom
+    const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
+    const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoom * factor * 100) / 100))
+    if (next === zoom) return
+    setZoom(next)
+    requestAnimationFrame(() => {
+      container.scrollLeft = worldX * next - px
+      container.scrollTop = worldY * next - py
+      checkVisibility()
+    })
+  }
+
+  const startPan = (event: ReactPointerEvent) => {
+    if (event.button !== 0) return
+    const container = canvasRef.current
+    if (!container) return
+    pan.current = { x: event.clientX, y: event.clientY, left: container.scrollLeft, top: container.scrollTop }
+    setSelected(null)
+    setLinking(null)
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { checkVisibility() }, [zoom, draft?.id, draft?.nodes.length])
+
   const startDrag = (event: ReactPointerEvent, node: WorkflowNode) => {
     if (event.button !== 0) return
     snapshot()
@@ -330,6 +389,15 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
   }
 
   const moveDrag = (event: ReactPointerEvent) => {
+    const panning = pan.current
+    if (panning) {
+      const container = canvasRef.current
+      if (container) {
+        container.scrollLeft = panning.left - (event.clientX - panning.x)
+        container.scrollTop = panning.top - (event.clientY - panning.y)
+      }
+      return
+    }
     const point = toCanvas(event)
     if (linking) setPointer(point)
     const current = drag.current
@@ -339,6 +407,8 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
       y: Math.round(Math.min(CANVAS_H - NODE_H, Math.max(0, point.y - current.dy))),
     })
   }
+
+  const endDrag = () => { drag.current = null; pan.current = null; checkVisibility() }
 
   const persist = async (): Promise<boolean> => {
     if (!draft) return false
@@ -455,7 +525,7 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
         </div>
       ) : (
         <div className="work-body">
-          <div ref={canvasRef} className={`work-canvas${linking ? ' linking' : ''}`} onPointerMove={moveDrag} onPointerUp={() => { drag.current = null }} onPointerDown={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('work-surface')) { setSelected(null); setLinking(null) } }}>
+          <div ref={canvasRef} className={`work-canvas${linking ? ' linking' : ''}${pan.current ? ' panning' : ''}`} onWheel={onWheel} onScroll={checkVisibility} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerLeave={endDrag} onPointerDown={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('work-surface') || (event.target as HTMLElement).classList.contains('work-scale')) startPan(event) }}>
             <div className="work-scale" style={{ width: CANVAS_W * zoom, height: CANVAS_H * zoom }}>
               <div className="work-surface" style={{ width: CANVAS_W, height: CANVAS_H, transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
                 <svg className="work-edges" width={CANVAS_W} height={CANVAS_H} aria-hidden="true">
@@ -493,6 +563,7 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
               </div>
             </div>
           </div>
+          {panelOpen && (
           <aside className="work-inspector" aria-label={tr('节点属性')}>
             {node ? (
               <>
@@ -529,7 +600,15 @@ export function WorkflowCanvas({ project, workflows, settings, onOpenThread, onT
                 </ul>
               </div>
             )}
+            {!nodesVisible && draft.nodes.length > 0 && (
+              <div className="work-inspector-foot">
+                <button type="button" className="work-recenter" onClick={recenter} title={tr('回到画布中心（第一个模块处）')}>
+                  <Crosshair size={15} />{tr('回到中心')}
+                </button>
+              </div>
+            )}
           </aside>
+          )}
         </div>
       )}
     </div>

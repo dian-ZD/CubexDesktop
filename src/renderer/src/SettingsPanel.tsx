@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, ArchiveRestore, ArrowLeft, Bell, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Monitor, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Star, Timer, Trash2, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Bell, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Monitor, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
 import {
   accents, approvalLabels, approvalModes, densities, fontFamilies, languages, providerKinds, providerLabels, responseStyles, sendKeys, settingsSchema, shells, themes, uiLanguages,
-  type Automation, type ConnectionTest, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type Settings, type Workflow as WorkflowType,
+  type Automation, type ConnectionTest, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type Settings, type SkillMeta, type Workflow as WorkflowType,
 } from '../../shared/schema'
 import { nextRunAt, weekdayNames } from '../../shared/schedule'
 import { api } from './bridge'
@@ -115,13 +115,14 @@ const densityLabels: Record<(typeof densities)[number], string> = { comfortable:
 const shellLabels: Record<(typeof shells)[number], string> = { auto: '自动（Windows 用 PowerShell）', powershell: 'Windows PowerShell', pwsh: 'PowerShell 7 (pwsh)', cmd: '命令提示符 (cmd)', bash: 'Bash', sh: 'sh' }
 const sendKeyLabels: Record<(typeof sendKeys)[number], string> = { enter: 'Enter 发送，Shift+Enter 换行', 'ctrl-enter': 'Ctrl+Enter 发送，Enter 换行' }
 
-export type SectionId = 'language' | 'archived' | 'permissions' | 'mcp' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'sound' | 'worktree' | 'rules' | 'appearance' | 'shortcuts' | 'about'
+export type SectionId = 'language' | 'archived' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'sound' | 'worktree' | 'rules' | 'appearance' | 'shortcuts' | 'about'
 
 const sections: { id: SectionId; title: string; hint: string; icon: typeof Settings2 }[] = [
   { id: 'language', title: '语言', hint: '界面语言、回复语言与回复风格', icon: Languages },
   { id: 'archived', title: '已归档项目', hint: '查看并恢复已归档的项目', icon: Archive },
   { id: 'permissions', title: '权限审批', hint: '审批模式、只读与命令规则', icon: ShieldCheck },
   { id: 'mcp', title: 'MCP', hint: '外部工具服务器（Model Context Protocol）', icon: PlugZap },
+  { id: 'skills', title: '技能', hint: '上传技能文件，用 / 名称在对话中快速调用', icon: Sparkles },
   { id: 'providers', title: '模型', hint: '提供商、模型、连接测试与单模型高级参数', icon: Cpu },
   { id: 'plugins', title: '插件', hint: '浏览器、电脑控制与自定义插件', icon: Puzzle },
   { id: 'github', title: 'GitHub', hint: '访问令牌、目标仓库与自动推送', icon: CloudUpload },
@@ -145,6 +146,7 @@ const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   shortcuts: ['chat.sendKey'],
   plugins: ['plugins'],
   mcp: ['mcp'],
+  skills: ['skills'],
   github: ['github'],
   automation: ['automations'],
   work: ['work'],
@@ -335,10 +337,14 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [keyBusy, setKeyBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, ConnectionTest | 'pending'>>({})
+  const [discovery, setDiscovery] = useState<Record<string, { status: 'loading' } | { status: 'error'; message: string } | { status: 'done'; models: DiscoveredModelInfo[] }>>({})
   const [copied, setCopied] = useState(false)
   const [restoring, setRestoring] = useState<string | null>(null)
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null)
   const [pluginsBusy, setPluginsBusy] = useState(false)
+  const [skills, setSkills] = useState<SkillMeta[] | null>(null)
+  const [skillsBusy, setSkillsBusy] = useState(false)
+  const [skillPreview, setSkillPreview] = useState<{ id: string; content: string } | null>(null)
   const [githubToken, setGithubToken] = useState('')
   const [githubBusy, setGithubBusy] = useState<'token' | 'clear' | 'push' | null>(null)
   const [githubLogin, setGithubLogin] = useState<string | null>(null)
@@ -405,6 +411,70 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       const result = await api.openPluginsDir()
       if (!result.ok) onError(result.error)
       else void loadPlugins()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const loadSkills = async () => {
+    setSkillsBusy(true)
+    try {
+      const result = await api.listSkills()
+      if (!result.ok) onError(result.error)
+      else setSkills(result.data)
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSkillsBusy(false)
+    }
+  }
+
+  const skillsRequested = useRef(false)
+  useEffect(() => {
+    if (section !== 'skills' || skillsRequested.current) return
+    skillsRequested.current = true
+    void loadSkills()
+  })
+
+  const importSkills = async () => {
+    setSkillsBusy(true)
+    try {
+      const result = await api.importSkills()
+      if (!result.ok) onError(result.error)
+      else await loadSkills()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSkillsBusy(false)
+    }
+  }
+
+  const removeSkill = async (id: string) => {
+    try {
+      const result = await api.deleteSkill({ id })
+      if (!result.ok) { onError(result.error); return }
+      if (skillPreview?.id === id) setSkillPreview(null)
+      await loadSkills()
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const previewSkill = async (id: string) => {
+    if (skillPreview?.id === id) { setSkillPreview(null); return }
+    try {
+      const result = await api.readSkill({ id })
+      if (!result.ok) { onError(result.error); return }
+      setSkillPreview({ id, content: result.data.content })
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const openSkillsDir = async () => {
+    try {
+      const result = await api.openSkillsDir()
+      if (!result.ok) onError(result.error)
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error))
     }
@@ -672,6 +742,49 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     }
   }
 
+  const detectModels = async (provider: ProviderConfig) => {
+    setDiscovery((current) => ({ ...current, [provider.id]: { status: 'loading' } }))
+    try {
+      const apiKey = (keyDrafts[provider.id] ?? '').trim()
+      const result = await api.listProviderModels({ provider, ...(apiKey ? { apiKey } : {}) })
+      if (result.ok) setDiscovery((current) => ({ ...current, [provider.id]: { status: 'done', models: result.data } }))
+      else setDiscovery((current) => ({ ...current, [provider.id]: { status: 'error', message: result.error } }))
+    } catch (error) {
+      setDiscovery((current) => ({ ...current, [provider.id]: { status: 'error', message: error instanceof Error ? error.message : String(error) } }))
+    }
+  }
+
+  const addDiscoveredModel = (provider: ProviderConfig, item: DiscoveredModelInfo) => {
+    const id = `model-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    edit((current) => ({
+      ...current,
+      models: [...current.models, { id, providerId: provider.id, name: item.modelId, modelId: item.modelId, ...(item.contextWindow ? { contextWindow: item.contextWindow } : {}) }],
+      defaultModelId: current.defaultModelId || id,
+    }))
+    setOpen((current) => new Set(current).add(id))
+  }
+
+  const detectContext = async (model: ModelConfig) => {
+    const provider = draft.providers.find((item) => item.id === model.providerId)
+    if (!provider) return
+    const index = draft.models.indexOf(model)
+    setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'loading' } }))
+    try {
+      const apiKey = (keyDrafts[provider.id] ?? '').trim()
+      const result = await api.listProviderModels({ provider, ...(apiKey ? { apiKey } : {}) })
+      if (!result.ok) { setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: result.error } })); return }
+      const match = result.data.find((item) => item.modelId === model.modelId)
+      if (match?.contextWindow) {
+        updateModel(index, { contextWindow: match.contextWindow })
+        setDiscovery((current) => { const next = { ...current }; delete next[`ctx-${model.id}`]; return next })
+      } else {
+        setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: tr('未能自动识别该模型的上下文长度，请手动填写') } }))
+      }
+    } catch (error) {
+      setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: error instanceof Error ? error.message : String(error) } }))
+    }
+  }
+
   const autoSave = async (next: Settings) => {
     const snapshot = JSON.stringify(next)
     savedSnapshot.current = snapshot
@@ -767,6 +880,8 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
 
     { key: 'mcp', section: 'mcp', label: tr('MCP 服务器'), hint: tr('通过 Model Context Protocol 接入外部工具'), keywords: 'mcp server 工具 协议', wide: true, render: () => renderMcp() },
 
+    { key: 'skills', section: 'skills', label: tr('技能'), hint: tr('上传 Markdown / 文本技能文件，在对话输入框用 / 名称即可调用其内容'), keywords: 'skill 技能 slash / prompt 提示词 模板 上传 导入', wide: true, render: () => renderSkills() },
+
     { key: 'providers', section: 'providers', label: tr('提供商与模型'), hint: tr('OpenAI 兼容接口、Anthropic 或本机 Ollama；每个模型可展开“高级”覆盖参数'), keywords: 'provider model api key endpoint 端点 密钥 测试连接 默认模型 温度 temperature max tokens 超时 重试 上下文', wide: true, render: () => renderProviders() },
     { key: 'globalParams', section: 'providers', label: tr('全局默认参数'), hint: tr('未在模型“高级”中单独设置时使用'), keywords: 'temperature 温度 max tokens 超时 timeout 重试 retry 上下文 history 默认', wide: true, paths: ['modelParams'], render: () => (
       <ParamsForm label={tr('全局')} value={modelParams} errorPrefix="modelParams" errors={errors} onChange={(value) => patch('modelParams', value)} />
@@ -778,6 +893,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
         <p>{tr('每个插件是插件目录下的一个文件夹：')}<code>plugin.json</code>{tr(' 声明 name、description、version 与 tools，每个工具包含 name、description、command（如 ')}<code>node index.js</code>{tr('、')}<code>python main.py</code>{tr('）和可选的 parameters（JSON Schema）。')}</p>
         <p>{tr('调用时在插件文件夹中执行 command：参数以 JSON 通过标准输入和环境变量 ')}<code>CUBEX_ARGS</code>{tr(' 传入，')}<code>CUBEX_TOOL</code>{tr(' 为工具名，')}<code>CUBEX_PROJECT_ROOT</code>{tr(' 为当前项目根目录；标准输出即返回给模型的结果，单次最长 120 秒。')}</p>
         <p>{tr('插件目录为空时会生成示例插件 hello 供参考。插件调用需要审批（完全自动模式除外），修改插件后点击“刷新”重新加载。')}</p>
+        <p>{tr('完整的接口列表、Work 模式模块扩展与 MCP 说明见项目根目录的 plugins.md 开发文档。')}</p>
       </div>
     ) },
 
@@ -1017,6 +1133,42 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     )
   }
 
+  function renderSkills() {
+    return (
+      <div className="plugin-block">
+        <div className="settings-section-head">
+          <div><h3>{tr('技能')}</h3><p>{skills ? tr('{count} 个', { count: skills.length }) : tr('加载中…')}</p></div>
+          <div className="row-actions">
+            <button type="button" className="btn-secondary" disabled={skillsBusy} onClick={() => void loadSkills()}>{skillsBusy ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{tr('刷新')}</button>
+            <button type="button" className="btn-secondary" onClick={() => void openSkillsDir()}><FolderOpen size={14} />{tr('打开技能目录')}</button>
+            <button type="button" className="btn-primary" disabled={skillsBusy} onClick={() => void importSkills()}><Upload size={14} />{tr('导入技能')}</button>
+          </div>
+        </div>
+        <p className="field-hint">{tr('支持 .md / .markdown / .txt；可用 YAML 头（name、description）自定义名称与说明。在对话输入框输入 / 加名称即可调用。')}</p>
+        {skills === null ? <div className="settings-empty">{tr('正在读取技能…')}</div> : skills.length === 0 ? <div className="settings-empty">{tr('还没有技能，点击“导入技能”添加文件')}</div> : (
+          <ul className="plugin-list">
+            {skills.map((item) => (
+              <li key={item.id} className="plugin-item">
+                <div className="plugin-text">
+                  <div className="plugin-title">
+                    <span className="item-title">/{item.name}</span>
+                    <span className={`tag${item.builtin ? ' ok' : ''}`}>{item.builtin ? tr('内置') : tr('自定义')}</span>
+                  </div>
+                  {item.description && <p className="plugin-desc">{item.description}</p>}
+                  {skillPreview?.id === item.id && <pre className="skill-preview">{skillPreview.content}</pre>}
+                </div>
+                <div className="row-actions">
+                  <button type="button" className="btn-secondary" onClick={() => void previewSkill(item.id)}>{skillPreview?.id === item.id ? tr('收起') : tr('预览')}</button>
+                  {!item.builtin && <button type="button" className="icon-button danger" aria-label={tr('删除技能 {name}', { name: item.name })} title={tr('删除')} onClick={() => void removeSkill(item.id)}><Trash2 size={14} /></button>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )
+  }
+
   function renderAutomations() {
     const list = draft.automations
     return (
@@ -1203,9 +1355,45 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
                           </div>
                         )}
                       </div>
-                      <div className="item-actions">
-                        <button className="btn-danger" onClick={() => removeProvider(index)}><Trash2 size={14} />{tr('删除提供商')}</button>
-                      </div>
+                      {(() => {
+                        const state = discovery[provider.id]
+                        return (
+                          <>
+                            <div className="item-actions">
+                              <button className="btn-secondary" type="button" disabled={state?.status === 'loading'} onClick={() => void detectModels(provider)}>
+                                {state?.status === 'loading' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{tr('自动检测模型')}
+                              </button>
+                              <span className="spacer" />
+                              <button className="btn-danger" onClick={() => removeProvider(index)}><Trash2 size={14} />{tr('删除提供商')}</button>
+                            </div>
+                            {state?.status === 'error' && (
+                              <div className="test-result fail" role="status"><X size={14} /><span>{state.message}</span></div>
+                            )}
+                            {state?.status === 'done' && (
+                              state.models.length === 0
+                                ? <div className="test-result" role="status"><Info size={14} /><span>{tr('未检测到可用模型')}</span></div>
+                                : (
+                                  <div className="discovery-list">
+                                    <p className="field-hint">{tr('检测到 {count} 个模型，点击“添加”即可创建：', { count: state.models.length })}</p>
+                                    {state.models.map((item) => {
+                                      const exists = draft.models.some((m) => m.providerId === provider.id && m.modelId === item.modelId)
+                                      return (
+                                        <div className="discovery-row" key={item.modelId}>
+                                          <span className="discovery-id truncate">{item.modelId}</span>
+                                          {item.contextWindow ? <span className="item-meta">{tr('上下文 {n}', { n: item.contextWindow.toLocaleString() })}</span> : null}
+                                          <span className="spacer" />
+                                          {exists
+                                            ? <span className="tag ok"><Check size={11} />{tr('已添加')}</span>
+                                            : <button className="btn-secondary" type="button" onClick={() => addDiscoveredModel(provider, item)}><Plus size={14} />{tr('添加')}</button>}
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                )
+                            )}
+                          </>
+                        )
+                      })()}
                     </div>
                   )}
                 </div>
@@ -1259,7 +1447,21 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
                         </label>
                         <label className="field">
                           <span>{tr('上下文窗口（可选）')}</span>
-                          <input type="number" min={4000} value={model.contextWindow ?? ''} aria-invalid={!!errors.get(`models.${index}.contextWindow`)} onChange={(e) => updateModel(index, { contextWindow: e.target.value ? Number(e.target.value) : undefined })} placeholder={tr('如 128000')} />
+                          <div className="key-row">
+                            <input type="number" min={4000} value={model.contextWindow ?? ''} aria-invalid={!!errors.get(`models.${index}.contextWindow`)} onChange={(e) => updateModel(index, { contextWindow: e.target.value ? Number(e.target.value) : undefined })} placeholder={tr('如 128000')} />
+                            {(() => {
+                              const ctx = discovery[`ctx-${model.id}`]
+                              return (
+                                <button className="btn-secondary" type="button" disabled={!provider || ctx?.status === 'loading'} onClick={() => void detectContext(model)}>
+                                  {ctx?.status === 'loading' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}{tr('自动检测')}
+                                </button>
+                              )
+                            })()}
+                          </div>
+                          {(() => {
+                            const ctx = discovery[`ctx-${model.id}`]
+                            return ctx?.status === 'error' ? <span className="field-hint danger">{ctx.message}</span> : null
+                          })()}
                           <FieldError message={errors.get(`models.${index}.contextWindow`) && tr('范围 4000–4000000 的整数')} />
                         </label>
                       </div>

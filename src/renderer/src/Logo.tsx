@@ -12,8 +12,8 @@ export function Logo({ size = 24, className, title = 'Cubex', rounded = false }:
     <img
       className={rounded ? undefined : className}
       src={logoUrl}
-      width={rounded ? Math.round(size * 0.72) : size}
-      height={rounded ? Math.round(size * 0.72) : size}
+      width={rounded ? Math.round(size * 0.88) : size}
+      height={rounded ? Math.round(size * 0.88) : size}
       alt={title}
       title={title}
       draggable={false}

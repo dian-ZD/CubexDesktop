@@ -2,8 +2,8 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeIm
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { answerInputSchema, approvalInputSchema, automationInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, testConnectionInputSchema, threadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type ControlState, type MessageCard, type Result, type StreamDelta, type Thread, type Workflow } from '../shared/schema'
-import { testConnection } from './llm'
+import { answerInputSchema, approvalInputSchema, automationInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, testConnectionInputSchema, threadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type ControlState, type MessageCard, type Result, type StreamDelta, type Thread, type Workflow } from '../shared/schema'
+import { listModels, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, runShellCommand } from './tools'
 import { StateStore } from './store'
@@ -11,6 +11,7 @@ import { SecretStore } from './secrets'
 import { AgentRunner } from './agent'
 import { ExtensionHost } from './extensions'
 import { McpManager } from './mcp'
+import { SkillStore } from './skills'
 import { composeWorkflowPrompt, dueAutomations } from './workflow'
 
 const GITHUB_SECRET = 'github'
@@ -19,6 +20,7 @@ if (process.env.CUBEX_SMOKE === '1') app.setPath('userData', join(app.getPath('t
 const store = new StateStore(join(app.getPath('userData'), 'state.json'))
 const secrets = new SecretStore(join(app.getPath('userData'), 'secrets.json'))
 const mcp = new McpManager()
+const skills = new SkillStore(join(app.getPath('userData'), 'skills'))
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 
@@ -172,17 +174,69 @@ function loadRenderer(win: BrowserWindow, hash?: string) {
 
 const restoreBounds = new WeakMap<BrowserWindow, Rectangle>()
 
+function fillsWorkArea(win: BrowserWindow) {
+  const bounds = win.getBounds()
+  const workArea = screen.getDisplayMatching(bounds).workArea
+  return bounds.width >= workArea.width - 1 && bounds.height >= workArea.height - 1
+    && bounds.x <= workArea.x + 1 && bounds.y <= workArea.y + 1
+}
+
 function toggleMaximize(win: BrowserWindow) {
-  if (win.isMaximized()) {
-    const previous = restoreBounds.get(win)
-    win.unmaximize()
-    if (previous) win.setBounds(previous)
+  if (win.isFullScreen()) {
+    win.setFullScreen(false)
+    return
+  }
+  if (win.isMaximized() || fillsWorkArea(win)) {
+    if (win.isMaximized()) win.unmaximize()
+    const saved = restoreBounds.get(win)
+    if (saved) win.setBounds(saved)
+    broadcastWindowState()
     return
   }
   restoreBounds.set(win, win.getBounds())
   const workArea = screen.getDisplayMatching(win.getBounds()).workArea
   win.setBounds(workArea)
-  win.maximize()
+  broadcastWindowState()
+}
+
+function isEdgeToEdge(win: BrowserWindow) {
+  if (win.isMaximized() || win.isFullScreen()) return true
+  const bounds = win.getBounds()
+  const workArea = screen.getDisplayMatching(bounds).workArea
+  const fillsWidth = bounds.width >= workArea.width - 1 && bounds.x <= workArea.x + 1 && bounds.x + bounds.width >= workArea.x + workArea.width - 1
+  const fillsHeight = bounds.height >= workArea.height - 1 && bounds.y <= workArea.y + 1 && bounds.y + bounds.height >= workArea.y + workArea.height - 1
+  const touchesEdge = bounds.x <= workArea.x + 1 || bounds.x + bounds.width >= workArea.x + workArea.width - 1
+  return (fillsWidth && fillsHeight) || (fillsHeight && touchesEdge)
+}
+
+const lastWindowState = new WeakMap<BrowserWindow, string>()
+
+function broadcastWindowState() {
+  const wins = liveWindows()
+  const panelDetached = !!panelWindow && !panelWindow.isDestroyed()
+  for (const win of wins) {
+    const next = { maximized: isEdgeToEdge(win), focused: win.isFocused(), panelDetached }
+    const key = `${next.maximized}|${next.focused}|${next.panelDetached}`
+    if (lastWindowState.get(win) === key) continue
+    lastWindowState.set(win, key)
+    win.webContents.send(channels.windowState, next)
+  }
+}
+
+function bindWindowStateEvents(win: BrowserWindow) {
+  win.on('maximize', broadcastWindowState)
+  win.on('unmaximize', broadcastWindowState)
+  win.on('minimize', broadcastWindowState)
+  win.on('restore', broadcastWindowState)
+  win.on('resize', broadcastWindowState)
+  win.on('resized', broadcastWindowState)
+  win.on('move', broadcastWindowState)
+  win.on('moved', broadcastWindowState)
+  win.on('enter-full-screen', broadcastWindowState)
+  win.on('leave-full-screen', broadcastWindowState)
+  win.on('focus', broadcastWindowState)
+  win.on('blur', broadcastWindowState)
+  win.on('show', broadcastWindowState)
 }
 
 function openPanelWindow(threadId: string) {
@@ -211,12 +265,14 @@ function openPanelWindow(threadId: string) {
   panelWindow.setAlwaysOnTop(true, 'floating')
   panelWindow.once('ready-to-show', () => panelWindow?.show())
   guardNavigation(panelWindow)
+  bindWindowStateEvents(panelWindow)
+  panelWindow.webContents.on('did-finish-load', broadcastWindowState)
   panelWindow.on('closed', () => {
     panelWindow = null
-    for (const win of liveWindows()) win.webContents.send(channels.windowState, { maximized: win.isMaximized(), focused: win.isFocused(), panelDetached: false })
+    broadcastWindowState()
   })
   void loadRenderer(panelWindow, `panel=${encodeURIComponent(threadId)}`)
-  for (const win of liveWindows()) win.webContents.send(channels.windowState, { maximized: win.isMaximized(), focused: win.isFocused(), panelDetached: true })
+  broadcastWindowState()
 }
 
 function createWindow() {
@@ -234,15 +290,8 @@ function createWindow() {
     webPreferences: webPreferences(),
   })
   mainWindow.once('ready-to-show', () => mainWindow?.show())
-  const sendWindowState = () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(channels.windowState, { maximized: mainWindow.isMaximized(), focused: mainWindow.isFocused(), panelDetached: !!panelWindow && !panelWindow.isDestroyed() })
-  }
-  mainWindow.on('maximize', sendWindowState)
-  mainWindow.on('unmaximize', sendWindowState)
-  mainWindow.on('focus', sendWindowState)
-  mainWindow.on('blur', sendWindowState)
-  mainWindow.webContents.on('did-finish-load', sendWindowState)
+  bindWindowStateEvents(mainWindow)
+  mainWindow.webContents.on('did-finish-load', broadcastWindowState)
   guardNavigation(mainWindow)
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -346,6 +395,10 @@ function registerIpc() {
       if (input.title !== undefined) target.title = input.title
       if (input.pinned !== undefined) target.pinned = input.pinned || undefined
     })
+  })
+
+  handle(channels.compactThread, async (_event, payload) => {
+    return agent.compactThread(threadInputSchema.parse(payload).threadId)
   })
 
   handle(channels.exportThread, async (_event, payload) => {
@@ -502,6 +555,38 @@ function registerIpc() {
     if (error) throw new Error(`无法打开插件目录：${error}`)
   })
 
+  handle(channels.listSkills, async () => skills.list())
+
+  handle(channels.importSkills, async () => {
+    if (!mainWindow) throw new Error('窗口未就绪')
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      title: '导入技能（标准 skill 包 .zip 或单文件）',
+      filters: [{ name: '技能', extensions: ['zip', 'md', 'markdown', 'mdx', 'txt'] }],
+    })
+    if (result.canceled || result.filePaths.length === 0) return []
+    return skills.import(result.filePaths)
+  })
+
+  handle(channels.deleteSkill, async (_event, payload) => {
+    const id = payload && typeof payload === 'object' && typeof (payload as { id?: unknown }).id === 'string' ? (payload as { id: string }).id : ''
+    if (!id) throw new Error('缺少技能标识')
+    await skills.remove(id)
+  })
+
+  handle(channels.readSkill, async (_event, payload) => {
+    const id = payload && typeof payload === 'object' && typeof (payload as { id?: unknown }).id === 'string' ? (payload as { id: string }).id : ''
+    if (!id) throw new Error('缺少技能标识')
+    return skills.read(id)
+  })
+
+  handle(channels.openSkillsDir, async () => {
+    const dir = join(app.getPath('userData'), 'skills')
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(dir, { recursive: true }))
+    const error = await shell.openPath(dir)
+    if (error) throw new Error(`无法打开技能目录：${error}`)
+  })
+
   handle(channels.listMcp, async () => mcp.list(store.get().settings.mcp.servers))
 
   handle(channels.testMcp, async (_event, payload) => {
@@ -555,6 +640,13 @@ function registerIpc() {
     const apiKey = input.apiKey?.trim() || secrets.get(input.provider.id)
     if (input.provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${input.provider.name}」尚未填写 API Key`)
     return testConnection(input.provider, apiKey, input.model)
+  })
+
+  handle(channels.listProviderModels, async (_event, payload) => {
+    const input = listProviderModelsInputSchema.parse(payload)
+    const apiKey = input.apiKey?.trim() || secrets.get(input.provider.id)
+    if (input.provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${input.provider.name}」尚未填写 API Key`)
+    return listModels(input.provider, apiKey)
   })
 }
 

@@ -11,6 +11,7 @@ export interface ChatTurn {
   content: string
   toolCalls: ToolCall[]
   usage?: { input: number; output: number }
+  truncated?: boolean
 }
 
 export interface ChatRequest {
@@ -30,6 +31,18 @@ export interface ChatRequest {
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_RETRIES = 2
+const DEFAULT_MAX_TOKENS = 64_000
+const MIN_MAX_TOKENS = 4_096
+
+function resolveMaxTokens(request: ChatRequest): number {
+  if (request.maxTokens && request.maxTokens > 0) return request.maxTokens
+  const contextWindow = request.model.contextWindow
+  if (contextWindow && contextWindow > 0) {
+    const budget = Math.floor(contextWindow / 2)
+    return Math.max(MIN_MAX_TOKENS, Math.min(DEFAULT_MAX_TOKENS, budget))
+  }
+  return DEFAULT_MAX_TOKENS
+}
 
 export async function streamChat(input: ChatRequest): Promise<ChatTurn> {
   const request = { ...input, messages: sanitizeHistory(input.messages) }
@@ -72,6 +85,97 @@ export async function testConnection(provider: ProviderConfig, apiKey: string | 
 
 function endpoint(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path}`
+}
+
+export interface DiscoveredModel {
+  modelId: string
+  contextWindow?: number
+}
+
+const KNOWN_CONTEXT_WINDOWS: Array<{ match: RegExp; window: number }> = [
+  { match: /^(claude-3|claude-sonnet|claude-opus|claude-haiku|claude-3\.5|claude-3-5|claude-3\.7|claude-3-7|claude-4)/i, window: 200_000 },
+  { match: /^(gpt-4\.1|gpt-4o|gpt-4-turbo|o1|o3|o4|gpt-5)/i, window: 128_000 },
+  { match: /^gpt-4-32k/i, window: 32_768 },
+  { match: /^gpt-4/i, window: 8_192 },
+  { match: /^gpt-3\.5-turbo-16k/i, window: 16_384 },
+  { match: /^gpt-3\.5/i, window: 16_385 },
+  { match: /^(gemini-1\.5|gemini-2|gemini-exp)/i, window: 1_000_000 },
+  { match: /^(deepseek-chat|deepseek-v3|deepseek-reasoner|deepseek-r1)/i, window: 64_000 },
+  { match: /^(qwen2\.5|qwen-max|qwen-plus|qwen-turbo|qwen3)/i, window: 128_000 },
+  { match: /^(llama-?3\.1|llama-?3\.3|llama3\.1|llama3\.3)/i, window: 128_000 },
+  { match: /^(llama-?3|llama3)/i, window: 8_192 },
+  { match: /^(mistral-large|mistral-small|mixtral|ministral)/i, window: 128_000 },
+  { match: /^(moonshot|kimi)/i, window: 128_000 },
+  { match: /^(glm-4|glm-4\.5|glm-z1)/i, window: 128_000 },
+]
+
+export function guessContextWindow(modelId: string): number | undefined {
+  const id = modelId.trim().toLowerCase()
+  for (const entry of KNOWN_CONTEXT_WINDOWS) if (entry.match.test(id)) return entry.window
+  return undefined
+}
+
+async function fetchJson(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20_000)
+  const onAbort = () => controller.abort()
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    const response = await fetch(url, { method: 'GET', headers, signal: controller.signal })
+    if (!response.ok) {
+      const text = (await response.text().catch(() => '')).trim().slice(0, 400)
+      const hint = statusHint(response.status)
+      throw new HttpError(response.status, `模型服务返回 ${response.status}${text ? `：${text}` : ''}${hint ? `\n提示：${hint}` : ''}`)
+    }
+    return await response.json()
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    if (isNetworkError(error)) throw new Error(describeNetworkError(error, url), { cause: error })
+    throw error
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+export async function listModels(provider: ProviderConfig, apiKey: string | undefined, signal?: AbortSignal): Promise<DiscoveredModel[]> {
+  if (provider.kind === 'anthropic') {
+    if (!apiKey) throw new Error('Anthropic 提供商需要 API Key 才能列出模型')
+    const data = await fetchJson(endpoint(provider.baseUrl, '/v1/models'), { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }, signal)
+    const items = (data as { data?: Array<{ id?: string }> }).data ?? []
+    return dedupeModels(items.map((item) => item.id).filter((id): id is string => !!id))
+  }
+  if (provider.kind === 'ollama') {
+    const base = /\/v1\/?$/.test(provider.baseUrl) ? provider.baseUrl.replace(/\/v1\/?$/, '') : provider.baseUrl
+    const data = await fetchJson(endpoint(base, '/api/tags'), {}, signal)
+    const items = (data as { models?: Array<{ name?: string; model?: string; details?: { parameter_size?: string } }> }).models ?? []
+    return dedupeModels(items.map((item) => item.name ?? item.model).filter((id): id is string => !!id))
+  }
+  const headers: Record<string, string> = {}
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+  const data = await fetchJson(endpoint(provider.baseUrl, '/models'), headers, signal)
+  const items = (data as { data?: Array<{ id?: string; context_length?: number; context_window?: number }> }).data
+    ?? (data as { models?: Array<{ id?: string }> }).models
+    ?? []
+  const out: DiscoveredModel[] = []
+  for (const item of items) {
+    const id = (item as { id?: string }).id
+    if (!id) continue
+    const raw = (item as { context_length?: number; context_window?: number }).context_length ?? (item as { context_window?: number }).context_window
+    const contextWindow = typeof raw === 'number' && raw >= 4000 ? Math.min(raw, 4_000_000) : guessContextWindow(id)
+    out.push({ modelId: id, contextWindow })
+  }
+  return dedupeDiscovered(out)
+}
+
+function dedupeModels(ids: string[]): DiscoveredModel[] {
+  return dedupeDiscovered(ids.map((modelId) => ({ modelId, contextWindow: guessContextWindow(modelId) })))
+}
+
+function dedupeDiscovered(list: DiscoveredModel[]): DiscoveredModel[] {
+  const seen = new Map<string, DiscoveredModel>()
+  for (const item of list) if (!seen.has(item.modelId)) seen.set(item.modelId, item)
+  return [...seen.values()].sort((a, b) => a.modelId.localeCompare(b.modelId))
 }
 
 class HttpError extends Error {
@@ -221,13 +325,48 @@ function toolCallId(prefix: string, index: number): string {
   return `${prefix}-${index}-${Date.now().toString(36)}`
 }
 
-function safeArgs(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw || '{}') as unknown
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return { __raw: raw }
+function asObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
+}
+
+function repairJson(raw: string): string {
+  let inString = false
+  let escaped = false
+  const stack: string[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') stack.push('}')
+    else if (ch === '[') stack.push(']')
+    else if (ch === '}' || ch === ']') stack.pop()
   }
+  let out = raw
+  if (inString) out += escaped ? '\\"' : '"'
+  for (let i = stack.length - 1; i >= 0; i--) out += stack[i]
+  return out
+}
+
+function safeArgs(raw: string): Record<string, unknown> {
+  const text = raw.trim()
+  if (!text) return {}
+  try {
+    const parsed = asObject(JSON.parse(text))
+    if (parsed) return parsed
+  } catch {
+    try {
+      const repaired = asObject(JSON.parse(repairJson(text)))
+      if (repaired) return { ...repaired, __truncated: true }
+    } catch {
+      // 无法恢复，落到下方 __raw 分支
+    }
+  }
+  return { __raw: raw }
 }
 
 function finalizeCalls(entries: Array<[number, { id: string; name: string; args: string }]>): ToolCall[] {
@@ -273,6 +412,7 @@ type OpenAIChunk = {
   choices?: Array<{
     delta?: { content?: string | null; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }
     message?: { content?: string | null; tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }
+    finish_reason?: string | null
   }>
   usage?: { prompt_tokens?: number; completion_tokens?: number }
   error?: { message?: string } | string
@@ -288,13 +428,14 @@ async function openaiChat(request: ChatRequest): Promise<ChatTurn> {
     stream_options: { include_usage: true },
     messages: toOpenAIMessages(request.system, request.messages),
     ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-    ...(request.maxTokens ? { max_tokens: request.maxTokens } : {}),
+    max_tokens: resolveMaxTokens(request),
     ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
   }
   const stream = await openStream(endpoint(base, '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body) }, request)
   let content = ''
   const calls = new Map<number, { id: string; name: string; args: string }>()
   let usage: ChatTurn['usage']
+  let truncated = false
   for await (const event of sseEvents(stream, request.signal)) {
     if (event.data === '[DONE]') break
     let payload: OpenAIChunk
@@ -305,6 +446,7 @@ async function openaiChat(request: ChatRequest): Promise<ChatTurn> {
     if (payload.error) throw new Error(`模型服务返回错误：${typeof payload.error === 'string' ? payload.error : payload.error.message ?? '未知错误'}`)
     if (payload.usage) usage = { input: payload.usage.prompt_tokens ?? 0, output: payload.usage.completion_tokens ?? 0 }
     const choice = payload.choices?.[0]
+    if (choice?.finish_reason === 'length') truncated = true
     if (choice?.message) {
       if (choice.message.content) {
         content += choice.message.content
@@ -328,7 +470,7 @@ async function openaiChat(request: ChatRequest): Promise<ChatTurn> {
     }
   }
   const toolCalls = finalizeCalls([...calls.entries()])
-  return { content, toolCalls, usage }
+  return { content, toolCalls, usage, truncated }
 }
 
 function toAnthropicMessages(messages: Message[]): unknown[] {
@@ -377,7 +519,7 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
   if (!request.apiKey) throw new Error('Anthropic 提供商需要 API Key')
   const body = {
     model: request.model.modelId,
-    max_tokens: request.maxTokens || 8192,
+    max_tokens: resolveMaxTokens(request),
     stream: true,
     system: request.system,
     messages: toAnthropicMessages(request.messages),
@@ -392,15 +534,19 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
   let content = ''
   const blocks = new Map<number, { id: string; name: string; json: string }>()
   let usage: ChatTurn['usage']
+  let truncated = false
   for await (const event of sseEvents(stream, request.signal)) {
-    let payload: { type?: string; index?: number; content_block?: { type?: string; id?: string; name?: string }; delta?: { type?: string; text?: string; partial_json?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number }; error?: { message?: string } }
+    let payload: { type?: string; index?: number; content_block?: { type?: string; id?: string; name?: string }; delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number }; error?: { message?: string } }
     try { payload = JSON.parse(event.data) } catch {
       if (event.raw) throw rawError(event.data)
       continue
     }
     if (payload.type === 'error' || (event.raw && payload.error)) throw new Error(`模型服务返回错误：${payload.error?.message ?? '未知错误'}`)
     if (payload.type === 'message_start') usage = { input: payload.message?.usage?.input_tokens ?? 0, output: 0 }
-    else if (payload.type === 'message_delta' && payload.usage) usage = { input: usage?.input ?? 0, output: payload.usage.output_tokens ?? 0 }
+    else if (payload.type === 'message_delta') {
+      if (payload.usage) usage = { input: usage?.input ?? 0, output: payload.usage.output_tokens ?? 0 }
+      if (payload.delta?.stop_reason === 'max_tokens') truncated = true
+    }
     else if (payload.type === 'content_block_start' && payload.content_block?.type === 'tool_use') {
       blocks.set(payload.index ?? blocks.size, { id: payload.content_block.id ?? toolCallId('toolu', payload.index ?? 0), name: payload.content_block.name ?? '', json: '' })
     } else if (payload.type === 'content_block_delta') {
@@ -414,5 +560,5 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
     }
   }
   const toolCalls = finalizeCalls([...blocks.entries()].map(([index, block]) => [index, { id: block.id, name: block.name, args: block.json }]))
-  return { content, toolCalls, usage }
+  return { content, toolCalls, usage, truncated }
 }

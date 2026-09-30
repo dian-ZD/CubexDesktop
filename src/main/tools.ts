@@ -101,12 +101,19 @@ export async function runTool(call: ToolCall, context: ToolContext): Promise<Too
 
 async function dispatch(call: ToolCall, context: ToolContext): Promise<{ output: string; diff?: string }> {
   const a = call.args
+  if (typeof a.__raw === 'string') throw new Error('工具参数不是合法 JSON（可能被截断），未执行。请检查输出是否过长并重新调用该工具。')
   switch (call.name) {
     case 'read_file': return { output: await readFileTool(context.root, str(a.path), num(a.start), num(a.limit)) }
     case 'list_directory': return { output: await listTool(context.root, str(a.path) || '.', num(a.depth) ?? 2) }
     case 'search_files': return { output: await searchTool(context.root, str(a.pattern), str(a.path) || '.', str(a.glob), context.signal) }
-    case 'write_file': return writeTool(context.root, str(a.path), str(a.content))
-    case 'edit_file': return editTool(context.root, str(a.path), str(a.old_text), str(a.new_text))
+    case 'write_file': {
+      if (a.content === undefined || a.content === null) throw new Error('缺少 content 参数（可能因输出过长被截断），未写入。请重新调用 write_file 并提供完整内容。')
+      return writeTool(context.root, str(a.path), str(a.content))
+    }
+    case 'edit_file': {
+      if (a.new_text === undefined || a.new_text === null) throw new Error('缺少 new_text 参数（可能因输出过长被截断），未编辑。请重新调用 edit_file 并提供完整内容。')
+      return editTool(context.root, str(a.path), str(a.old_text), str(a.new_text))
+    }
     case 'run_command': return { output: await commandTool(context.root, str(a.command), num(a.timeout_ms), context.signal, context.commandTimeoutMs ?? MAX_COMMAND_MS, context.shell ?? 'auto', context.sandbox) }
     case 'ask_user': throw new Error('ask_user 需要由会话层处理')
     case 'manage_todos': throw new Error('manage_todos 需要由会话层处理')

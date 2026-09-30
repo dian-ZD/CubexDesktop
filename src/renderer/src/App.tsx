@@ -1,9 +1,11 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X } from 'lucide-react'
-import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
+import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
 import { Logo } from './Logo'
-import { Markdown } from './Markdown'
+import { Markdown, OpenTargetContext, type OpenTarget } from './Markdown'
+import type { OpenRequest } from './RightPanel'
+import { SkillMenu } from './SkillMenu'
 import { Select, useUi, type MenuEntry } from './ui'
 import { LanguageContext, translate, useI18n, eulaText, tr as trBase } from './i18n'
 import { useSpeech } from './useSpeech'
@@ -191,6 +193,29 @@ export function App() {
   const [focused, setFocused] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [panelDetached, setPanelDetached] = useState(false)
+  const [openRequest, setOpenRequest] = useState<OpenRequest | null>(null)
+  const requestOpen = useCallback((target: OpenTarget) => {
+    if (target.kind === 'url' && !isDesktop) { void api.openExternal({ url: target.value }); return }
+    setRightPanelOpen(true)
+    setOpenRequest({ target, nonce: Date.now() })
+  }, [])
+  const [skills, setSkills] = useState<SkillMeta[]>([])
+  const [skillQuery, setSkillQuery] = useState<string | null>(null)
+  const reloadSkills = useCallback(() => { void api.listSkills().then((result) => { if (result.ok) setSkills(result.data) }) }, [])
+  useEffect(() => { reloadSkills() }, [reloadSkills])
+  const onInputChange = useCallback((value: string) => {
+    setInput(value)
+    const match = /^\/([^\s/]*)$/.exec(value)
+    setSkillQuery(match ? match[1] : null)
+  }, [])
+  const pickSkill = useCallback((skill: SkillMeta) => {
+    setSkillQuery(null)
+    void api.readSkill({ id: skill.id }).then((result) => {
+      if (!result.ok) { setError(result.error); return }
+      setInput((current) => (/^\/[^\s/]*$/.test(current) ? '' : current) + result.data.content)
+      requestAnimationFrame(() => { const node = inputRef.current; if (node) { node.focus(); node.setSelectionRange(node.value.length, node.value.length) } })
+    })
+  }, [])
   const detachedThreadId = useMemo(panelThreadId, [])
   useEffect(() => api.onWindowState((next) => {
     setMaximized(next.maximized)
@@ -237,7 +262,27 @@ export function App() {
     if (!node) return
     const handle = requestAnimationFrame(() => { node.scrollTop = node.scrollHeight })
     return () => cancelAnimationFrame(handle)
-  }, [thread?.messages.length, currentStreamLen, thread?.status, chat.autoScroll])
+  }, [thread?.id, thread?.messages.length, currentStreamLen, thread?.status, chat.autoScroll])
+
+  useEffect(() => {
+    if (!thread?.id) return
+    const node = scrollRef.current
+    if (!node) return
+    const scroll = () => { node.scrollTop = node.scrollHeight }
+    const first = requestAnimationFrame(scroll)
+    const second = requestAnimationFrame(() => requestAnimationFrame(scroll))
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
+  }, [thread?.id])
+
+  useEffect(() => {
+    const node = inputRef.current
+    if (!node) return
+    const base = 48
+    const max = Math.round(base * 2.5)
+    node.style.height = 'auto'
+    node.style.height = `${Math.min(Math.max(node.scrollHeight, base), max)}px`
+    node.style.overflowY = node.scrollHeight > max ? 'auto' : 'hidden'
+  }, [input])
 
   useEffect(() => {
     const root = document.documentElement
@@ -347,6 +392,15 @@ export function App() {
         if (!created.ok) { setError(created.error); return }
         target = created.data
         setThreadId(target.id)
+      }
+      if (target.status === 'idle') {
+        const window = model?.contextWindow && model.contextWindow > 0 ? model.contextWindow : 128_000
+        let used = 0
+        for (let i = target.messages.length - 1; i >= 0; i--) {
+          const message = target.messages[i]
+          if (message.role === 'assistant' && message.usage) { used = message.usage.input + message.usage.output; break }
+        }
+        if (used / window >= 0.92) await api.compactThread({ threadId: target.id }).catch(() => undefined)
       }
       const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
       if (!result.ok) setError(result.error)
@@ -614,6 +668,7 @@ export function App() {
   const ctrlSend = chat.sendKey === 'ctrl-enter'
   const sendLabel = ctrlSend ? 'Ctrl Enter' : 'Enter'
   const showSidebar = sidebarOpen && view !== 'settings'
+  const panelMode = view === 'chat' || view === 'work'
   const showRightPanel = rightPanelOpen && view === 'chat' && !panelDetached
 
   if (detachedThreadId) {
@@ -621,6 +676,7 @@ export function App() {
     const panelProject = panelThread ? state.projects.find((item) => item.id === panelThread.projectId) ?? null : null
     return (
       <LanguageContext.Provider value={uiLang}>
+      <OpenTargetContext.Provider value={requestOpen}>
       <div className={`shell panel-shell${focused ? '' : ' blurred'}`}>
         <div className="main-shell">
           <header className="titlebar panel-titlebar">
@@ -633,16 +689,18 @@ export function App() {
             </div>
           </header>
           {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在加载…')}</div>
-            : panelThread ? <Suspense fallback={panelFallback}><RightPanel thread={panelThread} project={panelProject} detached onError={setError} /></Suspense>
+            : panelThread ? <Suspense fallback={panelFallback}><RightPanel thread={panelThread} project={panelProject} detached onError={setError} openRequest={openRequest} contextWindow={models.find((item) => item.id === panelThread.modelId)?.contextWindow} /></Suspense>
             : <div className="right-panel-empty panel-shell-empty"><Logo size={30} /><span>{tr('该任务已被删除，可以关闭此窗口。')}</span></div>}
         </div>
       </div>
+      </OpenTargetContext.Provider>
       </LanguageContext.Provider>
     )
   }
 
   return (
     <LanguageContext.Provider value={uiLang}>
+    <OpenTargetContext.Provider value={requestOpen}>
     <div className={`shell${showSidebar ? '' : ' sidebar-collapsed'}${maximized ? ' maximized' : ''}${focused ? '' : ' blurred'}`}>
       {showSidebar && (
         <aside className="sidebar" aria-label={tr('工作区导航')}>
@@ -716,8 +774,8 @@ export function App() {
             )}
             {!isDesktop && <span className="preview-badge" title={state.notice}>{tr('浏览器预览')}</span>}
             <button className="icon-button" aria-label={resolvedTheme === 'dark' ? tr('切换到浅色') : tr('切换到深色')} title={resolvedTheme === 'dark' ? tr('切换到浅色') : tr('切换到深色')} onClick={() => void toggleTheme()}>{resolvedTheme === 'dark' ? <Sun size={17} /> : <Moon size={16} />}</button>
-            {thread && view === 'chat' && <button className="icon-button" aria-label={tr('任务操作')} title={tr('任务操作')} onClick={(event) => ui.openMenu(event.currentTarget, threadMenu(thread))}><Ellipsis size={16} /></button>}
-            {view === 'chat' && (panelDetached
+            {thread && panelMode && <button className="icon-button" aria-label={tr('任务操作')} title={tr('任务操作')} onClick={(event) => ui.openMenu(event.currentTarget, threadMenu(thread))}><Ellipsis size={16} /></button>}
+            {panelMode && (panelDetached
               ? <button className="icon-button" aria-label={tr('收回任务面板')} title={tr('收回任务面板')} onClick={() => { void api.closePanelWindow().catch(() => undefined); setRightPanelOpen(true) }}><PanelRight size={17} /></button>
               : <button className="icon-button" aria-label={rightPanelOpen ? tr('收起右栏') : tr('展开右栏')} aria-pressed={rightPanelOpen} title={rightPanelOpen ? tr('收起右栏') : tr('展开右栏')} onClick={() => setRightPanelOpen((value) => !value)}><PanelRight size={17} /></button>)}
             <div className="window-controls" role="group" aria-label={tr('窗口控制')}>
@@ -741,8 +799,8 @@ export function App() {
         )}
 
         <div className="workspace">
-          {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView('chat') }} /></Suspense>
-            : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} settings={state.settings} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
+          {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView('chat'); reloadSkills() }} /></Suspense>
+            : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} settings={state.settings} panelOpen={rightPanelOpen && !panelDetached} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
             <main className={`center${thread ? ' has-task' : ' is-home'}`}>
               {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div> : (
                 <>
@@ -813,9 +871,11 @@ export function App() {
                             ))}
                           </div>
                         )}
-                        <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => setInput(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput}
+                        {skillQuery !== null && <SkillMenu skills={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
+                        <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput}
                           onPaste={(event) => { const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void addImageFiles(files) } }}
                           onKeyDown={(event) => {
+                            if (skillQuery !== null && ['Enter', 'ArrowUp', 'ArrowDown', 'Tab', 'Escape'].includes(event.key)) return
                             if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
                             const modifier = event.ctrlKey || event.metaKey
                             if (ctrlSend ? modifier : !event.shiftKey && !modifier) { event.preventDefault(); void send() }
@@ -838,7 +898,7 @@ export function App() {
                                 </button>
                               )
                             })()}
-                            <button className="icon-button" type="button" aria-label={tr('技能与 MCP')} title={tr('技能与 MCP（在设置中管理）')} onClick={() => { setSettingsSection('mcp'); setView('settings') }}><Puzzle size={16} /></button>
+                            <button className="icon-button" type="button" aria-label={tr('技能与 MCP')} title={tr('技能与 MCP（在设置中管理）')} onClick={() => { setSettingsSection('skills'); setView('settings') }}><Puzzle size={16} /></button>
                           </div>
                           {isActive ? (
                             <div className="send-group">
@@ -866,10 +926,11 @@ export function App() {
             <RightPanel
               thread={thread}
               project={project}
-              onCollapse={() => setRightPanelOpen(false)}
               onDetach={isDesktop && thread ? () => { void api.openPanelWindow({ threadId: thread.id }).then((result) => { if (!result.ok) setError(result.error) }) } : undefined}
               onError={setError}
               onAddToChat={addToChat}
+              openRequest={openRequest}
+              contextWindow={model?.contextWindow}
             />
             </Suspense>
           )}
@@ -885,6 +946,7 @@ export function App() {
         />
       )}
     </div>
+    </OpenTargetContext.Provider>
     </LanguageContext.Provider>
   )
 }
@@ -1151,7 +1213,7 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
       <div className="assistant-head"><span className="result-mark"><Logo size={26} rounded /></span><strong>Cubex</strong>{modelName && <span className="muted">{modelName}</span>}{showUsage && message.usage && <span className="muted">{message.usage.input + message.usage.output} tokens</span>}</div>
       {content && (streaming ? <div className="stream-text">{content}</div> : <Markdown source={content} />)}
       {!content && message.toolCalls.length === 0 && <div className="thinking"><LoaderCircle size={14} className="spin" />{tr('正在生成…')}</div>}
-      {message.toolCalls.length > 0 && <div className="tool-calls">{message.toolCalls.map((call) => { const Icon = toolIcon[call.name]; return <div className="tool-call" key={call.id}><Icon size={13} /><span className="truncate">{toolTitle(call, tr)}</span></div> })}</div>}
+      {message.toolCalls.length > 0 && <div className="tool-calls">{message.toolCalls.map((call) => { const Icon = toolIcon[call.name]; return <ToolCallChip key={call.id} call={call} Icon={Icon} /> })}</div>}
       {content && (
         <div className="msg-toolbar">
           <CopyButton text={content} />
@@ -1162,6 +1224,33 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
     </div>
   )
 }, sameMessageProps)
+
+function formatArgs(call: ToolCall): string {
+  const args = call.args as Record<string, unknown>
+  const keys = Object.keys(args)
+  if (keys.length === 0) return ''
+  return keys.map((key) => {
+    const value = args[key]
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+    return `${key}: ${text}`
+  }).join('\n')
+}
+
+function ToolCallChip({ call, Icon }: { call: ToolCall; Icon: (typeof toolIcon)[keyof typeof toolIcon] }) {
+  const { tr } = useI18n()
+  const [open, setOpen] = useState(false)
+  const detail = formatArgs(call)
+  return (
+    <div className={`tool-call${open ? ' open' : ''}`}>
+      <button type="button" className="tool-call-head" aria-expanded={detail ? open : undefined} onClick={() => detail && setOpen((value) => !value)} title={detail || undefined}>
+        {detail && (open ? <ChevronDown size={12} /> : <ChevronRight size={12} />)}
+        <Icon size={13} />
+        <span className="truncate">{toolTitle(call, tr)}</span>
+      </button>
+      {open && detail && <pre className="tool-call-args">{detail}</pre>}
+    </div>
+  )
+}
 
 function ToolResultCard({ result, defaultOpen }: { result: ToolResult; defaultOpen: boolean }) {
   const { tr } = useI18n()
