@@ -1,0 +1,126 @@
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { createInitialState, migrateState, stateSchema, type AppState } from '../shared/schema'
+
+const PERSIST_DELAY_MS = 250
+
+export class StateStore {
+  private state: AppState
+  private queue: Promise<void> = Promise.resolve()
+  private listeners = new Set<(state: AppState) => void>()
+  private timer: ReturnType<typeof setTimeout> | null = null
+  private dirty = false
+
+  constructor(private readonly filePath: string) {
+    this.state = createInitialState()
+  }
+
+  async load(): Promise<void> {
+    let notice: string | undefined
+    try {
+      const raw = await readFile(this.filePath, 'utf8')
+      const parsed = stateSchema.safeParse(migrateState(JSON.parse(raw)))
+      if (parsed.success) {
+        this.state = parsed.data
+      } else {
+        notice = '状态文件校验失败，已重置为初始状态；原文件保留为 .corrupt 备份'
+        await rename(this.filePath, `${this.filePath}.corrupt`).catch(() => undefined)
+        this.state = createInitialState()
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        notice = '状态文件无法读取，已重置为初始状态'
+        await rename(this.filePath, `${this.filePath}.corrupt`).catch(() => undefined)
+      }
+      this.state = createInitialState()
+    }
+    let interrupted = 0
+    for (const thread of this.state.threads) {
+      if (thread.status !== 'idle') {
+        const now = new Date().toISOString()
+        thread.status = 'idle'
+        thread.pending = undefined
+        thread.updatedAt = now
+        thread.messages = [...thread.messages.slice(-399), {
+          id: `${thread.id}-interrupted-${Date.now().toString(36)}`,
+          role: 'system',
+          time: now,
+          level: 'info',
+          content: '应用在回复期间退出，本轮已中断。',
+        }]
+        interrupted += 1
+      }
+    }
+    if (interrupted > 0) notice = [notice, `${interrupted} 个会话因上次退出被中断`].filter(Boolean).join('；')
+    this.state.notice = notice
+    if (interrupted > 0 || notice) {
+      this.dirty = true
+      await this.flush()
+    }
+  }
+
+  get(): AppState {
+    return this.state
+  }
+
+  subscribe(listener: (state: AppState) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  async update(mutate: (state: AppState) => void): Promise<void> {
+    mutate(this.state)
+    if (this.state.threads.length > 200) this.state.threads = this.state.threads.slice(-200)
+    if (this.state.projects.length > 50) this.state.projects = this.state.projects.slice(-50)
+    for (const listener of this.listeners) listener(this.state)
+    this.schedulePersist()
+  }
+
+  // 合并短时间内的多次写入，避免流式回复期间频繁序列化整个状态
+  private schedulePersist() {
+    this.dirty = true
+    if (this.timer) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      void this.flush()
+    }, PERSIST_DELAY_MS)
+  }
+
+  flush(): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    if (!this.dirty) return this.queue
+    this.dirty = false
+    const snapshot = JSON.stringify(this.state)
+    this.queue = this.queue
+      .then(async () => {
+        await mkdir(dirname(this.filePath), { recursive: true })
+        const tmp = `${this.filePath}.${process.pid}.tmp`
+        await writeFile(tmp, snapshot, 'utf8')
+        await rename(tmp, this.filePath)
+      })
+      .catch(() => undefined)
+    return this.queue
+  }
+
+  // 退出时同步落盘，保证最后一次修改不丢失
+  flushSync() {
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    if (!this.dirty) return
+    this.dirty = false
+    try {
+      mkdirSync(dirname(this.filePath), { recursive: true })
+      const tmp = `${this.filePath}.${process.pid}.sync.tmp`
+      writeFileSync(tmp, JSON.stringify(this.state), 'utf8')
+      renameSync(tmp, this.filePath)
+    } catch {
+      this.dirty = true
+    }
+  }
+}

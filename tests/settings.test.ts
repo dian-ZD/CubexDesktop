@@ -1,0 +1,91 @@
+import { describe, expect, it } from 'vitest'
+import { sanitizeHistory } from '../src/main/llm'
+import { buildSystemPrompt } from '../src/main/prompt'
+import { matchesCommandRule } from '../src/main/tools'
+import { createInitialState, defaultSettings, migrateState, stateSchema, type Message } from '../src/shared/schema'
+
+const time = '2026-01-01T00:00:00.000Z'
+const project = { id: 'p1', name: 'demo', path: 'C:\\demo' }
+
+describe('migrateState', () => {
+  it('v2 状态升级为 v3，去掉自定义提示词并补齐新分组', () => {
+    const legacy = { version: 2, projects: [], threads: [], settings: { providers: [], models: [], defaultModelId: '', approvalMode: 'auto-edit', systemPrompt: '旧提示词' } }
+    const migrated = migrateState(legacy) as { version: number; settings: Record<string, unknown> }
+    expect(migrated.version).toBe(3)
+    expect(migrated.settings).not.toHaveProperty('systemPrompt')
+    expect(migrated.settings.approvalMode).toBe('auto-edit')
+    expect(migrated.settings.agent).toEqual(defaultSettings().agent)
+    expect(stateSchema.safeParse(migrated).success).toBe(true)
+  })
+
+  it('保留合法的旧值，丢弃非法的单项而不重置整个分组', () => {
+    const state = createInitialState()
+    const raw = { ...state, settings: { ...state.settings, appearance: { ...state.settings.appearance, theme: 'light', fontSize: 99 } } }
+    const migrated = migrateState(raw) as ReturnType<typeof createInitialState>
+    expect(migrated.settings.appearance.theme).toBe('light')
+    expect(migrated.settings.appearance.fontSize).toBe(14)
+    expect(stateSchema.safeParse(migrated).success).toBe(true)
+  })
+
+  it('无法识别的数据原样返回', () => {
+    expect(migrateState(null)).toBeNull()
+    expect(migrateState({ version: 1 })).toEqual({ version: 1 })
+  })
+})
+
+describe('matchesCommandRule', () => {
+  it('按命令前缀匹配，不误伤相似命令', () => {
+    expect(matchesCommandRule('git push --force origin main', ['git push --force'])).toBe('git push --force')
+    expect(matchesCommandRule('git pushx', ['git push'])).toBeUndefined()
+    expect(matchesCommandRule('npm test', ['npm test'])).toBe('npm test')
+  })
+
+  it('检查组合命令中的每一段并支持通配符', () => {
+    expect(matchesCommandRule('npm run build && shutdown /s', ['shutdown'])).toBe('shutdown')
+    expect(matchesCommandRule('npm run lint', ['npm run *'])).toBe('npm run *')
+    expect(matchesCommandRule('pnpm install', ['npm run *'])).toBeUndefined()
+  })
+})
+
+describe('sanitizeHistory', () => {
+  it('移除空的助手占位、系统消息与没有结果的工具调用', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', time, content: '你好' },
+      { id: 'a1', role: 'assistant', time, content: '', toolCalls: [], modelId: 'm' },
+      { id: 's1', role: 'system', time, content: '出错了', level: 'error' },
+      { id: 'u2', role: 'user', time, content: '再试一次' },
+      { id: 'a2', role: 'assistant', time, content: '', toolCalls: [{ id: 'c1', name: 'read_file', args: { path: 'a' } }], modelId: 'm' },
+      { id: 'u3', role: 'user', time, content: '继续' },
+    ]
+    expect(sanitizeHistory(messages).map((item) => item.id)).toEqual(['u1', 'u2', 'u3'])
+  })
+
+  it('保留成对的工具调用与结果', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', time, content: '读文件' },
+      { id: 'a1', role: 'assistant', time, content: '', toolCalls: [{ id: 'c1', name: 'read_file', args: { path: 'a' } }, { id: 'c2', name: 'read_file', args: { path: 'b' } }], modelId: 'm' },
+      { id: 't1', role: 'tool', time, results: [{ callId: 'c1', name: 'read_file', ok: true, output: 'x' }] },
+    ]
+    const out = sanitizeHistory(messages)
+    expect(out.map((item) => item.id)).toEqual(['u1', 'a1', 't1'])
+    const assistant = out[1]
+    expect(assistant.role === 'assistant' && assistant.toolCalls.map((call) => call.id)).toEqual(['c1'])
+  })
+})
+
+describe('buildSystemPrompt', () => {
+  it('根据设置动态拼接规则与环境信息', () => {
+    const settings = defaultSettings()
+    const prompt = buildSystemPrompt(settings, project, new Date(time))
+    expect(prompt).toContain('C:\\demo')
+    expect(prompt).toContain(`${settings.agent.maxSteps} 步`)
+    expect(prompt).not.toContain('只读模式')
+  })
+
+  it('只读模式下提示模型不要修改文件', () => {
+    const settings = defaultSettings()
+    const prompt = buildSystemPrompt({ ...settings, permissions: { ...settings.permissions, readOnly: true } }, project, new Date(time))
+    expect(prompt).toContain('只读模式')
+    expect(prompt).not.toContain('运行项目已有的类型检查')
+  })
+})
