@@ -5389,8 +5389,6 @@ textarea:focus-visible {
   scrollbar-width: none;
   -ms-overflow-style: none;
   background-color: var(--bg);
-  background-image: radial-gradient(var(--line-strong) 1px, transparent 1px);
-  background-size: 22px 22px;
 }
 
 .work-canvas::-webkit-scrollbar {
@@ -5436,6 +5434,8 @@ textarea:focus-visible {
 
 .work-surface {
   position: relative;
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
 
 .work-edges {
