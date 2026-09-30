@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import type { FileContent, FileEntry, Project, Thread, ToolResult } from '../../shared/schema'
 import type { OpenTarget } from './Markdown'
 import { api, isDesktop } from './bridge'
@@ -441,6 +441,17 @@ function SummaryView({ thread, project, contextWindow, onError }: { thread: Thre
         <section className="summary-card todo-card">
           <header><ListChecks size={14} />{tr('任务待办')}<span className="panel-meta">{todoDone}/{todos.length}</span></header>
           <div className="todo-progress" aria-hidden="true"><span className="todo-progress-fill" style={{ width: `${Math.round((todoDone / todos.length) * 100)}%` }} /></div>
+          <div className="todo-dots">
+            {todos.map((item) => {
+              const clean = item.content.replace(/\s+/g, ' ').trim()
+              const preview = clean.length > 10 ? `${clean.slice(0, 10)}…` : clean
+              return (
+                <span key={item.id} className={`todo-dot ${item.status}`} tabIndex={0} aria-label={preview}>
+                  <span className="todo-dot-label">{preview}</span>
+                </span>
+              )
+            })}
+          </div>
           <ol className="agent-todo-list">
             {todos.map((item) => (
               <li key={item.id} className={item.status}>
@@ -452,22 +463,7 @@ function SummaryView({ thread, project, contextWindow, onError }: { thread: Thre
           {done && todoDone === todos.length && <div className="summary-done"><CircleCheck size={14} />{tr('全部待办已完成')}</div>}
         </section>
       )}
-      <section className="summary-group">
-        <header><Globe size={13} />{tr('联网搜索')}<span className="panel-meta">{summary.searches.length}</span></header>
-        {summary.searches.length === 0 ? <p className="panel-note">{tr('联网搜索到的网页会显示在这里。可在设置 → 插件中开启联网搜索。')}</p> : (
-          <ul className="search-hits">
-            {summary.searches.map((hit) => (
-              <li key={hit.url}>
-                <a href={hit.url} target="_blank" rel="noreferrer" title={hit.url}>
-                  <span className="search-hit-title truncate"><ExternalLink size={12} />{hit.title}</span>
-                  {hit.snippet && <span className="search-hit-snippet">{hit.snippet}</span>}
-                  <span className="search-hit-url truncate">{hit.url}</span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <SearchGroup searches={summary.searches} />
       <SummaryGroup icon={FileText} title={tr('上下文')} items={project ? [project.name, ...summary.contextFiles] : summary.contextFiles} empty={tr('尚未引用上下文')} />
       <SummaryGroup icon={FileCode2} title={tr('读写文件')} items={summary.files.map((item) => trFileEntry(tr, item))} empty={tr('尚未读写文件')} />
       <SummaryGroup icon={Wrench} title={tr('工具')} items={summary.tools} empty={tr('尚未调用工具')} />
@@ -477,11 +473,66 @@ function SummaryView({ thread, project, contextWindow, onError }: { thread: Thre
   )
 }
 
+const SUMMARY_PAGE_SIZE = 10
+
+function SummaryPager({ page, pageCount, onPrev, onNext }: { page: number; pageCount: number; onPrev: () => void; onNext: () => void }) {
+  const { tr } = useI18n()
+  if (pageCount <= 1) return null
+  return (
+    <div className="summary-pager">
+      <button type="button" className="icon-button" onClick={onPrev} disabled={page <= 0} aria-label={tr('上一页')} title={tr('上一页')}><ChevronLeft size={14} /></button>
+      <span className="summary-pager-info">{page + 1} / {pageCount}</span>
+      <button type="button" className="icon-button" onClick={onNext} disabled={page >= pageCount - 1} aria-label={tr('下一页')} title={tr('下一页')}><ChevronRight size={14} /></button>
+    </div>
+  )
+}
+
+function usePaged<T>(items: T[]): { pageItems: T[]; page: number; pageCount: number; prev: () => void; next: () => void } {
+  const [page, setPage] = useState(0)
+  const pageCount = Math.max(1, Math.ceil(items.length / SUMMARY_PAGE_SIZE))
+  useEffect(() => { setPage((current) => Math.min(current, pageCount - 1)) }, [pageCount])
+  const start = page * SUMMARY_PAGE_SIZE
+  const pageItems = items.slice(start, start + SUMMARY_PAGE_SIZE)
+  return { pageItems, page, pageCount, prev: () => setPage((p) => Math.max(0, p - 1)), next: () => setPage((p) => Math.min(pageCount - 1, p + 1)) }
+}
+
+function SearchGroup({ searches }: { searches: SearchHit[] }) {
+  const { tr } = useI18n()
+  const { pageItems, page, pageCount, prev, next } = usePaged(searches)
+  return (
+    <section className="summary-group">
+      <header><Globe size={13} />{tr('联网搜索')}<span className="panel-meta">{searches.length}</span></header>
+      {searches.length === 0 ? <p className="panel-note">{tr('联网搜索到的网页会显示在这里。可在设置 → 插件中开启联网搜索。')}</p> : (
+        <>
+          <ul className="search-hits">
+            {pageItems.map((hit) => (
+              <li key={hit.url}>
+                <a href={hit.url} target="_blank" rel="noreferrer" title={hit.url}>
+                  <span className="search-hit-title truncate"><ExternalLink size={12} />{hit.title}</span>
+                  {hit.snippet && <span className="search-hit-snippet">{hit.snippet}</span>}
+                  <span className="search-hit-url truncate">{hit.url}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          <SummaryPager page={page} pageCount={pageCount} onPrev={prev} onNext={next} />
+        </>
+      )}
+    </section>
+  )
+}
+
 function SummaryGroup({ icon: Icon, title, items, empty }: { icon: typeof Folder; title: string; items: string[]; empty: string }) {
+  const { pageItems, page, pageCount, prev, next } = usePaged(items)
   return (
     <section className="summary-group">
       <header><Icon size={13} />{title}<span className="panel-meta">{items.length}</span></header>
-      {items.length === 0 ? <p className="panel-note">{empty}</p> : <ul>{items.slice(0, 30).map((item) => <li key={item} className="truncate" title={item}>{item}</li>)}</ul>}
+      {items.length === 0 ? <p className="panel-note">{empty}</p> : (
+        <>
+          <ul>{pageItems.map((item) => <li key={item} className="truncate" title={item}>{item}</li>)}</ul>
+          <SummaryPager page={page} pageCount={pageCount} onPrev={prev} onNext={next} />
+        </>
+      )}
     </section>
   )
 }

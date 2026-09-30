@@ -312,6 +312,15 @@ function hardenSession() {
       : `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ${modelHosts}`
     callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [csp] } })
   })
+  hardenPreviewSession()
+}
+
+const PREVIEW_PARTITION = 'persist:cubex-preview'
+
+function hardenPreviewSession() {
+  const preview = session.fromPartition(PREVIEW_PARTITION)
+  preview.setPermissionRequestHandler((_wc, permission, callback) => callback(permission === 'media'))
+  preview.setPermissionCheckHandler((_wc, permission) => permission === 'media')
 }
 
 function registerIpc() {
@@ -651,7 +660,24 @@ function registerIpc() {
 }
 
 app.on('web-contents-created', (_event, contents) => {
-  contents.on('will-attach-webview', (event) => event.preventDefault())
+  contents.on('will-attach-webview', (event, webPreferences, params) => {
+    if (params.partition !== PREVIEW_PARTITION) {
+      event.preventDefault()
+      return
+    }
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+  })
+  if (contents.getType() === 'webview') {
+    contents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    return
+  }
   contents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) void shell.openExternal(url)
     return { action: 'deny' }

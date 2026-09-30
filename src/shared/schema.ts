@@ -507,7 +507,7 @@ export function defaultSettings(): Settings {
     defaultModelId: '',
     approvalMode: 'ask',
     general: { language: 'zh-CN', uiLanguage: 'zh-CN', responseStyle: 'balanced', confirmDelete: true },
-    appearance: { theme: 'dark', accent: 'matcha', fontFamily: 'system', fontSize: 14, codeFontSize: 13, density: 'comfortable', reduceMotion: false, background: { opacity: 0.35 } },
+    appearance: { theme: 'light', accent: 'matcha', fontFamily: 'system', fontSize: 14, codeFontSize: 13, density: 'comfortable', reduceMotion: false, background: { opacity: 0.35 } },
     modelParams: { temperature: null, maxTokens: 0, timeoutSec: 120, retries: 2, historyLimit: 200 },
     agent: { maxSteps: 40, commandTimeoutSec: 180, shell: 'auto', planFirst: true, verifyChanges: true, autoTodo: true },
     permissions: { readOnly: false, sandbox: true, sandboxNetwork: false, allowCommands: [], denyCommands: ['rm -rf /', 'format', 'shutdown', 'git push --force'] },

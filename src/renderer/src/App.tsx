@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X } from 'lucide-react'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X } from 'lucide-react'
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
 import { Logo } from './Logo'
@@ -136,6 +136,10 @@ export function App() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const actionLock = useRef(false)
+  const scrollPositions = useRef<Record<string, number>>({})
+  const scrollRestored = useRef<string | null>(null)
+  const MESSAGE_PAGE = 20
+  const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE)
 
   useEffect(() => {
     let cancelled = false
@@ -256,23 +260,116 @@ export function App() {
     return total
   }, [thread, streams])
 
+  useEffect(() => { setVisibleCount(MESSAGE_PAGE) }, [thread?.id])
+
+  const totalMessages = thread?.messages.length ?? 0
+  const hiddenCount = Math.max(0, totalMessages - visibleCount)
+  const visibleMessages = useMemo(() => {
+    if (!thread) return []
+    return hiddenCount > 0 ? thread.messages.slice(hiddenCount) : thread.messages
+  }, [thread, hiddenCount])
+
+  const loadEarlier = useCallback(() => {
+    const node = scrollRef.current
+    const prevHeight = node?.scrollHeight ?? 0
+    const prevTop = node?.scrollTop ?? 0
+    setVisibleCount((count) => Math.min(totalMessages, count + MESSAGE_PAGE))
+    requestAnimationFrame(() => {
+      const current = scrollRef.current
+      if (!current) return
+      current.scrollTop = prevTop + (current.scrollHeight - prevHeight)
+    })
+  }, [totalMessages])
+
+  const dotPreview = useCallback((text: string) => {
+    const clean = text.replace(/\s+/g, ' ').trim()
+    return clean.length > 10 ? `${clean.slice(0, 10)}…` : clean
+  }, [])
+
+  const userDots = useMemo(() => {
+    if (!thread) return [] as { id: string; index: number; preview: string }[]
+    const dots: { id: string; index: number; preview: string }[] = []
+    thread.messages.forEach((message, index) => {
+      if (message.role !== 'user') return
+      const text = message.content || (message.card ? message.card.name : '')
+      dots.push({ id: message.id, index, preview: dotPreview(text) || tr('（无文本）') })
+    })
+    return dots
+  }, [thread, dotPreview, tr])
+
+  const scrollToMessage = useCallback((id: string, index: number) => {
+    const needVisible = totalMessages - index
+    if (needVisible > visibleCount) setVisibleCount(Math.min(totalMessages, needVisible + 2))
+    const doScroll = () => {
+      const node = scrollRef.current
+      if (!node) return
+      const target = node.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+      if (!target) return
+      node.scrollTop = target.offsetTop - 16
+    }
+    requestAnimationFrame(() => requestAnimationFrame(doScroll))
+  }, [totalMessages, visibleCount])
+
+  const dotsRef = useRef<HTMLDivElement | null>(null)
+  const [dotsFade, setDotsFade] = useState({ top: false, bottom: false })
+  const [dotHover, setDotHover] = useState<{ text: string; top: number } | null>(null)
+  const updateDotsFade = useCallback(() => {
+    const node = dotsRef.current
+    if (!node) return
+    const top = node.scrollTop > 1
+    const bottom = node.scrollHeight - node.scrollTop - node.clientHeight > 1
+    setDotsFade((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }))
+  }, [])
+  useEffect(() => { updateDotsFade() }, [updateDotsFade, userDots.length])
+  const showDotLabel = useCallback((target: HTMLElement, text: string) => {
+    const wrap = dotsRef.current?.parentElement
+    if (!wrap) return
+    const rect = target.getBoundingClientRect()
+    const base = wrap.getBoundingClientRect()
+    setDotHover({ text, top: rect.top - base.top + rect.height / 2 })
+  }, [])
+
+  const nearBottom = useCallback((node: HTMLDivElement) => node.scrollHeight - node.scrollTop - node.clientHeight < 80, [])
+
   useEffect(() => {
-    if (!chat.autoScroll) return
     const node = scrollRef.current
     if (!node) return
-    const handle = requestAnimationFrame(() => { node.scrollTop = node.scrollHeight })
-    return () => cancelAnimationFrame(handle)
-  }, [thread?.id, thread?.messages.length, currentStreamLen, thread?.status, chat.autoScroll])
+    const onScroll = () => {
+      if (!thread?.id) return
+      if (scrollRestored.current !== thread.id) return
+      scrollPositions.current[thread.id] = node.scrollTop
+      if (node.scrollTop < 120 && hiddenCount > 0) loadEarlier()
+    }
+    node.addEventListener('scroll', onScroll, { passive: true })
+    return () => node.removeEventListener('scroll', onScroll)
+  }, [thread?.id, hiddenCount, loadEarlier])
 
   useEffect(() => {
     if (!thread?.id) return
     const node = scrollRef.current
     if (!node) return
-    const scroll = () => { node.scrollTop = node.scrollHeight }
-    const first = requestAnimationFrame(scroll)
-    const second = requestAnimationFrame(() => requestAnimationFrame(scroll))
+    scrollRestored.current = null
+    const saved = scrollPositions.current[thread.id]
+    const apply = () => {
+      if (saved != null) node.scrollTop = saved
+      else node.scrollTop = node.scrollHeight
+      scrollRestored.current = thread.id
+    }
+    const first = requestAnimationFrame(apply)
+    const second = requestAnimationFrame(() => requestAnimationFrame(apply))
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
-  }, [thread?.id])
+  }, [thread?.id, view])
+
+  useEffect(() => {
+    if (!chat.autoScroll) return
+    if (!thread?.id) return
+    if (scrollRestored.current !== thread.id) return
+    const node = scrollRef.current
+    if (!node) return
+    if (!nearBottom(node)) return
+    const handle = requestAnimationFrame(() => { node.scrollTop = node.scrollHeight })
+    return () => cancelAnimationFrame(handle)
+  }, [thread?.id, thread?.messages.length, currentStreamLen, thread?.status, chat.autoScroll, nearBottom])
 
   useEffect(() => {
     const node = inputRef.current
@@ -805,9 +902,25 @@ export function App() {
               {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div> : (
                 <>
                   {thread ? (
+                    <>
+                    {userDots.length > 0 && (
+                      <nav className="msg-dots" aria-label={tr('消息导航')} onMouseLeave={() => setDotHover(null)}>
+                        <div className="msg-dots-track" ref={dotsRef} onScroll={updateDotsFade} data-fade-top={dotsFade.top ? '1' : undefined} data-fade-bottom={dotsFade.bottom ? '1' : undefined}>
+                          {userDots.map((dot) => (
+                            <button key={dot.id} type="button" className="msg-dot" onClick={() => scrollToMessage(dot.id, dot.index)} aria-label={dot.preview} onMouseEnter={(event) => showDotLabel(event.currentTarget, dot.preview)} onFocus={(event) => showDotLabel(event.currentTarget, dot.preview)} onBlur={() => setDotHover(null)} />
+                          ))}
+                        </div>
+                        {dotHover && <span className="msg-dot-label" style={{ top: dotHover.top }}>{dotHover.text}</span>}
+                      </nav>
+                    )}
                     <div className="center-scroll" ref={scrollRef}>
                       <div className="content-column conversation">
-                        {thread.messages.map((message) => <MessageView key={message.id} message={message} stream={streams[message.id]} modelName={models.find((item) => item.id === (message.role === 'assistant' ? message.modelId : ''))?.name} showUsage={chat.showUsage} expandTools={chat.expandTools} canEdit={thread.status === 'idle'} actions={messageActions} />)}
+                        {hiddenCount > 0 && (
+                          <button type="button" className="load-earlier" onClick={loadEarlier}>
+                            <ChevronUp size={14} />{tr('加载更早的 {n} 条消息', { n: Math.min(MESSAGE_PAGE, hiddenCount) })}
+                          </button>
+                        )}
+                        {visibleMessages.map((message) => <MessageView key={message.id} message={message} stream={streams[message.id]} modelName={models.find((item) => item.id === (message.role === 'assistant' ? message.modelId : ''))?.name} showUsage={chat.showUsage} expandTools={chat.expandTools} canEdit={thread.status === 'idle'} actions={messageActions} />)}
                         {thread.status === 'running' && !thread.messages.some((message) => message.role === 'assistant' && message.content === '' && streams[message.id]) && thread.messages[thread.messages.length - 1]?.role !== 'assistant' && (
                           <ActivityIndicator activity={activities[thread.id]} fallback={tr('正在思考…')} />
                         )}
@@ -825,6 +938,7 @@ export function App() {
                         )}
                       </div>
                     </div>
+                    </>
                   ) : (
                     <div className="welcome content-column">
                       <div className="welcome-mark" aria-hidden="true"><Logo size={48} /></div>
@@ -1174,7 +1288,7 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
   const { tr } = useI18n()
   if (message.role === 'user') {
     return (
-      <div className="msg user">
+      <div className="msg user" data-message-id={message.id}>
         {message.card ? (
           <div className="msg-card"><Workflow size={14} /><div className="msg-card-body"><strong>{message.card.name}</strong><span className="muted">{tr('工作流 · 共 {steps} 步', { steps: message.card.steps })}</span></div></div>
         ) : (

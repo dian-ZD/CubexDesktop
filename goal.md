@@ -1,34 +1,42 @@
 # CubexDesktop Goal
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（会话交接）
+> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
 
 ## 当前任务目标（一句话）
 
-打磨 CubexDesktop 桌面端的「外观 / 图标 / 国际化」体验并产出可安装的 0.1.1 版本；当前正处于「删除主题设置页并入外观」完成、且刚清理本地进度重编译 0.1.1 之后的状态。执行进度详见 plan.md，过程细节详见 memory.md。
+在稳定 0.1.2-dev 的基础上，为 CubexDesktop 新增与 Code / Work 并列的第三个主模式 **Browser（浏览器自动化工作台）**；当前正处于「Browser 模式 plan 已获用户确认、尚未开始编码」的状态。执行进度详见 plan.md，过程细节详见 memory.md。
 
 ### 背景与动机
 
-- 应用图标此前为透明底，在任务栏/安装器中辨识度不足 → 需白色圆角底；应用内仅在部分位置（助手消息头像、标题栏小图标）复用圆角样式。
-- 设置界面存在大量中文硬编码，切换英文时覆盖不全；字体可选项偏少 → 需全量接入 i18n 并扩充字体。
-- 「主题」与「外观」两个设置分区职责重叠 → 合并，主题项并入外观。
-- 用户需要一份干净的本地环境用于重新安装验证。
+- 已有 Code（对话式编码）与 Work（画布工作流）两个模式，均复用同一 agent/工具集；现需要一个可视化、可交互的浏览器自动化模式，参考 tabbit 的「任务隔离工作区 + 动作-验证-取证闭环」。
+- 已有只读的 `browser_open`（离屏 BrowserWindow，仅打开+抽取文本），不足以支撑交互式浏览；需升级为可见 + 可交互后端。
+- 前置已完成：修复多处输出/工具截断问题、新增自动检测可用模型与上下文长度、放大白底 logo 图标、输入框自适应高度，并编译 0.1.2-dev 推送至 GitHub。
 
-### 验收标准 / Definition of Done
+### 验收标准 / Definition of Done（Browser 模式）
 
-- [x] 应用图标带白色圆角底（OS 层：任务栏/安装器/窗口）。
-- [x] 应用内仅「助手消息头像 + 标题栏小图标」复用圆角 Logo，其他位置不加。
-- [x] i18n 全量补全（SettingsPanel / shared 层 Zod & schedule / App / ui / Markdown）。
-- [x] 字体从 9 项扩充到 16 项（schema + CSS 字体栈 + 标签翻译一致）。
-- [x] 删除「主题」设置分区，主题/配色/背景三项并入「外观」分区。
-- [x] `npm run typecheck`、`npm run lint`（0 error）、构建通过。
-- [x] 清理本地全部 Cubex 进度数据，并重新编译出 `release\Cubex Setup 0.1.1.exe`。
-- [ ] 待确认：是否需要升版本号到 0.1.2（用户此前未确认，目前保持 0.1.1）。
+- [ ] `view` 联合类型与标题栏 radiogroup 新增 `browser`，与 Code/Work 并列。
+- [ ] `thread.mode` 下沉到 schema（`code|work|browser`），agent 按模式注入专属 system prompt 段。
+- [ ] 新建 `src/main/browser.ts` BrowserEngine：任务隔离会话、可见 BrowserWindow、动作原语（navigate/click/type/extract/screenshot/wait）+ 租约 + 取证。
+- [ ] 新增结构化浏览器工具（`browser_navigate` 等），接入 extensions/dispatch + 审批；保留旧 `browser_open` 不动。
+- [ ] IPC/preload/bridge 三件套 + 实时截图帧推送。
+- [ ] 前端 `BrowserWorkspace.tsx`（混合形态：可对话 + 可编排）+ 实时画面 + 地址栏。
+- [ ] 设置新增 browser 分区 + i18n 全量 + 样式。
+- [ ] `npm run typecheck`、`npm run lint`（0 error）、`npm test` 通过 + 冒烟。
+
+### 前置里程碑（已完成）
+
+- [x] 修复写入/工具参数过长被截断（Anthropic 8192 上限 + safeArgs 静默失败 + JSON 修复）。
+- [x] 修复输出被莫名截断（`resolveMaxTokens` 统一两协议默认输出上限 + `finish_reason/stop_reason` 截断续写 + 上下文预留上调）。
+- [x] 自动检测可用模型 + 自动检测上下文长度（`llm.listModels` + `guessContextWindow` + IPC + 设置面板 UI）。
+- [x] 白底 logo 图标内容放大（0.72→0.88）；询问框加高一倍；输入框随字数自适应（最高 2.5×）。
+- [x] 编译 0.1.2-dev（`release\Cubex Setup 0.1.2-dev.exe`）并推送 GitHub（`dian-ZD/CubexDesktop` main，commit f57ade2）。
 
 ### 边界（不做什么 / 不改什么）
 
-- 不改动 `src/main/index.ts`、`src/renderer/src/speech.worker.ts` 中由用户/linter 外部修改的内容（保留 createWindow 先于 buildAppIcon、MCP/scheduler 延迟、whisper ASR 流水线）。
-- 删除主题分区**不删除** `schema.ts` 中 `appearance.theme/accent/background` 字段（数据层保留有效）。
-- 不主动 git 提交/推送（本目录当前非 git 仓库，`git status` 返回 128）。
+- 不改动 `src/main/index.ts`、`src/renderer/src/speech.worker.ts` 中由用户/linter 外部修改的内容（保留 createWindow 先于 buildAppIcon、MCP/scheduler 延迟、whisper ASR 流水线、resolveMaxTokens 相关外部微调）。
+- **不删除**旧只读工具 `browser_open`（Work/Code 仍可能引用）；Browser 模式新增独立 `browser_*` 交互工具。
+- 不删除 `schema.ts` 中 `appearance.theme/accent/background` 字段（数据层保留有效）。
+- 未获用户同意不引入 Playwright/Puppeteer 等新浏览器二进制依赖（已选定用 Electron 内置 BrowserWindow）。
 - 不在文档中写入任何真实密钥/令牌明文。
 
 ### 关键约束
@@ -158,9 +166,18 @@
 - 验证：typecheck / lint / build 通过；`npm test` 84 项通过（`tests/admin.test.ts` 新增“管理密钥登录/错误密钥拒绝”测试，spawn env 注入 `CUBEX_ADMIN_KEY`，所有 admin 路由测试改用密钥认证）。本地启动管理端 `POST /api/admin/login` 密钥登录返回 `ok=true`。
 - 服务：管理端运行于 http://127.0.0.1:4800，桌面端 dev（electron-vite）已启动供测试。
 
+## 阶段 15（2026-09-30）：0.1.2-dev 稳定性 + 自动检测模型 + GitHub 化
+
+- 截断修复：`src/main/llm.ts` 新增 `resolveMaxTokens`（用户值优先，否则按上下文窗口取半、夹在 4096~64000），OpenAI 与 Anthropic 两条路径统一输出上限；捕获 `finish_reason:length` / `stop_reason:max_tokens` 写入 `ChatTurn.truncated`，`agent.ts` 在无工具调用时自动续写（`MAX_CONTINUATIONS=5`），上下文预留由 8000 上调到 16000。
+- 工具参数截断修复：`safeArgs` 重写（`asObject`/`repairJson` 修复截断 JSON，恢复标记 `__truncated`、不可恢复标记 `__raw`），`dispatch` 与 agent 主/子循环加 `__raw` 守卫抛明确错误，write_file/edit_file 加缺参守卫。
+- 自动检测：`llm.listModels`（Anthropic /v1/models、Ollama /api/tags、OpenAI /models 读 context_length）+ `guessContextWindow` 兜底表；IPC `cubex:list-provider-models` 三件套；设置面板每提供商「自动检测模型」列表+逐个添加、每模型「自动检测上下文」回填。
+- UI：白底 logo 内容比例 0.72→0.88；`.question-form textarea` 最小高度翻倍（88px）；composer 输入框随字数自适应（48→120px，2.5×）。
+- 版本与仓库：版本升 `0.1.2-dev`，`npm run dist` 产出 `release\Cubex Setup 0.1.2-dev.exe`；**本目录已是 git 仓库**，remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，已 push 到 main（commit f57ade2）。
+- 验证：typecheck / lint（0 error，7 既有 warning）/ test（77 passed, 2 skipped）通过。
+
 ## 下一步
 
-1. 补测 Anthropic 原生接口与 Ollama；在 Electron 界面内用真实提供商走一遍。
-2. 会话摘要式压缩；交互式终端（PTY）。
-3. 桌面端 OAuth 授权流程；MCP 的 HTTP / SSE 传输。
-4. 补充桌面端 UI 自动化测试。
+1. 实现 Browser 模式（见 plan.md「Browser 模式」阶段），落地顺序：后端引擎 → 工具/agent → IPC/帧推送 → 前端 → 设置/i18n → 测试。
+2. 补测 Anthropic 原生接口与 Ollama；在 Electron 界面内用真实提供商走一遍自动检测模型。
+3. 会话摘要式压缩；交互式终端（PTY）。
+4. 桌面端 OAuth 授权流程；MCP 的 HTTP / SSE 传输。

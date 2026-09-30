@@ -1,6 +1,6 @@
 # 智能体协作说明
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（会话交接）
+> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
 >
 > 给接手本项目的任何 AI 智能体阅读：如何在本项目中安全、高效地继续工作。
 
@@ -9,7 +9,7 @@
 1. 先读 `goal.md`（要做成什么、验收标准、边界）。
 2. 再读 `plan.md`（步骤清单与「当前进行到的精确位置 / 下一步第一件事」）。
 3. 再读 `memory.md`（技术栈、决策、坑、命令结果、待确认项）。
-4. 读完后的第一件事：核对 `plan.md`「下一步第一件事」是否仍成立——目前所有编码与打包已完成，应先向用户确认是否有新需求，不要擅自升版或改代码。
+4. 读完后的第一件事：核对 `plan.md`「下一步第一件事」是否仍成立——目前处于「Browser 模式 plan 已获用户确认、尚未开始编码」状态，下一步是 Browser 模式步骤 1（schema `mode` 字段 + `src/main/browser.ts` BrowserEngine 骨架）；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
 
 ## 工作时的行为准则
 
@@ -29,9 +29,11 @@
 
 ## 禁止事项（绝对不做）
 
-- 不回退 `src/main/index.ts`、`src/renderer/src/speech.worker.ts` 的外部修改。
+- 不回退 `src/main/index.ts`、`src/renderer/src/speech.worker.ts`、`src/main/llm.ts`、`src/main/agent.ts` 中的外部/linter 修改（含 resolveMaxTokens、reserve 调整）。
+- 不删除只读工具 `browser_open`（Browser 模式新增独立 `browser_*` 工具，不替换它）。
 - 不删除 `src/shared/schema.ts` 的 `appearance.theme/accent/background` 字段。
-- 不做 git 提交/推送（本目录非 git 仓库；且用户未授权提交）。
+- **本目录已是 git 仓库**（remote `dian-ZD/CubexDesktop`）：可以做 git 操作，但**未获用户明确指令不擅自 commit/push**。
+- 未获用户同意不引入 Playwright/Puppeteer 等新浏览器二进制依赖（Browser 模式用 Electron 内置 BrowserWindow）。
 - 不在任何文件写入真实 API Key / 令牌 / 管理密钥明文。
 - 不跳过 typecheck / lint 就宣称完成。
 - 未获用户同意不安装新依赖、不改全局环境。
@@ -42,9 +44,10 @@
 
 ## 交接检查清单（Handoff Checklist）
 
-- [ ] 四个上下文文件顶部时间均为最新。
+- [ ] 四个上下文文件（goal / plan / memory / agents）顶部时间均为最新。
 - [ ] `plan.md` 的「下一步第一件事」具体到可直接执行。
 - [ ] `memory.md`「未解决问题 / 待确认」已更新。
-- [ ] 代码改动已过 typecheck + lint（0 error）。
-- [ ] 若打包，已核对 `release\Cubex Setup <version>.exe` 存在且大小/签名正常。
+- [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`（当前基线 77 passed / 2 skipped）。
+- [ ] 若打包，已核对 `release\Cubex Setup <version>.exe`（当前 0.1.2-dev）存在且大小/签名正常。
+- [ ] 若涉及 git：仅在用户明确要求时 commit/push；push 后核对目标分支/commit hash。
 - [ ] 无遗留占用进程（`Get-Process -Name Cubex` 为空）。

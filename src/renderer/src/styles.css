@@ -995,6 +995,30 @@ kbd {
   color: var(--text);
 }
 
+.summary-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.summary-pager .icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.summary-pager-info {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: center;
+}
+
 .summary-group li {
   padding: 2px 0;
 }
@@ -1111,7 +1135,7 @@ kbd {
 
 .summary-card.todo-card {
   border-color: var(--matcha-soft);
-  background: linear-gradient(180deg, var(--matcha-soft), var(--bg-elevated) 70%);
+  background: var(--bg-elevated);
 }
 
 .summary-card.todo-card > header .panel-meta {
@@ -1202,6 +1226,67 @@ kbd {
   border-radius: inherit;
   background: var(--matcha);
   transition: width var(--panel) ease;
+}
+
+.todo-dots {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.todo-dot {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  outline: none;
+}
+
+.todo-dot::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.todo-dot.active::before {
+  background: var(--matcha);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.todo-dot.done::before {
+  background: var(--matcha);
+}
+
+.todo-dot:hover::before,
+.todo-dot:focus-visible::before {
+  transform: scale(1.3);
+}
+
+.todo-dot-label {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+  z-index: 6;
+}
+
+.todo-dot:hover .todo-dot-label,
+.todo-dot:focus-visible .todo-dot-label {
+  opacity: 1;
 }
 
 .agent-todo-list {
@@ -1466,10 +1551,19 @@ kbd {
 
 .nav-row {
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 6px 10px;
   color: var(--text-dim);
   text-align: left;
   font-size: 13.5px;
+}
+
+.nav-row > svg,
+.nav-row .chevron,
+.nav-row .subtle-count,
+.nav-row .status-pip {
+  flex: 0 0 auto;
 }
 
 .nav-row:hover {
@@ -1634,6 +1728,95 @@ kbd {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.msg-dots {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.msg-dots-track {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 4px 0;
+  max-height: calc(5 * 7px + 4 * 5px + 8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.msg-dots-track::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.msg-dots-track[data-fade-top] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
+}
+
+.msg-dots-track[data-fade-bottom] {
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 14px);
+  mask-image: linear-gradient(to top, transparent 0, #000 14px);
+}
+
+.msg-dots-track[data-fade-top][data-fade-bottom] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+}
+
+.msg-dot {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.msg-dot::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.msg-dot:hover::before {
+  background: var(--matcha);
+  transform: scale(1.25);
+}
+
+.msg-dots > .msg-dot-label {
+  position: absolute;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  z-index: 6;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  box-shadow: var(--shadow-sm, 0 4px 12px rgba(0, 0, 0, 0.16));
 }
 
 .content-column {
@@ -2764,6 +2947,27 @@ textarea {
   gap: 18px;
   padding: 24px 0 32px;
   animation: rise 220ms ease-out;
+}
+
+.load-earlier {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.load-earlier:hover {
+  background: var(--matcha-soft);
+  color: var(--text);
+  border-color: var(--matcha);
 }
 
 .msg {
