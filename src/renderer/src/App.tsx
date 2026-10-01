@@ -6,6 +6,7 @@ import { Logo } from './components/Logo'
 import { Markdown, OpenTargetContext, type OpenTarget } from './components/Markdown'
 import type { OpenRequest } from './RightPanel'
 import { SkillMenu } from './components/SkillMenu'
+import { WorkflowStrip, type WorkflowAction } from './components/WorkflowStrip'
 import { Select, useUi, type MenuEntry } from './ui'
 import { LanguageContext, translate, useI18n, eulaText, tr as trBase } from './i18n'
 import { useSpeech } from './useSpeech'
@@ -723,6 +724,14 @@ export function App() {
     } catch { setError(tr('审批失败，请重试。')) }
   }
 
+  const workflowControl = async (action: WorkflowAction, nodeId?: string) => {
+    if (!thread) return
+    try {
+      const result = await api.workflowControl({ threadId: thread.id, action, ...(nodeId ? { nodeId } : {}) })
+      if (!result.ok) setError(result.error)
+    } catch { setError(tr('工作流操作失败，请重试。')) }
+  }
+
   const stopControl = useCallback(async () => {
     if (!control.active) return
     try {
@@ -903,6 +912,7 @@ export function App() {
                 <>
                   {thread ? (
                     <>
+                    {thread.workflowRun && <WorkflowStrip run={thread.workflowRun} onControl={(action, nodeId) => void workflowControl(action, nodeId)} />}
                     {userDots.length > 0 && (
                       <nav className="msg-dots" aria-label={tr('消息导航')} onMouseLeave={() => setDotHover(null)}>
                         <div className="msg-dots-track" ref={dotsRef} onScroll={updateDotsFade} data-fade-top={dotsFade.top ? '1' : undefined} data-fade-bottom={dotsFade.bottom ? '1' : undefined}>

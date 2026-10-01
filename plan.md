@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-**SPEC-003（工作流 DAG 执行引擎）阶段 1 已完成并本地提交；下一步阶段 2（UI：工作流进度条与暂停/继续/重试/跳过按钮 + i18n）**。提交策略（用户 2026-10-01 指令）：**每阶段本地 commit 留痕，不 push、不开 PR**。SPEC-002 三阶段全部完成。Browser 模式（步骤 1–6）与多人协作 ADR 挂起。
+**SPEC-003（工作流 DAG 执行引擎）阶段 1/2/3 全部完成（引擎 + 进度条 UI + 文档），已本地提交**。提交策略（用户 2026-10-01 指令）：**每阶段本地 commit 留痕，不 push、不开 PR**。SPEC-002 三阶段全部完成。Browser 模式（步骤 1–6）与多人协作 ADR 挂起。
 
 ## 步骤清单（近期已完成）
 
@@ -87,6 +87,14 @@
 - 验证：typecheck 0 / lint 0 error·7 warning / vitest **97 passed·2 skipped**（新增 12 条：拓扑推进、上游产出注入、备注注入、失败重试上限、重试成功、暂停回退、重试/跳过、删除守卫、重启归一化、schema）、build 通过、桌面冒烟通过。
 - 结论：完成。下一步阶段 2（UI 进度条 + 控制按钮 + i18n）。
 
+### 步骤 J：SPEC-003 阶段 2 —— 工作流进度条与控制 UI —— [x]
+
+- 目标：线程视图顶部展示权威进度（步骤 i/n、节点状态、失败原因），提供暂停/继续/重试/跳过。
+- 涉及文件：新增 `src/renderer/src/components/WorkflowStrip.tsx`；改 `src/renderer/src/App.tsx`（`workflowControl` 调用 + 顶部渲染）、`src/renderer/src/phrases.ts`（`workflowPhrases` 12 条）、`src/renderer/src/styles.css`（`.workflow-strip` 段）；同步 `rules/structure.md` 与 SPEC-003。
+- 验证：typecheck 0 / lint 0 error·7 warning / vitest 97 passed / build 通过 / 冒烟通过；**Playwright E2E**（注入含 workflowRun 的 state）：进度条正确渲染（`发布流水线 · 已暂停 · 步骤 3/4 · 失败原因…` + 4 枚状态胶囊），按钮按状态切换，点击「重试该步骤」实测走通 IPC→引擎，产生 `▶ 步骤 3/4：运行测试`、`（重试 1）`、`（重试 2）` 三条边界消息，步骤落真实错误 `请先在设置中添加模型并选择`，工作流重新暂停。
+- 修复：E2E 暴露「存在失败节点时『继续』按钮无效」，已改为仅无失败节点时显示。
+- 结论：完成。SPEC-003 三阶段全部落地。
+
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
 ### 步骤 1：schema mode 下沉 + BrowserEngine —— [ ]
@@ -120,8 +128,8 @@
 
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- **当前状态**：SPEC-002 阶段 1/2/3 全部完成，质量门 Linux 全绿（85 passed / 0 failed），Linux 产物（AppImage+deb）已验证；全部改动仅本地提交（4 个 commit），未 push。
-- **下一步第一件事**：向用户汇报 SPEC-002 完成清单；待用户决定——(a) 是否补跑 `dist:linux` 出迁移后产物；(b) 是否恢复 Browser 模式步骤 1；(c) 是否需要 Windows 回归清单。
+- **当前状态**：SPEC-003 阶段 1/2/3 全部完成并本地提交；Linux 质量门全绿（97 passed / 0 failed），DAG 引擎与进度条均已通过单测 + Playwright E2E 双验证。
+- **下一步第一件事**：等用户实测工作流（真实模型下跑多节点 DAG、暂停/继续/重试/跳过、中途杀进程看重启恢复）；之后可选：Browser 模式步骤 1、多人协作 ADR、或把"运行期间用户插话即时生效""节点隔离上下文"等 SPEC-003 非目标项排期。
 - Browser 模式恢复时其"下一步第一件事"仍是：`src/shared/schema.ts` threadSchema 加 `mode` 字段 + 新建 `src/main/browser.ts`；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
 
 ## 已知风险 / 阻塞项及应对

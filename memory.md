@@ -75,6 +75,8 @@
 - 关键机制：每节点一条 `▶ 步骤 i/n：标题` 系统分隔消息 + 一条承载指令的 user 消息；上游产出（仅直接前驱）注入下游指令；节点失败自动重试上限 `MAX_RETRIES=2`（总尝试 3 次）后暂停；暂停由 `cancelThread` 复用（工作流运行中取消 = 暂停，可恢复）；工作流运行期间 `drain` 被守卫拦住，队列留到结束/暂停后处理。
 - 不变式（实施期不得违反，见 SPEC-003 §13）：`deps` 必须持久化且指令组装只依赖 `deps`；`NodeRunner.runNode(threadId, …)` 保持 Promise 化、按线程寻址；就绪判定只允许在 `advance` 一处。
 - 状态归一化：应用退出时 `store.load()` 把 `running` 工作流置 `paused`、`running` 步骤回 `pending`，并写系统消息提示可继续。
+- UI：`src/renderer/src/components/WorkflowStrip.tsx` 在线程视图顶部常驻（`.center-scroll` 之外），状态点 + `步骤 i/n` + 失败原因 + 状态胶囊 + 控制按钮；有失败节点时只显示「重试该步骤/跳过该步骤」（「继续」无效，因上游未完成会被引擎立即重新暂停）。
+- **E2E 验证手法（可复用）**：Playwright `_electron.launch` + 先启动一次用 `window.cubex.saveSettings` 触发落盘生成 state.json → 直接编辑该文件注入 `projects/threads/workflowRun/workflows` → 二次启动并 `localStorage.setItem('cubex.onboarded','1')` + reload 关掉引导页 → 点击断言。脚本需放在**仓库根目录**运行（/tmp 下无法解析 `@playwright/test`），用后即删。
 
 ## 用户明确偏好与禁忌（尽量原样）
 

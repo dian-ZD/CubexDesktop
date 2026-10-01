@@ -100,6 +100,7 @@ cubex/
 | `renderer/src/components/Logo.tsx` | ★叶子组件：品牌图标 |
 | `renderer/src/components/SkillMenu.tsx` | ★叶子组件：输入框 `/` 技能菜单 |
 | `renderer/src/components/Markdown.tsx` | ★叶子组件：自研轻量 Markdown 渲染（导出 `OpenTarget`） |
+| `renderer/src/components/WorkflowStrip.tsx` | ★叶子组件：工作流进度条（节点状态胶囊 + 暂停/继续/重试/跳过按钮，SPEC-003 阶段 2） |
 | `renderer/src/ui.tsx` | 小型共享 UI 原子（Toggle/Choice/按钮等） |
 | `renderer/src/bridge.ts` | renderer 侧唯一 API 入口：桌面用 `window.cubex`，Web 预览用 `previewApi` 桩 |
 | `renderer/src/i18n.ts` + `phrases.ts` | `tr()` 中文键词典机制 + 词条库（新文案必须同步补 phrases） |

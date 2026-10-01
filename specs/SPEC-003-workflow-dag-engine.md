@@ -1,8 +1,8 @@
 # SPEC-003 工作流 DAG 执行引擎
 
-> 状态：**阶段 1（引擎）已实施完成（2026-10-01，本地提交，未 push）；阶段 2（UI）/ 阶段 3（收尾）待做** ｜ 创建：2026-10-01 ｜ 依据：本会话对「无 DAG 症状」的代码分析
+> 状态：**阶段 1（引擎）与阶段 2（UI）已实施完成（2026-10-01，本地提交，未 push）；阶段 3（收尾文档已随阶段 2 同步完成）** ｜ 创建：2026-10-01 ｜ 依据：本会话对「无 DAG 症状」的代码分析
 >
-> 阶段 1 验证：typecheck 0 / lint 0 error / vitest **97 passed · 2 skipped**（新增 `tests/workflowRunner.test.ts` 12 条）/ build 通过 / 桌面冒烟通过。实施说明：`cursor` 字段未采用（算法为就绪集扫描，该字段会成死状态）；失败重试上限 `MAX_RETRIES = 2`（总尝试 3 次）。
+> 验证：typecheck 0 / lint 0 error / vitest **97 passed · 2 skipped**（新增 `tests/workflowRunner.test.ts` 12 条）/ build 通过 / 桌面冒烟通过 / **E2E**（Playwright 注入 state：进度条渲染 + 重试链路 3 次尝试 + 失败暂停，见阶段 2 说明）。实施说明：`cursor` 字段未采用（算法为就绪集扫描，该字段会成死状态）；失败重试上限 `MAX_RETRIES = 2`（总尝试 3 次）。
 >
 > 前置事实：现状是 `runWorkflow` → `composeWorkflowPrompt`（编译成一段文本）→ `agent.send`（普通会话）。图只在编译期用于**校验无环 + 排版顺序**，运行期无任何节点概念。已确认的三个症状：① 模型声明结束时整个运行直接 `return`，剩余节点无声搁置；② `fitContext` 会把作为首条用户消息的工作流指令裁掉；③ `thread.todos` 由模型自报，无外部权威来源。
 
@@ -123,7 +123,8 @@ export class WorkflowRunner {
 
 **阶段 1 — 引擎（主进程）** —— ✅ 完成（2026-10-01）：schema + `workflow.ts`（`workflowStepPlan`/`composeNodeInstruction`/导出 `kindHints`）+ `workflowRunner.ts`（新建）+ `agent.ts`（`runNode`/`abortRun`/`drainQueue`/`Run.outcome|settled`/drain 守卫）+ `index.ts`（runWorkflow/runAutomation 接线、`workflowControl` IPC、cancelThread 转暂停、deleteWorkflow 守卫）+ `store.ts`（重启归一化）+ `preload`/`bridge` + `tests/workflowRunner.test.ts`。
 
-**阶段 2 — UI**：线程视图内工作流进度条（`thread.workflowRun` → 步骤 N/M + 节点状态点）+ 控制按钮（暂停/继续/重试/跳过）+ `phrases.ts` 词条 + 样式。数据经既有 `state` 广播自动到达，无需新事件通道。
+**阶段 2 — UI** —— ✅ 完成（2026-10-01）：新增 `src/renderer/src/components/WorkflowStrip.tsx`（状态点 + 步骤计数 + 失败原因 + 状态胶囊列表 + 控制按钮），`App.tsx` 接线（`workflowControl` 调用 + 线程视图顶部渲染），`phrases.ts` 新增 `workflowPhrases` 12 条，`styles.css` 新增 `.workflow-strip` 段。
+E2E 验证（Playwright 驱动 Electron + 注入含 workflowRun 的 state）：进度条渲染、按钮按状态切换、点击「重试该步骤」→ IPC → 引擎重试 3 次（`▶ 步骤 3/4：运行测试` / `（重试 1）` / `（重试 2）`）→ 步骤落真实错误 `请先在设置中添加模型并选择` → 工作流重新暂停。**验证中发现并修复**：存在失败节点时「继续」为无效按钮（引擎会因上游未完成立即重新暂停），已改为仅在无失败节点时显示。
 
 **阶段 3 — 收尾**：同步 `rules/structure.md`（新文件与职责）、`rules/quality-gates.md`（若基线变化）、`agents.md`/`plan.md`/`memory.md`；SPEC 状态更新。
 

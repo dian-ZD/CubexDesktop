@@ -6412,3 +6412,116 @@ textarea:focus-visible {
 :root[data-reduce-motion='true'] .onboarding-card {
   animation: none;
 }
+
+/* ===== 工作流进度条（SPEC-003 阶段 2） ===== */
+.workflow-strip {
+  flex: 0 0 auto;
+  padding: 8px calc(20px * var(--pad)) 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-elevated);
+  font-size: 12.5px;
+}
+
+.workflow-strip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workflow-state-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.workflow-state-dot.running { background: var(--matcha); }
+.workflow-state-dot.paused { background: var(--amber); }
+.workflow-state-dot.done { background: var(--blue); }
+
+.workflow-name {
+  max-width: 320px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.workflow-state,
+.workflow-count {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.workflow-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--red);
+}
+
+.workflow-actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workflow-actions .btn-primary,
+.workflow-actions .btn-secondary {
+  padding: 4px 9px;
+  font-size: 12px;
+  gap: 5px;
+}
+
+.workflow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-dim);
+}
+
+.workflow-step.running {
+  border-color: var(--matcha-deep);
+  color: var(--text);
+}
+
+.workflow-step.done {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.workflow-step.failed {
+  border-color: var(--red);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.workflow-step.skipped {
+  text-decoration: line-through;
+}
+
+.workflow-step-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.workflow-step-index {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
