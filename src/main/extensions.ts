@@ -5,6 +5,7 @@ import { BrowserWindow, desktopCapturer, shell } from 'electron'
 import { pluginManifestSchema, type PluginInfo, type PluginManifest, type Settings, type ToolCall } from '../shared/schema'
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
+import { killTree, spawnDetached } from './platform/proc'
 
 const MAX_OUTPUT = 40_000
 const clip = (text: string) => (text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n…（已截断，共 ${text.length} 字符）` : text)
@@ -192,12 +193,12 @@ export class ExtensionHost {
     if (!tool) throw new Error(`插件「${pluginName}」没有工具「${toolName}」`)
     const payload = JSON.stringify(args && typeof args === 'object' ? args : {})
     return new Promise((resolvePromise) => {
-      const child = spawn(tool.command, { cwd: loaded.dir, shell: true, windowsHide: true, env: { ...process.env, CUBEX_ARGS: payload, CUBEX_TOOL: tool.name, CUBEX_PLUGIN: plugin.name, CUBEX_PROJECT_ROOT: context.root } })
+      const child = spawn(tool.command, { cwd: loaded.dir, shell: true, windowsHide: true, detached: spawnDetached, env: { ...process.env, CUBEX_ARGS: payload, CUBEX_TOOL: tool.name, CUBEX_PLUGIN: plugin.name, CUBEX_PROJECT_ROOT: context.root } })
       let output = ''
       const push = (chunk: Buffer) => { if (output.length < MAX_OUTPUT) output += chunk.toString('utf8') }
       child.stdout.on('data', push)
       child.stderr.on('data', push)
-      const kill = () => child.kill()
+      const kill = () => killTree(child)
       const timer = setTimeout(() => { kill(); output += '\n[插件超时 120 秒，已终止]' }, 120_000)
       context.signal.addEventListener('abort', kill, { once: true })
       const finish = (text: string) => {

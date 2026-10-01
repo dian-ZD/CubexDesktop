@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 1 类型检查 | `tsc --noEmit` | 通过，0 错误 |
 | 2 静态检查 | `eslint .` | 通过，0 error / 7 warning（`tr` 依赖） |
-| 3 单元测试 | `vitest run` | **76 passed / 1 failed / 2 skipped**（见门 3 说明） |
+| 3 单元测试 | `vitest run` | 84 passed / **1 failed**（仅 p9:153，SPEC-002 T3 修复中）/ 2 skipped |
 | 4 构建 | `electron-vite build` | 通过，`out/` 三端产出 |
 | 5 桌面冒烟 | `node scripts/desktop-smoke.mjs` | 二次运行通过；首次冷启动超时误报 |
 | 6 UI 脚本 | `node scripts/ui-check.mjs` | Linux 下未执行（脚本依赖 `process.env.TEMP`） |

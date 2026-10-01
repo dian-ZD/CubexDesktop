@@ -57,9 +57,16 @@ cubex/
 | 文件 | 职责 | 依赖 |
 | --- | --- | --- |
 | `index.ts` | 组合根：窗口/会话安全加固、全部 IPC handler 注册、自动化调度、状态广播 | 本目录几乎全部 |
+| `platform/shell.ts` | ★平台层：shell 解析与命令包装（`shellCommand`，Windows/POSIX 分支唯一归口） | `shared/schema` |
+| `platform/proc.ts` | ★平台层：`killTree` 进程树终止（POSIX 进程组 / win32 taskkill）+ `spawnDetached` | 无 |
+| `platform/capture.ts` | ★平台层：`desktopCaptureSupported` 截屏能力探测（Wayland 保守判不可用） | 无 |
+| `platform/index.ts` | 平台层 barrel re-export | platform 内部 |
+| `sandbox/env.ts` | ★沙箱层：`buildSandboxEnv` 环境变量白名单/禁网（纯函数） | 无 |
+| `sandbox/guard.ts` | ★沙箱层：`findEscape` 越权命令拦截（纯函数） | 无 |
+| `sandbox/index.ts` | 沙箱层 barrel | sandbox 内部 |
 | `agent.ts` | AgentRunner：会话循环、审批/提问/待办/委派子智能体 | `llm` `tools` `prompt` `context` `projectFiles` `errors` `store` `secrets` |
 | `llm.ts` | 模型协议层：OpenAI/Anthropic 流式对话、SSE 解析、截断修复、模型列表探测 | `errors`、`shared/schema` |
-| `tools.ts` | 内置工具执行：读写/搜索/命令执行、路径越界校验（`resolveInside`）、沙箱、diff | `shared/schema` |
+| `tools.ts` | 内置工具执行：读写/搜索/命令执行、路径越界校验（`resolveInside`）、diff；命令的 shell 解析/进程终止/沙箱策略已抽至 `platform/`+`sandbox/`（公开签名不变） | `platform` `sandbox`、`shared/schema` |
 | `prompt.ts` | 系统提示词组装（语言/审批/沙箱/环境注入） | `projectFiles`、`shared/schema` |
 | `projectFiles.ts` | 项目四上下文文件（goal/plan/memory/agents.md）的模板、确保创建、读取与注入 | `shared/schema` |
 | `context.ts` | token 估算与上下文窗口裁剪（`fitContext`） | `shared/schema` |
@@ -74,7 +81,9 @@ cubex/
 | `share.ts` | 会话分享图 HTML 渲染 + offscreen 截图 | `shared/schema` |
 | `errors.ts` | 网络/TLS/HTTP 错误 → 用户可读提示 | 无 |
 
-**新增主进程模块规则**：一个模块只做一件事、只从 `index.ts` 或上表既有依赖方向被调用；禁止模块间循环依赖（当前无，保持）。平台相关代码必须集中在上表已有的 9 个平台敏感文件内并登记到 `rules/platform-support.md` 索引表，禁止散落新判断点。
+**新增主进程模块规则**：一个模块只做一件事、只从 `index.ts` 或上表既有依赖方向被调用；禁止模块间循环依赖（当前无，保持）。平台相关代码必须集中在上表已有的平台敏感文件内并登记到 `rules/platform-support.md` 索引表，禁止散落新判断点。
+
+**platform/ 与 sandbox/ 依赖规则（2026-10-01 SPEC-002 阶段 1 生效）**：二者只允许依赖 `shared/schema` 类型与 Node 标准库；任何 main 模块可依赖它们，它们不得依赖 main 其它模块（防环）。新增 `process.platform` 判断一律收敛进 `platform/`；`tools.ts` 的公开导出（`runTool`/`runShellCommand`/`browseDirectory`/`readProjectFile`/`matchesCommandRule`/`makeDiff`/`resolveInside`/`toolSpecs`/各工具名集合）保持为稳定接口，消费方不得改为直接 import platform/sandbox 中的同名实现。
 
 ## 5. `src/preload/` 与 `src/renderer/`
 

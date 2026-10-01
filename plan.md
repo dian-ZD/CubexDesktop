@@ -57,7 +57,15 @@
 - 目标：按 project-development skill 阶段 A/B 完成接手调查与工作区治理初始化；最小增量，只建 `rules/` 与 `specs/`。
 - 涉及文件：新增 `rules/quality-gates.md`、`rules/platform-support.md`、`specs/SPEC-001-linux-compatibility.md`；更新 `agents.md`（登记结构）、`plan.md`、`memory.md`；全局技能装到 `~/.trae-cn/skills/project-development/`。
 - 产物：Linux 实测基线（typecheck 0 / lint 0 error / build 通过 / test 76 passed·1 failed·2 skipped / 冒烟二次通过）；SPEC-001 含 8 项任务、验收标准与回滚条件。
-- 结论：初始化完成；SPEC-001 为**草案，等用户 Review** 后再决定实施范围。
+- 结论：完成；SPEC-001 为**草案，等用户 Review** 后再决定实施范围。
+
+### 步骤 F：SPEC-002 阶段 1 —— platform/sandbox 解耦（含 T4） —— [x]
+
+- 目标：平台差异与沙箱策略从 `tools.ts` 抽出为 `src/main/platform/`（shell/proc/capture）与 `src/main/sandbox/`（env/guard），公开签名零变化；统一进程树终止（killTree，POSIX 进程组 / win32 taskkill）。
+- 涉及文件：新增 `src/main/platform/*`（4）、`src/main/sandbox/*`（3）、`tests/platform.test.ts`、`tests/sandbox.test.ts`；修改 `tools.ts`/`github.ts`/`extensions.ts`（仅接入调用）；同步 `rules/structure.md`、`rules/platform-support.md`。
+- 验证：typecheck 0 / lint 0 error·7 warning（既有）/ vitest **84 passed·1 failed（仅 p9:153，T3 待修）·2 skipped** / build 通过 / 冒烟通过；killTree 孙进程实测终止。
+- 本地提交：治理文档 `d9ccefb`；阶段 1 代码随本步提交（不 push）。
+- 结论：完成。下一步进入阶段 2（T1/T2/T3/T5/T6/T8 + T7=隐藏入口）。
 
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
@@ -92,8 +100,8 @@
 
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- **当前状态**：`specs/SPEC-002-linux-adaptation-refactor.md` 已成文（阶段 1 platform/sandbox 解耦含 T4 → 阶段 2 Linux 适配 T1/T2/T3/T5/T6/T8+T7 → 阶段 3 渲染层试点迁移）；等待用户确认 §7 三个决策点（D1 截图路线 / D2 迁移范围 / D3 实施授权）。
-- **下一步第一件事**：用户确认后执行 SPEC-002 阶段 1.1（新建 `src/main/platform/shell.ts`，迁入 shellCommand，tools.ts 改 import，签名不变）。
+- **当前状态**：SPEC-002 阶段 1 已完成并本地提交（platform/sandbox 解耦 + T4 进程树终止）。
+- **下一步第一件事**：SPEC-002 阶段 2 —— T3 `repoNameFor` 平台无关化 + p9 测试修复 → T5 脚本 tmpdir → T8 冒烟阈值 → T2 computer_use 门控（用 `platform/capture`，D1=隐藏入口）→ T6 secrets basic_text 提示 → T1 Linux 打包配置与 AppImage 试构建。
 - Browser 模式恢复时其"下一步第一件事"仍是：`src/shared/schema.ts` threadSchema 加 `mode` 字段 + 新建 `src/main/browser.ts`；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
 
 ## 已知风险 / 阻塞项及应对

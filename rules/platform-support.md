@@ -15,8 +15,11 @@
 
 | 关注点 | 位置 |
 | --- | --- |
-| Shell 选择与命令执行 | `src/main/tools.ts`（`shellCommand`、`commandTool`） |
-| 子进程环境与沙箱 | `src/main/tools.ts`（`buildSandboxEnv`、`SANDBOX_ESCAPE`） |
+| Shell 解析与命令包装 | `src/main/platform/shell.ts`（唯一归口） |
+| 进程树终止 / detached 约定 | `src/main/platform/proc.ts`（`killTree`/`spawnDetached`，tools/github/extensions 共用） |
+| 截屏能力探测 | `src/main/platform/capture.ts`（Wayland 保守判不可用，供 computer_use 门控） |
+| 沙箱策略 | `src/main/sandbox/`（`env.ts` 环境变量、`guard.ts` 越权拦截；均为纯函数） |
+| 命令执行装配 | `src/main/tools.ts`（`commandTool` 调用 platform+sandbox，不再内联平台逻辑） |
 | MCP 服务端启动 | `src/main/mcp.ts` |
 | Git 推送 | `src/main/github.ts` |
 | 扩展 / 插件 / 电脑操控 / 浏览器取数 | `src/main/extensions.ts` |

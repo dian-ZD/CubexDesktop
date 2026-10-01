@@ -60,7 +60,7 @@
 
 - 本机为 Linux / **原生 GNOME（Wayland 会话）**（用户 2026-10-01 确认），Electron 44 在该机上走原生 Wayland 后端（日志 `ui/ozone/platform/wayland/*`），不是 XWayland。日志中 `Server doesn't support zcr_alpha_compositing_v1` 为 KWin 专属扩展，GNOME 下缺失属预期，不代表透明能力不可用；`Failed to register with org.freedesktop.host.portal.Registry` 对截图/透明窗口的实际影响以运行时实测为准。
 - Node v26.8.2 / npm 11.19.1。**npm 11.19 的 install-scripts 白名单会跳过 electron 的下载脚本**：`npm ci` 后 `node_modules/electron/dist` 缺失，需 `node node_modules/electron/install.js` 手动补齐（国内网络可加 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
-- Linux 测试基线：`vitest run` = 76 passed / 1 failed / 2 skipped；唯一失败 `tests/p9.test.ts:153`（Windows 路径假设 + `path.basename` 平台相关），非回归。
+- Linux 测试基线（2026-10-01 SPEC-002 阶段 1 后）：`vitest run` = 84 passed / 1 failed / 2 skipped；唯一失败 `tests/p9.test.ts:153`（Windows 路径假设，T3 修复中），非回归。
 - 冒烟：`npm run test:desktop` 首次冷启动超过脚本内置 20 秒阈值误报超时，二次运行通过；直接单跑 `electron .` 0.5 秒即输出 `smoke-ready`。
 - 启动日志另有 `ERROR:crypto/nss_util.cc NSS error code: -8018`（根证书加载失败），影响范围未核实。
 - **GNOME Wayland 运行时实测（2026-10-01，/tmp 独立脚本，非仓库文件）**：① `transparent:true + frame:false` 窗口渲染正常（capturePage 输出 RGBA，角点 alpha=0，缩放 1.25 生效）；② `desktopCapturer.getSources(screen)` **本机确定性不可用**——Wayland 原生报 `ScreenCastPortal failed: 3`（授权弹窗从未出现，portal 无活动 Request），强制 `--ozone-platform=x11` 则 >15s 挂起；③ `capturePage` 路径可用（分享图功能不受影响）。结论已写入 SPEC-001 T7（P2→P1）。

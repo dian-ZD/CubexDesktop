@@ -64,7 +64,9 @@ src/renderer/src/
 
 ## 5. 阶段计划
 
-### 阶段 1：platform/ + sandbox/ 解耦（含 T4）｜改动 ≈6 文件
+### 阶段 1：platform/ + sandbox/ 解耦（含 T4）｜改动 ≈6 文件 —— ✅ 完成（2026-10-01）
+
+> 验证：typecheck 0 / lint 0 error / vitest 84 passed（新增 platform 5 + sandbox 4 用例，仅余已知 p9 失败待 T3）/ build 通过 / 桌面冒烟通过。killTree 孙进程终止在 POSIX 实测生效。
 
 | 步骤 | 内容 |
 | --- | --- |
