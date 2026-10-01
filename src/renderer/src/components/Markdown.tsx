@@ -1,6 +1,6 @@
 import { createContext, memo, useContext, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
-import { useI18n } from './i18n'
+import { useI18n } from '../i18n'
 
 export type OpenTarget = { kind: 'url' | 'file' | 'folder'; value: string }
 export const OpenTargetContext = createContext<((target: OpenTarget) => void) | null>(null)

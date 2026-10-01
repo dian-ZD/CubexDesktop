@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles } from 'lucide-react'
-import type { SkillMeta } from '../../shared/schema'
-import { useI18n } from './i18n'
+import type { SkillMeta } from '../../../shared/schema'
+import { useI18n } from '../i18n'
 
 interface SkillMenuProps {
   skills: SkillMeta[]

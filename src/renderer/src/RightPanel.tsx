@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import type { FileContent, FileEntry, Project, Thread, ToolResult } from '../../shared/schema'
-import type { OpenTarget } from './Markdown'
+import type { OpenTarget } from './components/Markdown'
 import { api, isDesktop } from './bridge'
 import { useI18n } from './i18n'
 
