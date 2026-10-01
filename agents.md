@@ -17,7 +17,7 @@
 
 - `agents.md` / `goal.md` / `plan.md` / `memory.md` —— 本项目的 AGENTS.md 体系，仍是唯一现行入口，不另建 `AGENTS.md`。
 - `rules/` —— 现行"怎么工作"：`quality-gates.md`（质量门命令、通过标准、数据影响、失败处理、平台基线）、`platform-support.md`（平台支持边界、平台相关代码索引、数据与密钥纪律、不可逆操作清单）、`structure.md`（文件级职责、依赖方向、新增文件归属决策表、体量红线；**新增/移动/删除文件前必读并同步更新**）。
-- `specs/` —— 任务驱动的方案与决策：`SPEC-XXX-主题.md` / `ADR-XXX-主题.md`；当前有 `SPEC-001-linux-compatibility.md`（实测证据库，T 项落地走 SPEC-002）、`SPEC-002-linux-adaptation-refactor.md`（Linux 适配 + platform/sandbox 解耦 + 文件编排，三阶段）。
+- `specs/` —— 任务驱动的方案与决策：`SPEC-XXX-主题.md` / `ADR-XXX-主题.md`；当前有 `SPEC-001-linux-compatibility.md`（实测证据库，T 项落地走 SPEC-002）、`SPEC-002-linux-adaptation-refactor.md`（Linux 适配 + platform/sandbox 解耦 + 文件编排，三阶段，已完成）、`SPEC-003-workflow-dag-engine.md`（工作流 DAG 执行引擎，草案待确认）。
 - `docs/` 与归档区 `achieve/` —— **暂不建立**：等确有可读资料或需要归档时再建，建立时在本节登记。
 - 规则类内容只写进 `rules/` 或本文件，避免同一规则两处维护；任务过程与结论写 `specs/`。
 
