@@ -9,8 +9,7 @@ export const buildSandboxEnv = (root: string, allowNetwork: boolean): NodeJS.Pro
   env.USERPROFILE = root
   env.CUBEX_SANDBOX = '1'
   if (!allowNetwork) {
-    env.no_proxy = '*'
-    env.NO_PROXY = '*'
+    // 切勿设置 no_proxy='*'：它的语义是"所有主机直连、绕过代理"，会把下面的黑洞代理全部抵消
     env.http_proxy = 'http://127.0.0.1:9'
     env.https_proxy = 'http://127.0.0.1:9'
     env.HTTP_PROXY = 'http://127.0.0.1:9'

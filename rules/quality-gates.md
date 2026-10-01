@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 1 类型检查 | `tsc --noEmit` | 通过，0 错误 |
 | 2 静态检查 | `eslint .` | 通过，0 error / 7 warning（`tr` 依赖） |
-| 3 单元测试 | `vitest run` | 通过，**97 passed / 0 failed / 2 skipped**（Linux 全绿） |
+| 3 单元测试 | `vitest run` | 通过，**100 passed / 0 failed / 2 skipped**（Linux 全绿） |
 | 4 构建 | `electron-vite build` | 通过，`out/` 三端产出 |
 | 5 桌面冒烟 | `node scripts/desktop-smoke.mjs` | 二次运行通过；首次冷启动超时误报 |
 | 6 UI 脚本 | `node scripts/ui-check.mjs` | 已平台无关化（`tmpdir()`，SPEC-002 T5）；需 Playwright 浏览器就绪，本轮未执行 |
@@ -37,8 +37,9 @@ Windows 参考基线（项目原记录）：`npm test` 77 passed / 2 skipped，`
 
 - 命令：`npm test`（vitest，`environment: node`，无网络也能跑；`tests/live.test.ts` 在无 `CUBEX_LIVE_*` 环境变量时跳过）。
 - 通过标准：全部通过。
-- **当前已知失败**：`tests/p9.test.ts:153` 在 Linux 下必失败（断言用 Windows 路径 `C:\work\...`，而 `src/main/github.ts` 的 `basename()` 与平台相关）。修复项见 `specs/SPEC-001-linux-compatibility.md` T3。在此之前，Linux 上判定的基线是 1 failed 且仅此 1 条，其它失败一律视为回归。
-- 数据影响：只写临时目录（`mkdtemp`），不动仓库与用户数据。
+- 例外说明：`tests/sandbox.test.ts` 含一条**真实进程**的环回禁网实测（起本地 HTTP 服务 + spawn curl，正负对照），依赖系统 `curl`，在 Windows 或无 curl 环境自动跳过——该条跳过时不计为失败，但沙箱相关改动不允许只依赖它通过，须同时人工确认代理变量形状。
+- 数据影响：只写临时目录（`mkdtemp`），不动仓库与用户数据；沙箱实测只监听 `127.0.0.1` 随机端口，不访问外网。
+- 平台一致性：平台相关断言已于 SPEC-002 T3 清理（`repoNameFor` 改为平台无关切分），Windows 与 Linux 基线一致，其它失败一律视为回归。
 - 失败处理：先判断是环境差异还是回归；环境差异需在报告中标注平台，不得直接改断言迁就当前机器。
 
 ## 门 4：构建与目标平台检查

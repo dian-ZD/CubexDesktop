@@ -95,6 +95,14 @@
 - 修复：E2E 暴露「存在失败节点时『继续』按钮无效」，已改为仅无失败节点时显示。
 - 结论：完成。SPEC-003 三阶段全部落地。
 
+### 步骤 K：修复沙箱禁网被 no_proxy 抵消 —— [x]
+
+- 目标：`allowNetwork=false` 时禁网真实生效（用户决策 A：彻底禁网）。
+- 涉及文件：`src/main/sandbox/env.ts`（删除 `no_proxy`/`NO_PROXY='*'` 两行 + 保留防回退注释）、`tests/sandbox.test.ts`（+3 条：禁网不得写 no_proxy、父进程不泄漏、真实进程环回实测正负对照）；同步 `rules/platform-support.md`（已知坑）、`rules/quality-gates.md`（门 3 例外说明与基线）、`memory.md`。
+- 证据：curl 8.14.1 A/B —— 现状 `no_proxy='*'` 时环回目标 http=200 直连成功；去掉后 `exit=7` 被黑洞拒绝；`npm_config_offline=true` 时 `npm view express` cache-only 失败（npm/pip 索引本就被专用变量挡住）。
+- 验证：vitest **100 passed / 0 failed / 2 skipped**（含真实进程禁网实测通过）、typecheck 0、lint 0 error。
+- 结论：完成。来源为既有缺陷（SPEC-002 阶段 1 原样迁出 `tools.ts` 的实现），测试缺口一并补齐。
+
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
 ### 步骤 1：schema mode 下沉 + BrowserEngine —— [ ]

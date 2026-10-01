@@ -69,6 +69,8 @@ src/renderer/src/
 ### 阶段 1：platform/ + sandbox/ 解耦（含 T4）｜改动 ≈6 文件 —— ✅ 完成（2026-10-01）
 
 > 验证：typecheck 0 / lint 0 error / vitest 84 passed（新增 platform 5 + sandbox 4 用例，仅余已知 p9 失败待 T3）/ build 通过 / 桌面冒烟通过。killTree 孙进程终止在 POSIX 实测生效。
+>
+> **后续修正（2026-10-01，见 plan.md 步骤 K）**：本阶段把 `buildSandboxEnv` 从 `tools.ts` 原样迁出时，连带保留了既有缺陷 `no_proxy='*'`（其语义为"全主机直连"，会整体抵消黑洞代理，导致禁网失效）。该缺陷已单独修复并补真实进程禁网实测；`tests/sandbox.test.ts` 的"只断言变量值"缺口同时补齐。
 
 | 步骤 | 内容 |
 | --- | --- |

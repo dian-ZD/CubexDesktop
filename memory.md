@@ -78,6 +78,15 @@
 - UI：`src/renderer/src/components/WorkflowStrip.tsx` 在线程视图顶部常驻（`.center-scroll` 之外），状态点 + `步骤 i/n` + 失败原因 + 状态胶囊 + 控制按钮；有失败节点时只显示「重试该步骤/跳过该步骤」（「继续」无效，因上游未完成会被引擎立即重新暂停）。
 - **E2E 验证手法（可复用）**：Playwright `_electron.launch` + 先启动一次用 `window.cubex.saveSettings` 触发落盘生成 state.json → 直接编辑该文件注入 `projects/threads/workflowRun/workflows` → 二次启动并 `localStorage.setItem('cubex.onboarded','1')` + reload 关掉引导页 → 点击断言。脚本需放在**仓库根目录**运行（/tmp 下无法解析 `@playwright/test`），用后即删。
 
+## 已修复缺陷：沙箱禁网被 no_proxy 抵消（2026-10-01）
+
+- 缺陷：`src/main/sandbox/env.ts` 曾写入 `no_proxy='*'` / `NO_PROXY='*'`，语义是"所有主机直连、绕过代理"，把同一函数里指向黑洞端口 9 的 `http_proxy`/`https_proxy` 全部抵消 → 禁网实际失效。
+- 实测证据（curl 8.14.1，环回 HTTP 服务对照）：`no_proxy='*'` → 直连成功 http=200；去掉后 → `exit=7` 立即被黑洞拒绝；`no_proxy='localhost,127.0.0.1,::1'` → 本地放行。另测 npm：`npm_config_offline=true` 时 `npm view express` 报 cache-only 失败（npm/pip 走索引安装本来就被各自的专用变量挡住，与代理无关）。
+- 影响面：`git clone` / `curl` / `wget` / `pip install <直链>` 直连成功，而 prompt.ts 明确承诺"git clone 等会失败"。**npm install / pip install（索引）不受影响**。
+- 来源：既有缺陷（原在 `tools.ts` 的 `buildSandboxEnv`），SPEC-002 阶段 1 解耦时原样迁出；`tests/sandbox.test.ts` 当时只断言变量值被写入，未验证拦截效果 → 测试缺口。
+- 修复：删除这两行 + 保留一行注释说明原因；补 3 条测试（禁网时不得写入 no_proxy、父进程 no_proxy 不泄漏、**真实进程环回禁网实测**含正负对照）。
+- 未覆盖（已知接受）：`ftp://` 等非 HTTP 协议（未设 `all_proxy`）、裸 socket 程序；硬隔离需 OS 层方案。
+
 ## 用户明确偏好与禁忌（尽量原样）
 
 - 「白底logo的图标里面的内容能不能大点」——logo 内部图标要更大（已 0.72→0.88）。
