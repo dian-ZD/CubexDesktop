@@ -56,6 +56,7 @@ const api: CubexAPI = {
   deleteWorkflow: (input) => ipcRenderer.invoke(channels.deleteWorkflow, { workflowId: input.workflowId }),
   runWorkflow: (input) => ipcRenderer.invoke(channels.runWorkflow, { workflowId: input.workflowId }),
   runAutomation: (input) => ipcRenderer.invoke(channels.runAutomation, { automationId: input.automationId }),
+  workflowControl: (input) => ipcRenderer.invoke(channels.workflowControl, { threadId: input.threadId, action: input.action, ...(input.nodeId ? { nodeId: input.nodeId } : {}) }),
   onState: (listener) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state)
     ipcRenderer.on(channels.state, wrapped)

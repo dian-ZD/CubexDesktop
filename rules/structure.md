@@ -77,7 +77,8 @@ cubex/
 | `skills.ts` | 技能包（md/zip）导入、解析 front-matter、内置技能 | `unzip`、`shared/schema` |
 | `unzip.ts` | 最小 zip 解包（store + deflate，无第三方依赖） | 无 |
 | `github.ts` | GitHub API + git 命令行推送（token 脱敏） | `shared/schema` |
-| `workflow.ts` | 工作流拓扑排序 + 提示词合成 | `shared/schedule` |
+| `workflowRunner.ts` | ★DAG 执行引擎（SPEC-003）：按依赖就绪推进节点、失败自动重试后暂停、暂停/继续/重试/跳过；状态落在 `thread.workflowRun`。依赖注入的 `NodeRunner` 接口（实现为 `agent.ts` 的 `runNode/abortRun/drainQueue`） | `store`、`workflow`、`errors`、`shared/schema` |
+| `workflow.ts` | 工作流纯逻辑：拓扑排序（`orderWorkflowNodes`）、旧版整段提示词合成（`composeWorkflowPrompt`，保留供测试与回退）、DAG 执行计划（`workflowStepPlan`）与节点指令组装（`composeNodeInstruction`） | `shared/schedule`、`shared/schema` |
 | `share.ts` | 会话分享图 HTML 渲染 + offscreen 截图 | `shared/schema` |
 | `errors.ts` | 网络/TLS/HTTP 错误 → 用户可读提示 | 无 |
 
@@ -120,6 +121,7 @@ cubex/
 | --- | --- |
 | 新增一个 IPC 能力 | `shared/channels.ts`（通道）→ `shared/schema.ts`（入参/返回类型）→ `main/index.ts`（handler）→ `preload/index.ts`（转发）→ `renderer/src/bridge.ts`（previewApi 桩）→ 组件调用 |
 | 新增一个内置工具 | `shared/schema.ts`（`toolNames`）→ `main/tools.ts`（spec + dispatch）→ 若需审批：`tools.ts` 的 `mutatingTools/commandTools` 集合 → `main/agent.ts`（如属会话层处理）→ `tests/tools.test.ts` |
+| 新增工作流相关状态 | `shared/schema.ts`（`threadSchema.workflowRun` 及子 schema，**必须放在 `threadSchema` 之前**）→ `main/workflowRunner.ts`（状态流转）→ `tests/workflowRunner.test.ts` |
 | 新增一个设置项 | `shared/schema.ts`（settingsSchema + defaultSettings）→ `renderer/src/SettingsPanel.tsx` → 文案进 `phrases.ts` → 迁移兼容检查 `migrateState()` |
 | 新增一个平台能力 | 先查 `rules/platform-support.md` 索引 → 落在既有平台敏感文件 → 更新索引表 + 非 Windows 行为说明（报错/降级/隐藏三选一） |
 | 新增文档 | 规则→`rules/`；方案/决策→`specs/`（SPEC/ADR 编号递增）；其余暂放 `specs/`，`docs/` 建立后再迁 |

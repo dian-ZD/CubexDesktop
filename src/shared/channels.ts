@@ -50,4 +50,5 @@ export const channels = {
   deleteWorkflow: 'cubex:delete-workflow',
   runWorkflow: 'cubex:run-workflow',
   runAutomation: 'cubex:run-automation',
+  workflowControl: 'cubex:workflow-control',
 } as const

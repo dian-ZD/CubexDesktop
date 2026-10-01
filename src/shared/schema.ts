@@ -292,6 +292,26 @@ export const todoItemSchema = z.object({
   status: z.enum(todoStatuses),
 })
 
+export const workflowStepSchema = z.object({
+  nodeId: identifier,
+  title: shortText,
+  deps: z.array(identifier).max(20),
+  status: z.enum(['pending', 'running', 'done', 'failed', 'skipped']),
+  output: z.string().max(20_000).optional(),
+  error: z.string().max(4_000).optional(),
+  startedAt: isoTime.optional(),
+  finishedAt: isoTime.optional(),
+})
+
+export const workflowRunSchema = z.object({
+  workflowId: identifier,
+  name: shortText,
+  status: z.enum(['running', 'paused', 'done']),
+  steps: z.array(workflowStepSchema).max(20),
+  startedAt: isoTime,
+  finishedAt: isoTime.optional(),
+})
+
 export const threadSchema = z.object({
   id: identifier,
   projectId: identifier,
@@ -306,6 +326,7 @@ export const threadSchema = z.object({
   queue: z.array(queuedMessageSchema).max(20).optional(),
   todos: z.array(todoItemSchema).max(40).optional(),
   pinned: z.boolean().optional(),
+  workflowRun: workflowRunSchema.optional(),
 })
 
 export const workflowNodeKinds = ['task', 'check', 'review', 'note', 'computer', 'browser', 'launch', 'command', 'search', 'file', 'git', 'plugin', 'mcp', 'wait', 'ask'] as const
@@ -376,6 +397,11 @@ export const githubTokenInputSchema = z.object({ token: z.string().trim().max(40
 export const githubPushInputSchema = z.object({ projectId: identifier, message: z.string().trim().max(500).optional() }).strict()
 export const saveWorkflowInputSchema = workflowSchema.strict()
 export const workflowInputSchema = z.object({ workflowId: identifier }).strict()
+export const workflowControlInputSchema = z.object({
+  threadId: identifier,
+  action: z.enum(['pause', 'resume', 'retry-node', 'skip-node']),
+  nodeId: identifier.optional(),
+}).strict()
 export const automationInputSchema = z.object({ automationId: identifier }).strict()
 export const pluginToolSchema = z.object({
   name: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/i, '工具名只能包含字母、数字、_ -'),
@@ -423,6 +449,8 @@ export type Automation = z.infer<typeof automationSchema>
 export type Workflow = z.infer<typeof workflowSchema>
 export type WorkflowNode = z.infer<typeof workflowNodeSchema>
 export type WorkflowNodeKind = (typeof workflowNodeKinds)[number]
+export type WorkflowStep = z.infer<typeof workflowStepSchema>
+export type WorkflowRun = z.infer<typeof workflowRunSchema>
 export type PluginManifest = z.infer<typeof pluginManifestSchema>
 export type PluginInfo = { name: string; description: string; version?: string; builtin: boolean; enabled: boolean; tools: { name: string; description: string }[]; path?: string; error?: string }
 export type McpServer = z.infer<typeof mcpServerSchema>
@@ -479,6 +507,7 @@ export interface CubexAPI {
   deleteWorkflow: (input: { workflowId: string }) => Promise<Result<void>>
   runWorkflow: (input: { workflowId: string }) => Promise<Result<Thread>>
   runAutomation: (input: { automationId: string }) => Promise<Result<void>>
+  workflowControl: (input: { threadId: string; action: 'pause' | 'resume' | 'retry-node' | 'skip-node'; nodeId?: string }) => Promise<Result<void>>
   onState: (listener: (state: AppState) => void) => () => void
   onDelta: (listener: (delta: StreamDelta) => void) => () => void
   onActivity: (listener: (activity: AgentActivity) => void) => () => void

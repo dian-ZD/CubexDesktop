@@ -1,4 +1,4 @@
-import type { Workflow, WorkflowNode } from '../shared/schema'
+import type { Workflow, WorkflowNode, WorkflowNodeKind } from '../shared/schema'
 
 export function orderWorkflowNodes(workflow: Workflow): WorkflowNode[] {
   const ids = new Set(workflow.nodes.map((node) => node.id))
@@ -29,7 +29,7 @@ export function orderWorkflowNodes(workflow: Workflow): WorkflowNode[] {
   return ordered
 }
 
-const kindHints: Record<string, string> = {
+export const kindHints: Record<string, string> = {
   check: '这是检查步骤：执行验证（如测试、构建或人工核对），如未通过请先修复再继续。',
   review: '这是审阅步骤：先总结前面步骤的产出，自查是否符合要求，指出问题后再继续。',
   computer: '这是电脑操控步骤：使用 computer_use 工具完成截屏、输入、按键或点击等操作来达成目标。',
@@ -61,6 +61,60 @@ export function composeWorkflowPrompt(workflow: Workflow): string {
     })
     .join('\n\n')
   return `请按顺序执行工作流「${workflow.name}」。每完成一步，简要汇报结果再进入下一步；前一步的产出可作为后一步的输入。${noteBlock}\n\n${stepBlock}`
+}
+
+export interface WorkflowPlanStep {
+  nodeId: string
+  title: string
+  deps: string[]
+}
+
+export function workflowStepPlan(workflow: Workflow): WorkflowPlanStep[] {
+  const ordered = orderWorkflowNodes(workflow).filter((node) => node.kind !== 'note')
+  const ids = new Set(ordered.map((node) => node.id))
+  const deps = new Map<string, string[]>(ordered.map((node) => [node.id, []]))
+  for (const edge of workflow.edges) {
+    if (edge.from === edge.to || !ids.has(edge.from) || !ids.has(edge.to)) continue
+    deps.get(edge.to)!.push(edge.from)
+  }
+  return ordered.map((node) => ({ nodeId: node.id, title: node.title.trim(), deps: deps.get(node.id) ?? [] }))
+}
+
+export interface NodeInstructionInput {
+  workflowName: string
+  index: number
+  total: number
+  title: string
+  kind?: WorkflowNodeKind
+  prompt: string
+  upstream: Array<{ title: string; output: string }>
+  completed: Array<{ title: string; status: string }>
+  notes: Array<{ title: string; prompt: string }>
+}
+
+const NOTE_LIMIT = 2000
+
+export function composeNodeInstruction(input: NodeInstructionInput): string {
+  const blocks: string[] = [`【工作流「${input.workflowName}」第 ${input.index}/${input.total} 步：${input.title}】`]
+  const hint = input.kind ? kindHints[input.kind] : undefined
+  if (hint) blocks.push(hint)
+  if (input.notes.length) {
+    const notes = input.notes.map((note) => `- ${note.title}：${note.prompt.trim().slice(0, NOTE_LIMIT)}`).join('\n')
+    blocks.push(`## 背景信息（工作流备注，仅供参考，不需要执行）\n${notes}`)
+  }
+  if (input.upstream.length) {
+    const upstream = input.upstream.map((item) => `### ${item.title}\n${item.output.trim()}`).join('\n\n')
+    blocks.push(`## 上游步骤产出（可直接使用，不必重复调研）\n${upstream}`)
+  }
+  if (input.completed.length) {
+    const done = input.completed
+      .map((item) => `- [${item.status === 'done' ? 'x' : item.status === 'skipped' ? '-' : '!'}] ${item.title}`)
+      .join('\n')
+    blocks.push(`## 已完成步骤（勿重复执行）\n${done}`)
+  }
+  blocks.push(`## 本步任务\n${input.prompt.trim()}`)
+  blocks.push('要求：只完成本步任务，不要提前执行后续步骤；完成后用一两句话总结本步产出（这段总结会作为下游步骤的输入）。')
+  return blocks.join('\n\n')
 }
 
 export { dueAutomations, nextRunAt } from '../shared/schedule'

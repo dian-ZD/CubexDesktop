@@ -60,7 +60,7 @@
 
 - 本机为 Linux / **原生 GNOME（Wayland 会话）**（用户 2026-10-01 确认），Electron 44 在该机上走原生 Wayland 后端（日志 `ui/ozone/platform/wayland/*`），不是 XWayland。日志中 `Server doesn't support zcr_alpha_compositing_v1` 为 KWin 专属扩展，GNOME 下缺失属预期，不代表透明能力不可用；`Failed to register with org.freedesktop.host.portal.Registry` 对截图/透明窗口的实际影响以运行时实测为准。
 - Node v26.8.2 / npm 11.19.1。**npm 11.19 的 install-scripts 白名单会跳过 electron 的下载脚本**：`npm ci` 后 `node_modules/electron/dist` 缺失，需 `node node_modules/electron/install.js` 手动补齐（国内网络可加 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
-- Linux 测试基线（2026-10-01 SPEC-002 完成后）：`vitest run` = **85 passed / 0 failed / 2 skipped**（Linux 全绿，T3 已修复 p9:153）。
+- Linux 测试基线（2026-10-01 SPEC-003 阶段 1 后）：`vitest run` = **97 passed / 0 failed / 2 skipped**。
 - Linux 打包（SPEC-002 T1）：`build.linux` 已配置（AppImage+deb，icon=build/icon.png）；**electron-builder 必须带 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`**（直连 GitHub 下载 electron zip 会 EOF）；Linux 可执行名取 package.json `name`（cubex-desktop）；打包态冒烟已验证（`release/linux-unpacked/cubex-desktop` → smoke-ready）。
 - 冒烟：`npm run test:desktop` 首次冷启动超过脚本内置 20 秒阈值误报超时，二次运行通过；直接单跑 `electron .` 0.5 秒即输出 `smoke-ready`。
 - 启动日志另有 `ERROR:crypto/nss_util.cc NSS error code: -8018`（根证书加载失败），影响范围未核实。
@@ -68,6 +68,13 @@
 - 发布链路现状：`npm run dist` Windows NSIS；`npm run dist:linux` AppImage+deb（SPEC-002 已落地并验证）。
 - 工作区治理：`rules/`、`specs/` 已建立；`docs/`、`achieve/` 暂不建；AGENTS.md 体系沿用现有四文件。
 - 全局技能：`project-development` 已装到 `~/.trae-cn/skills/project-development/`（是 icelab-site 那份 SKILL.md 的副本，后续更新需手动同步）。
+
+## 工作流 DAG 引擎（SPEC-003 阶段 1，2026-10-01）
+
+- 架构：`WorkflowRunner`（`src/main/workflowRunner.ts`）按"就绪集扫描、并发度 1"驱动 `agent.runNode()`；权威节点状态在 `thread.workflowRun`（`steps[]` 含 `deps/status/output/error/时间`），随 `state.json` 持久化，**不再依赖模型自报清单**。旧 `composeWorkflowPrompt` 保留但已不被调用（`tests/p9.test.ts` 仍覆盖其纯逻辑）。
+- 关键机制：每节点一条 `▶ 步骤 i/n：标题` 系统分隔消息 + 一条承载指令的 user 消息；上游产出（仅直接前驱）注入下游指令；节点失败自动重试上限 `MAX_RETRIES=2`（总尝试 3 次）后暂停；暂停由 `cancelThread` 复用（工作流运行中取消 = 暂停，可恢复）；工作流运行期间 `drain` 被守卫拦住，队列留到结束/暂停后处理。
+- 不变式（实施期不得违反，见 SPEC-003 §13）：`deps` 必须持久化且指令组装只依赖 `deps`；`NodeRunner.runNode(threadId, …)` 保持 Promise 化、按线程寻址；就绪判定只允许在 `advance` 一处。
+- 状态归一化：应用退出时 `store.load()` 把 `running` 工作流置 `paused`、`running` 步骤回 `pending`，并写系统消息提示可继续。
 
 ## 用户明确偏好与禁忌（尽量原样）
 

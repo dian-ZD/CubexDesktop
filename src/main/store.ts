@@ -42,12 +42,18 @@ export class StateStore {
         thread.status = 'idle'
         thread.pending = undefined
         thread.updatedAt = now
+        const run = thread.workflowRun
+        const workflowPaused = !!run && run.status === 'running'
+        if (run && workflowPaused) {
+          run.status = 'paused'
+          for (const step of run.steps) if (step.status === 'running') step.status = 'pending'
+        }
         thread.messages = [...thread.messages.slice(-399), {
           id: `${thread.id}-interrupted-${Date.now().toString(36)}`,
           role: 'system',
           time: now,
           level: 'info',
-          content: '应用在回复期间退出，本轮已中断。',
+          content: workflowPaused ? '应用在工作流执行期间退出，工作流已暂停，可从当前步骤继续。' : '应用在回复期间退出，本轮已中断。',
         }]
         interrupted += 1
       }

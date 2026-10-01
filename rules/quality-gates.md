@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 1 类型检查 | `tsc --noEmit` | 通过，0 错误 |
 | 2 静态检查 | `eslint .` | 通过，0 error / 7 warning（`tr` 依赖） |
-| 3 单元测试 | `vitest run` | 通过，**85 passed / 0 failed / 2 skipped**（Linux 全绿） |
+| 3 单元测试 | `vitest run` | 通过，**97 passed / 0 failed / 2 skipped**（Linux 全绿） |
 | 4 构建 | `electron-vite build` | 通过，`out/` 三端产出 |
 | 5 桌面冒烟 | `node scripts/desktop-smoke.mjs` | 二次运行通过；首次冷启动超时误报 |
 | 6 UI 脚本 | `node scripts/ui-check.mjs` | 已平台无关化（`tmpdir()`，SPEC-002 T5）；需 Playwright 浏览器就绪，本轮未执行 |

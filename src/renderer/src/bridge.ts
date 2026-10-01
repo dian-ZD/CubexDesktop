@@ -88,6 +88,7 @@ const previewApi: CubexAPI = {
   },
   runWorkflow: () => unavailable('运行工作流'),
   runAutomation: () => unavailable('运行自动化'),
+  workflowControl: () => unavailable('工作流控制'),
   onState: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

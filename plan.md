@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-**SPEC-002 已获用户确认（D1=A 隐藏入口 / D2=试点迁 3 组件 / D3=按序全做），实施中**。提交策略（用户 2026-10-01 指令）：**每阶段本地 commit 留痕，不 push、不开 PR**。Browser 模式（步骤 1–6）在 SPEC-002 完成前挂起。0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + GitHub 推送 **已完成**。
+**SPEC-003（工作流 DAG 执行引擎）阶段 1 已完成并本地提交；下一步阶段 2（UI：工作流进度条与暂停/继续/重试/跳过按钮 + i18n）**。提交策略（用户 2026-10-01 指令）：**每阶段本地 commit 留痕，不 push、不开 PR**。SPEC-002 三阶段全部完成。Browser 模式（步骤 1–6）与多人协作 ADR 挂起。
 
 ## 步骤清单（近期已完成）
 
@@ -79,6 +79,13 @@
 - 目标：Logo/SkillMenu/Markdown 迁入 `src/renderer/src/components/`（git mv 保历史），修正 7 处 import；structure.md 登记预留拆分目标位（sidebar/composer/messages、main 侧 ipc/agent）。
 - 验证：typecheck 0 / lint 0 error / vitest 85 passed / build 通过 / 桌面冒烟通过。
 - 结论：SPEC-002 三阶段全部完成；产物如需交付应重新 `dist:linux`（当前 AppImage/deb 基于迁移前 out/）。
+
+### 步骤 I：SPEC-003 阶段 1 —— DAG 执行引擎（主进程） —— [x]
+
+- 目标：工作流从"编译成一整段提示词"改为"引擎按依赖逐节点驱动"，权威节点状态落在 `thread.workflowRun`。
+- 涉及文件：新增 `src/main/workflowRunner.ts`、`tests/workflowRunner.test.ts`；改 `src/shared/schema.ts`（`workflowStepSchema`/`workflowRunSchema`/`workflowControlInputSchema`/`CubexAPI`）、`src/shared/channels.ts`、`src/main/workflow.ts`（执行计划 + 节点指令）、`src/main/agent.ts`（runNode/abortRun/drainQueue/完成信号/drain 守卫）、`src/main/index.ts`（接线 + 控制 IPC + 删除守卫 + cancelThread 转暂停）、`src/main/store.ts`（重启归一化）、`src/preload/index.ts`、`src/renderer/src/bridge.ts`；同步 `rules/structure.md`。
+- 验证：typecheck 0 / lint 0 error·7 warning / vitest **97 passed·2 skipped**（新增 12 条：拓扑推进、上游产出注入、备注注入、失败重试上限、重试成功、暂停回退、重试/跳过、删除守卫、重启归一化、schema）、build 通过、桌面冒烟通过。
+- 结论：完成。下一步阶段 2（UI 进度条 + 控制按钮 + i18n）。
 
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
