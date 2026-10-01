@@ -1,6 +1,6 @@
 # 记忆
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
+> 最后更新时间：2026-10-01 ｜ 更新者：AI Agent（Linux 环境实测记录 + 工作区治理建立）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
@@ -56,6 +56,18 @@
 - **本目录现为 git 仓库**（此前记录的「非 git 仓库」已过时）：remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，默认分支 `main`，最新 commit f57ade2。`.gitignore` 已忽略 `node_modules/`、`out/`、`release/`。仍遵循「未获用户明确指令不擅自提交/推送」。
 - **lint 既有告警**：`npm run lint` 有 7 个 `react-hooks/exhaustive-deps` 关于 `tr` 的 warning（App.tsx），为既有告警、非本轮引入，0 error。
 
+## Linux 环境与平台事实（2026-10-01 实测）
+
+- 本机为 Linux / **原生 GNOME（Wayland 会话）**（用户 2026-10-01 确认），Electron 44 在该机上走原生 Wayland 后端（日志 `ui/ozone/platform/wayland/*`），不是 XWayland。日志中 `Server doesn't support zcr_alpha_compositing_v1` 为 KWin 专属扩展，GNOME 下缺失属预期，不代表透明能力不可用；`Failed to register with org.freedesktop.host.portal.Registry` 对截图/透明窗口的实际影响以运行时实测为准。
+- Node v26.8.2 / npm 11.19.1。**npm 11.19 的 install-scripts 白名单会跳过 electron 的下载脚本**：`npm ci` 后 `node_modules/electron/dist` 缺失，需 `node node_modules/electron/install.js` 手动补齐（国内网络可加 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
+- Linux 测试基线：`vitest run` = 76 passed / 1 failed / 2 skipped；唯一失败 `tests/p9.test.ts:153`（Windows 路径假设 + `path.basename` 平台相关），非回归。
+- 冒烟：`npm run test:desktop` 首次冷启动超过脚本内置 20 秒阈值误报超时，二次运行通过；直接单跑 `electron .` 0.5 秒即输出 `smoke-ready`。
+- 启动日志另有 `ERROR:crypto/nss_util.cc NSS error code: -8018`（根证书加载失败），影响范围未核实。
+- **GNOME Wayland 运行时实测（2026-10-01，/tmp 独立脚本，非仓库文件）**：① `transparent:true + frame:false` 窗口渲染正常（capturePage 输出 RGBA，角点 alpha=0，缩放 1.25 生效）；② `desktopCapturer.getSources(screen)` **本机确定性不可用**——Wayland 原生报 `ScreenCastPortal failed: 3`（授权弹窗从未出现，portal 无活动 Request），强制 `--ozone-platform=x11` 则 >15s 挂起；③ `capturePage` 路径可用（分享图功能不受影响）。结论已写入 SPEC-001 T7（P2→P1）。
+- 发布链路现状：`npm run dist` 仅 Windows NSIS；Linux 无打包配置（详见 `specs/SPEC-001-linux-compatibility.md`）。
+- 工作区治理：`rules/`、`specs/` 已建立；`docs/`、`achieve/` 暂不建；AGENTS.md 体系沿用现有四文件。
+- 全局技能：`project-development` 已装到 `~/.trae-cn/skills/project-development/`（是 icelab-site 那份 SKILL.md 的副本，后续更新需手动同步）。
+
 ## 用户明确偏好与禁忌（尽量原样）
 
 - 「白底logo的图标里面的内容能不能大点」——logo 内部图标要更大（已 0.72→0.88）。
@@ -72,14 +84,18 @@
 - `npm test` / `npx vitest run` → 77 passed，2 skipped。
 - `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe`（已签名 + blockmap，x64）。
 - git：`git add -A` → `git commit`（commit f57ade2，24 文件 +1793/−231）→ `git push origin main`（`46cbaa7`→`f57ade2`）成功。
+- （2026-10-01 / Linux / Node v26.8.2）`tsc --noEmit` → exit 0；`eslint .` → 0 error / 7 warning；`electron-vite build` → 成功（2001 modules，产出 `out/`）；`vitest run` → 76 passed / 1 failed / 2 skipped（唯一失败 `tests/p9.test.ts:153`）；`npm run test:desktop` → 首次超时、二次通过；`npm ci` → 6 分钟 / 566 包（electron 二进制需手动补）。
 
 ## 未解决问题 / 待确认
 
 - Browser 模式实时画面：MVP 用 `capturePage` 截图流还是完整版直接 `WebContentsView` 内嵌？（已在 plan 中向用户提出，倾向先截图流）
+- `specs/SPEC-001-linux-compatibility.md`（Linux 兼容性）为**草案**，待用户 Review 后决定实施范围；P0 为 Linux 打包配置（T1）与 Linux 必挂测试（T3）。
+- 全局技能 `~/.trae-cn/skills/project-development/` 与 icelab-site 源目录是两份独立副本，是否需要约定同步方式（否则后续更新会漂移）。
 - 是否需要清掉 `C:\Program Files\Cubex` 空壳？（历史遗留，待确认）
 - `author` 字段缺失导致 electron-builder 警告（不影响安装包），是否补上后重打？
 
 ## 临时性上下文
 
+- SPEC-002 提交策略（用户 2026-10-01 明确指令）：**分阶段本地 commit 留痕，禁止 push / 开 PR**；仓库无本地 git 身份，提交用 `git -c user.name="dian-ZD" -c user.email="liangdianhs@163.com"` 单次覆盖（不改 git config）。
 - 冒烟测试会把 userData 指向临时目录：`CUBEX_SMOKE=1` 时 `app.setPath('userData', temp/cubex-smoke-<pid>)`（`src/main/index.ts` 第 18 行）。
 - 管理端（历史阶段）运行于 `http://127.0.0.1:4800`，管理密钥经环境变量 `CUBEX_ADMIN_KEY` 注入——**真实值不写入此处**，仅记引用位置。

@@ -1,6 +1,6 @@
 # 智能体协作说明
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
+> 最后更新时间：2026-10-01 ｜ 更新者：AI Agent（project-development skill 初始化：建立 rules/ 与 specs/，登记 Linux 现状）
 >
 > 给接手本项目的任何 AI 智能体阅读：如何在本项目中安全、高效地继续工作。
 
@@ -10,6 +10,16 @@
 2. 再读 `plan.md`（步骤清单与「当前进行到的精确位置 / 下一步第一件事」）。
 3. 再读 `memory.md`（技术栈、决策、坑、命令结果、待确认项）。
 4. 读完后的第一件事：核对 `plan.md`「下一步第一件事」是否仍成立——目前处于「Browser 模式 plan 已获用户确认、尚未开始编码」状态，下一步是 Browser 模式步骤 1（schema `mode` 字段 + `src/main/browser.ts` BrowserEngine 骨架）；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
+
+## 工作区结构（现行入口）
+
+> 2026-10-01 由 project-development skill 初始化建立（最小增量：本次只新增 `rules/` 与 `specs/`）。
+
+- `agents.md` / `goal.md` / `plan.md` / `memory.md` —— 本项目的 AGENTS.md 体系，仍是唯一现行入口，不另建 `AGENTS.md`。
+- `rules/` —— 现行"怎么工作"：`quality-gates.md`（质量门命令、通过标准、数据影响、失败处理、平台基线）、`platform-support.md`（平台支持边界、平台相关代码索引、数据与密钥纪律、不可逆操作清单）、`structure.md`（文件级职责、依赖方向、新增文件归属决策表、体量红线；**新增/移动/删除文件前必读并同步更新**）。
+- `specs/` —— 任务驱动的方案与决策：`SPEC-XXX-主题.md` / `ADR-XXX-主题.md`；当前有 `SPEC-001-linux-compatibility.md`（实测证据库，T 项落地走 SPEC-002）、`SPEC-002-linux-adaptation-refactor.md`（Linux 适配 + platform/sandbox 解耦 + 文件编排，三阶段）。
+- `docs/` 与归档区 `achieve/` —— **暂不建立**：等确有可读资料或需要归档时再建，建立时在本节登记。
+- 规则类内容只写进 `rules/` 或本文件，避免同一规则两处维护；任务过程与结论写 `specs/`。
 
 ## 工作时的行为准则
 
@@ -47,7 +57,7 @@
 - [ ] 四个上下文文件（goal / plan / memory / agents）顶部时间均为最新。
 - [ ] `plan.md` 的「下一步第一件事」具体到可直接执行。
 - [ ] `memory.md`「未解决问题 / 待确认」已更新。
-- [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`（当前基线 77 passed / 2 skipped）。
+- [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`：Windows 基线 77 passed / 2 skipped；**Linux 基线 76 passed / 1 failed（仅 `tests/p9.test.ts:153`）/ 2 skipped**，判定规则见 `rules/quality-gates.md` 门 3。
 - [ ] 若打包，已核对 `release\Cubex Setup <version>.exe`（当前 0.1.2-dev）存在且大小/签名正常。
 - [ ] 若涉及 git：仅在用户明确要求时 commit/push；push 后核对目标分支/commit hash。
 - [ ] 无遗留占用进程（`Get-Process -Name Cubex` 为空）。

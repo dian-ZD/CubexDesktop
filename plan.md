@@ -1,12 +1,12 @@
 # 计划
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（UI/交互/提示词批量优化 11 项完成）
+> 最后更新时间：2026-10-01 ｜ 更新者：AI Agent（工作区初始化完成；新增 specs/SPEC-001 Linux 兼容性草案）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
 
-0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + GitHub 推送 **已完成**；**Browser 模式 plan 已获用户确认（Electron 内置 BrowserWindow / 混合形态 / 完整版），尚未开始编码**。下一步第一件事见文末。
+**SPEC-002 已获用户确认（D1=A 隐藏入口 / D2=试点迁 3 组件 / D3=按序全做），实施中**。提交策略（用户 2026-10-01 指令）：**每阶段本地 commit 留痕，不 push、不开 PR**。Browser 模式（步骤 1–6）在 SPEC-002 完成前挂起。0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + GitHub 推送 **已完成**。
 
 ## 步骤清单（近期已完成）
 
@@ -52,6 +52,13 @@
 - 验证：typecheck 0 / lint 0 error（7 条既有 `tr` 依赖 warning）/ test 77 passed。
 - 结论：完成。
 
+### 步骤 E：工作区初始化（project-development skill） —— [x]
+
+- 目标：按 project-development skill 阶段 A/B 完成接手调查与工作区治理初始化；最小增量，只建 `rules/` 与 `specs/`。
+- 涉及文件：新增 `rules/quality-gates.md`、`rules/platform-support.md`、`specs/SPEC-001-linux-compatibility.md`；更新 `agents.md`（登记结构）、`plan.md`、`memory.md`；全局技能装到 `~/.trae-cn/skills/project-development/`。
+- 产物：Linux 实测基线（typecheck 0 / lint 0 error / build 通过 / test 76 passed·1 failed·2 skipped / 冒烟二次通过）；SPEC-001 含 8 项任务、验收标准与回滚条件。
+- 结论：初始化完成；SPEC-001 为**草案，等用户 Review** 后再决定实施范围。
+
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
 ### 步骤 1：schema mode 下沉 + BrowserEngine —— [ ]
@@ -85,8 +92,9 @@
 
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- **下一步第一件事**：开始 Browser 模式步骤 1 —— 在 `src/shared/schema.ts` 的 `threadSchema` 加 `mode` 字段并导出 `AgentMode`，随后新建 `src/main/browser.ts` 的 BrowserEngine 骨架。
-- 动手前待用户拍板一个细节（已在对话中提出）：实时画面先用 `capturePage` 截图流（推荐）还是直接 `WebContentsView` 内嵌。
+- **当前状态**：`specs/SPEC-002-linux-adaptation-refactor.md` 已成文（阶段 1 platform/sandbox 解耦含 T4 → 阶段 2 Linux 适配 T1/T2/T3/T5/T6/T8+T7 → 阶段 3 渲染层试点迁移）；等待用户确认 §7 三个决策点（D1 截图路线 / D2 迁移范围 / D3 实施授权）。
+- **下一步第一件事**：用户确认后执行 SPEC-002 阶段 1.1（新建 `src/main/platform/shell.ts`，迁入 shellCommand，tools.ts 改 import，签名不变）。
+- Browser 模式恢复时其"下一步第一件事"仍是：`src/shared/schema.ts` threadSchema 加 `mode` 字段 + 新建 `src/main/browser.ts`；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
 
 ## 已知风险 / 阻塞项及应对
 
