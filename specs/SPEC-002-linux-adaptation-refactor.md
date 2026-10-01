@@ -1,6 +1,8 @@
 # SPEC-002 Linux 适配与结构重构
 
-> 状态：**方案（待用户确认后分阶段实施）** ｜ 创建：2026-10-01 ｜ 依据：SPEC-001 实测证据 + project-development skill
+> 状态：**阶段 1–3 已全部实施完成（2026-10-01，本地分阶段提交，未 push）** ｜ 创建：2026-10-01 ｜ 依据：SPEC-001 实测证据 + project-development skill
+>
+> 用户决策：D1=T7 隐藏入口；D2=试点迁 3 组件；D3=按序全做。提交策略：分阶段本地 commit 留痕，不 push、不开 PR。
 >
 > 用户指令：开发 Linux 适配；**少动原有代码**；沙箱代码解耦；设计更好的文件编排（功能分类、业务解耦、预留组件拆分文件树）；**全量状态广播 → 事件驱动改造明确暂不动**；先出方案再重构。
 
@@ -79,7 +81,11 @@ src/renderer/src/
 
 回滚：删 `platform/`、`sandbox/`、两个测试文件，`git checkout` 4 个被改文件。
 
-### 阶段 2：Linux 适配落地（T1/T2/T3/T5/T6/T8 + T7 按决策）｜改动 ≈8 文件
+### 阶段 2：Linux 适配落地（T1/T2/T3/T5/T6/T8 + T7=隐藏入口）｜改动 ≈8 文件 —— ✅ 完成（2026-10-01）
+
+> 验证：vitest **85 passed / 0 failed / 2 skipped**（T3 修复后 Linux 全绿）；`electron-builder --linux AppImage deb` 产出 `Cubex-0.1.2-dev.AppImage`（195MB）与 `cubex-desktop_0.1.2-dev_amd64.deb`（119MB）；**打包态二进制冒烟通过**（`release/linux-unpacked/cubex-desktop` 输出 `smoke-ready`）。
+> 注意：electron-builder 需 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`（直连 GitHub 下载 electron zip 会 EOF 失败）；Linux 可执行名取 package.json `name`（cubex-desktop）。
+> T2 实现说明：门控落在 `specs()` 注入 + `run()` 纵深拒绝 + `list()` enabled 三处；未改 schema/渲染层（避免 i18n 连锁），Wayland 下用户开关保持可拨但工具不会注入。
 
 | 项 | 内容 | 验收 |
 | --- | --- | --- |
@@ -91,7 +97,10 @@ src/renderer/src/
 | T8 | `scripts/desktop-smoke.mjs`：超时 20s → 45s | 清缓存冷启动一次通过 |
 | T7 | **按用户决策**（见 §7）：A=隐藏 screenshot / B=capturePage 截自家窗口 / C=portal Screenshot D-Bus 直连 | 按所选路线验收 |
 
-### 阶段 3：渲染层试点迁移 + 预留登记 ｜改动 ≈6 文件
+### 阶段 3：渲染层试点迁移 + 预留登记 ｜改动 ≈6 文件 —— ✅ 完成（2026-10-01）
+
+> 验证：typecheck 0 / lint 0 error / vitest 85 passed / build 通过 / 桌面冒烟通过。`git mv` 保留文件历史。
+> 注：AppImage/deb 产物基于迁移前的 out/ 打包（验证的是 T1 打包链路）；迁移后代码已由开发态冒烟覆盖，如需交付产物应重新 `dist:linux`。
 
 3.1 `Logo/SkillMenu/Markdown` 移入 `components/`，更新 4 处 import（App.tsx ×3、RightPanel.tsx ×1，Markdown 内部 `./i18n`→`../i18n`）。
 3.2 `rules/structure.md` 登记预留路径与"迁移发生时才建目录"规则。

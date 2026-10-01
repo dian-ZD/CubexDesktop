@@ -12,10 +12,10 @@
 | --- | --- | --- |
 | 1 类型检查 | `tsc --noEmit` | 通过，0 错误 |
 | 2 静态检查 | `eslint .` | 通过，0 error / 7 warning（`tr` 依赖） |
-| 3 单元测试 | `vitest run` | 84 passed / **1 failed**（仅 p9:153，SPEC-002 T3 修复中）/ 2 skipped |
+| 3 单元测试 | `vitest run` | 通过，**85 passed / 0 failed / 2 skipped**（Linux 全绿） |
 | 4 构建 | `electron-vite build` | 通过，`out/` 三端产出 |
 | 5 桌面冒烟 | `node scripts/desktop-smoke.mjs` | 二次运行通过；首次冷启动超时误报 |
-| 6 UI 脚本 | `node scripts/ui-check.mjs` | Linux 下未执行（脚本依赖 `process.env.TEMP`） |
+| 6 UI 脚本 | `node scripts/ui-check.mjs` | 已平台无关化（`tmpdir()`，SPEC-002 T5）；需 Playwright 浏览器就绪，本轮未执行 |
 
 Windows 参考基线（项目原记录）：`npm test` 77 passed / 2 skipped，`npm run dist` 产出 `release\Cubex Setup <version>.exe`。
 
@@ -45,7 +45,7 @@ Windows 参考基线（项目原记录）：`npm test` 77 passed / 2 skipped，`
 
 - 命令：`npm run build`（= `npm run typecheck` + `electron-vite build`）
 - 通过标准：退出码 0，且 `out/main`、`out/preload`、`out/renderer` 均有产物。构建期为纯前端/Node 打包，跨平台一致。
-- 发布产物：`npm run dist` 目前**只能出 Windows NSIS 包**（`electron-builder --win nsis`），无 `linux`/`mac` 配置。改动打包配置后必须核对产物真实存在再报完成。
+- 发布产物：`npm run dist` 出 Windows NSIS 包；`npm run dist:linux` 出 AppImage+deb（SPEC-002 T1，**Linux 下需 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`**，直连 GitHub 会 EOF 失败）。改动打包配置后必须核对产物真实存在再报完成。
 - 数据影响：写 `out/`（已在 `.gitignore`）。
 - 失败处理：先清 `out/` 再重试；仍失败按阻塞上报，不得只报"编译过去了"。
 
@@ -61,7 +61,7 @@ Windows 参考基线（项目原记录）：`npm test` 77 passed / 2 skipped，`
 ## 门 6：UI / 端到端脚本（条件执行）
 
 - 命令：`node scripts/ui-check.mjs`、`node scripts/ui-check-shell.mjs`（Playwright 驱动 Electron）。
-- 现状：依赖 `process.env.TEMP`，**Linux 下不可用**；修复见 SPEC-001 T5。
+- 现状：脚本已用 `os.tmpdir()` 平台无关化（SPEC-002 T5），Linux 可用；依赖 Playwright 浏览器就绪。
 - 涉及渲染层布局、交互、快捷键、窗口行为的改动，若本轮无法执行本门，必须在报告中写「未执行 + 原因 + 需要什么环境才能执行」，不得默认通过。
 
 ## 报告格式

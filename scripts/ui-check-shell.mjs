@@ -1,9 +1,10 @@
 import { _electron as electron } from '@playwright/test'
 import { cp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const source = join(process.env.TEMP, 'cubex-repro')
-const dir = join(process.env.TEMP, 'cubex-ui-shell')
+const source = join(tmpdir(), 'cubex-repro')
+const dir = join(tmpdir(), 'cubex-ui-shell')
 await rm(dir, { recursive: true, force: true })
 await cp(source, dir, { recursive: true })
 const app = await electron.launch({ args: ['.', `--user-data-dir=${dir}`] })

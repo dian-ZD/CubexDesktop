@@ -96,17 +96,17 @@ cubex/
 | `renderer/src/SettingsPanel.tsx` | 设置页（同上） |
 | `renderer/src/RightPanel.tsx` | 右栏：文件树/预览 webview/任务摘要 |
 | `renderer/src/WorkflowCanvas.tsx` | 工作流画布（节点拖拽/连线） |
-| `renderer/src/SkillMenu.tsx` | 输入框 `/` 技能菜单 |
-| `renderer/src/Markdown.tsx` | 自研轻量 Markdown 渲染 |
+| `renderer/src/components/Logo.tsx` | ★叶子组件：品牌图标 |
+| `renderer/src/components/SkillMenu.tsx` | ★叶子组件：输入框 `/` 技能菜单 |
+| `renderer/src/components/Markdown.tsx` | ★叶子组件：自研轻量 Markdown 渲染（导出 `OpenTarget`） |
 | `renderer/src/ui.tsx` | 小型共享 UI 原子（Toggle/Choice/按钮等） |
-| `renderer/src/Logo.tsx` | 品牌图标 |
 | `renderer/src/bridge.ts` | renderer 侧唯一 API 入口：桌面用 `window.cubex`，Web 预览用 `previewApi` 桩 |
 | `renderer/src/i18n.ts` + `phrases.ts` | `tr()` 中文键词典机制 + 词条库（新文案必须同步补 phrases） |
 | `renderer/src/useSpeech.ts` + `speech.worker.ts` | 语音输入（MediaRecorder + 本地 whisper ASR worker） |
 | `renderer/src/styles.css` | 全局样式单文件（6414 行，架构线待拆；新组件样式追加时按现有分节注释归位） |
 | `renderer/src/assets/logo.png`、`renderer/public/logo.png` | 图标资源（由 `scripts/make-icon.mjs` 生成，勿手改） |
 
-**新增渲染组件规则**：一律新建于 `renderer/src/`，通过 `bridge.ts` 取数据；跨组件共享的纯 UI 放 `ui.tsx`；禁止在组件里直接 `ipcRenderer`/`window.require`。
+**新增渲染组件规则**：无状态/低耦合的叶子组件一律新建于 `renderer/src/components/`（已试点：Logo/SkillMenu/Markdown）；跨组件共享的纯 UI 放 `ui.tsx`；数据只经 `bridge.ts` 取；禁止在组件里直接 `ipcRenderer`/`window.require`。**预留拆分目标位**（2026-10-01 登记，迁移发生时才建目录）：`components/sidebar/`、`components/composer/`、`components/messages/`（App.tsx 拆分目标）；主进程侧预留 `src/main/ipc/`（index.ts handler 拆分目标）与 `src/main/agent/`（AgentRunner 拆分目标）。
 
 ## 6. `tests/` 与 `scripts/`
 

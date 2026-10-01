@@ -67,6 +67,19 @@
 - 本地提交：治理文档 `d9ccefb`；阶段 1 代码随本步提交（不 push）。
 - 结论：完成。下一步进入阶段 2（T1/T2/T3/T5/T6/T8 + T7=隐藏入口）。
 
+### 步骤 G：SPEC-002 阶段 2 —— Linux 适配落地 —— [x]
+
+- 目标：T1 打包（linux 段 + author + dist:linux）、T2 computer_use 平台门控（D1=隐藏）、T3 repoNameFor 平台无关化、T5 脚本 tmpdir、T6 basic_text 弱加密提示、T8 冒烟阈值 45s。
+- 涉及文件：`package.json`、`src/main/github.ts`、`src/main/extensions.ts`、`src/main/index.ts`、`scripts/{repro,ui-check,ui-check-shell,desktop-smoke}.mjs`。
+- 验证：vitest **85 passed / 0 failed / 2 skipped**（Linux 全绿）；AppImage 195MB + deb 119MB 产出；**打包态 `release/linux-unpacked/cubex-desktop` 冒烟 smoke-ready**；electron-builder 需 `ELECTRON_MIRROR` 镜像（直连 GitHub EOF）。
+- 结论：完成。
+
+### 步骤 H：SPEC-002 阶段 3 —— 渲染层试点迁移 + 预留登记 —— [x]
+
+- 目标：Logo/SkillMenu/Markdown 迁入 `src/renderer/src/components/`（git mv 保历史），修正 7 处 import；structure.md 登记预留拆分目标位（sidebar/composer/messages、main 侧 ipc/agent）。
+- 验证：typecheck 0 / lint 0 error / vitest 85 passed / build 通过 / 桌面冒烟通过。
+- 结论：SPEC-002 三阶段全部完成；产物如需交付应重新 `dist:linux`（当前 AppImage/deb 基于迁移前 out/）。
+
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 
 ### 步骤 1：schema mode 下沉 + BrowserEngine —— [ ]
@@ -100,8 +113,8 @@
 
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- **当前状态**：SPEC-002 阶段 1 已完成并本地提交（platform/sandbox 解耦 + T4 进程树终止）。
-- **下一步第一件事**：SPEC-002 阶段 2 —— T3 `repoNameFor` 平台无关化 + p9 测试修复 → T5 脚本 tmpdir → T8 冒烟阈值 → T2 computer_use 门控（用 `platform/capture`，D1=隐藏入口）→ T6 secrets basic_text 提示 → T1 Linux 打包配置与 AppImage 试构建。
+- **当前状态**：SPEC-002 阶段 1/2/3 全部完成，质量门 Linux 全绿（85 passed / 0 failed），Linux 产物（AppImage+deb）已验证；全部改动仅本地提交（4 个 commit），未 push。
+- **下一步第一件事**：向用户汇报 SPEC-002 完成清单；待用户决定——(a) 是否补跑 `dist:linux` 出迁移后产物；(b) 是否恢复 Browser 模式步骤 1；(c) 是否需要 Windows 回归清单。
 - Browser 模式恢复时其"下一步第一件事"仍是：`src/shared/schema.ts` threadSchema 加 `mode` 字段 + 新建 `src/main/browser.ts`；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
 
 ## 已知风险 / 阻塞项及应对

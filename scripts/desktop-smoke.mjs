@@ -23,10 +23,10 @@ child.stdout.on('data', collect)
 child.stderr.on('data', collect)
 
 const timer = setTimeout(() => {
-  console.error('冒烟超时：应用未在 20 秒内报告就绪并退出')
+  console.error('冒烟超时：应用未在 45 秒内报告就绪并退出')
   child.kill()
   process.exit(1)
-}, 20000)
+}, 45_000)
 
 child.on('exit', (code) => {
   clearTimeout(timer)

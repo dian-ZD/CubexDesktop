@@ -3,6 +3,7 @@
   "version": "0.1.2-dev",
   "private": true,
   "description": "CubexDesktop 智能体协作工作站",
+  "author": "dian-ZD <liangdianhs@163.com>",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -15,7 +16,8 @@
     "test": "vitest run",
     "test:desktop": "node scripts/desktop-smoke.mjs",
     "make-icon": "electron scripts/make-icon.mjs",
-    "dist": "electron-vite build && electron-builder --win nsis"
+    "dist": "electron-vite build && electron-builder --win nsis",
+    "dist:linux": "electron-vite build && electron-builder --linux AppImage deb"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -64,6 +66,25 @@
       "shortcutName": "Cubex",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Utility",
+      "synopsis": "Cubex 智能体协作工作站",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     }
   },
   "dependencies": {

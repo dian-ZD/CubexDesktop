@@ -6,6 +6,7 @@ import { pluginManifestSchema, type PluginInfo, type PluginManifest, type Settin
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
 import { killTree, spawnDetached } from './platform/proc'
+import { desktopCaptureSupported } from './platform/capture'
 
 const MAX_OUTPUT = 40_000
 const clip = (text: string) => (text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n…（已截断，共 ${text.length} 字符）` : text)
@@ -103,7 +104,7 @@ export class ExtensionHost {
     const builtin: PluginInfo[] = [
       { name: 'browser', description: '内置浏览器：打开网页并读取标题、正文与链接，供智能体查资料、验证页面。', builtin: true, enabled: settings.plugins.browser, tools: [{ name: 'browser_open', description: '打开 http/https 页面并提取文本' }] },
       { name: 'search', description: '联网搜索：输入关键词，返回相关网页的标题、地址与摘要，搜索到的网页会显示在任务摘要中。', builtin: true, enabled: settings.plugins.search, tools: [{ name: 'web_search', description: '按关键词联网搜索并返回结果列表' }] },
-      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击坐标。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer, tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click' }] },
+      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击坐标。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer && desktopCaptureSupported(), tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click' }] },
     ]
     const user = this.plugins.map<PluginInfo>((item) => item.manifest
       ? { name: item.manifest.name, description: item.manifest.description, version: item.manifest.version, builtin: false, enabled: !disabled.has(item.manifest.name), tools: item.manifest.tools.map((tool) => ({ name: tool.name, description: tool.description })), path: item.dir }
@@ -116,7 +117,7 @@ export class ExtensionHost {
     if (settings.github.hasToken) specs.push({ name: 'github_push', description: '把当前项目提交并推送到用户配置的 GitHub 仓库（仓库不存在时自动创建）。仅在用户要求或设置允许自动推送时使用。', parameters: { type: 'object', properties: { message: { type: 'string', description: '提交说明，简要概括本次改动' } }, required: [] } })
     if (settings.plugins.browser) specs.push({ name: 'browser_open', description: '在内置浏览器中打开网页，返回标题、可见正文和主要链接。用于查阅文档、验证网页或本地开发服务。', parameters: { type: 'object', properties: { url: { type: 'string', description: 'http 或 https 地址' }, selector: { type: 'string', description: '可选，只提取匹配该 CSS 选择器的元素文本' } }, required: ['url'] } })
     if (settings.plugins.search) specs.push({ name: 'web_search', description: '联网搜索：输入关键词，返回若干条相关网页的标题、地址与摘要。需要获取最新资料、查证事实或寻找网页时使用；拿到结果后可再用 browser_open 打开某个地址查看详情。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, limit: { type: 'integer', description: '返回结果条数，默认 6，最多 10' } }, required: ['query'] } })
-    if (settings.plugins.computer) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，同时保存到项目 .cubex/screenshots，你可以据此判断屏幕内容）、open（打开应用/文件/网址，target 为路径或 URL）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 屏幕坐标单击）。每次调用都需要用户批准。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' } }, required: ['action'] } })
+    if (settings.plugins.computer && desktopCaptureSupported()) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，同时保存到项目 .cubex/screenshots，你可以据此判断屏幕内容）、open（打开应用/文件/网址，target 为路径或 URL）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 屏幕坐标单击）。每次调用都需要用户批准。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' } }, required: ['action'] } })
     const plugins = this.enabledPlugins()
     if (plugins.length) {
       const catalog = plugins.map((plugin) => plugin.tools.map((tool) => `- ${plugin.name}/${tool.name}：${tool.description}${tool.parameters ? `；参数 ${JSON.stringify(tool.parameters).slice(0, 400)}` : ''}`).join('\n')).join('\n')
@@ -166,6 +167,7 @@ export class ExtensionHost {
       }
       case 'computer_use': {
         if (!settings.plugins.computer) throw new Error('电脑操控插件已关闭，请在设置 → 插件中开启')
+        if (!desktopCaptureSupported()) throw new Error('当前系统桌面会话不支持电脑操控（Linux 需要 X11 会话；Wayland 下截屏不可用）')
         const actionLabels: Record<string, string> = { screenshot: '截屏', open: '打开应用/文件', type: '输入文字', key: '发送按键', click: '点击屏幕' }
         const action = str(call.args.action)
         this.deps.onControl?.({ active: true, kind: 'computer', label: `正在操控电脑：${actionLabels[action] ?? action}`, threadId: context.threadId ?? '' })

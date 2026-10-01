@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, screen, session, shell, type IpcMainInvokeEvent, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, safeStorage, screen, session, shell, type IpcMainInvokeEvent, type Rectangle } from 'electron'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -687,6 +687,9 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(async () => {
   hardenSession()
   await Promise.all([store.load(), secrets.load()])
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    await store.update((state) => { state.notice = [state.notice, '当前系统无可用密钥环（gnome-keyring/kwallet），API Key 仅弱加密存储，建议启用系统密钥环'].filter(Boolean).join('；') })
+  }
   store.subscribe(publish)
   registerIpc()
   createWindow()

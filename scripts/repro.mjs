@@ -1,7 +1,8 @@
 import { _electron as electron } from '@playwright/test'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-const dir = join(process.env.TEMP, 'cubex-repro')
+const dir = join(tmpdir(), 'cubex-repro')
 const app = await electron.launch({ args: ['.', `--user-data-dir=${dir}`], env: { ...process.env, ELECTRON_ENABLE_LOGGING: '1' } })
 const userData = await app.evaluate(({ app }) => app.getPath('userData'))
 console.log('userData', userData)
