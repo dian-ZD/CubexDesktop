@@ -102,6 +102,7 @@
 - 证据：curl 8.14.1 A/B —— 现状 `no_proxy='*'` 时环回目标 http=200 直连成功；去掉后 `exit=7` 被黑洞拒绝；`npm_config_offline=true` 时 `npm view express` cache-only 失败（npm/pip 索引本就被专用变量挡住）。
 - 验证：vitest **100 passed / 0 failed / 2 skipped**（含真实进程禁网实测通过）、typecheck 0、lint 0 error。
 - 结论：完成。来源为既有缺陷（SPEC-002 阶段 1 原样迁出 `tools.ts` 的实现），测试缺口一并补齐。
+- 范围决策（2026-10-02 用户确认）：禁网只覆盖 HTTP(S)，不补 `all_proxy`、不做非 HTTP 协议与裸 socket 拦截；验证以单元测试为终点。
 
 ## 步骤清单（Browser 模式 — 待实现，落地顺序）
 

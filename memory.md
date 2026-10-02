@@ -85,7 +85,7 @@
 - 影响面：`git clone` / `curl` / `wget` / `pip install <直链>` 直连成功，而 prompt.ts 明确承诺"git clone 等会失败"。**npm install / pip install（索引）不受影响**。
 - 来源：既有缺陷（原在 `tools.ts` 的 `buildSandboxEnv`），SPEC-002 阶段 1 解耦时原样迁出；`tests/sandbox.test.ts` 当时只断言变量值被写入，未验证拦截效果 → 测试缺口。
 - 修复：删除这两行 + 保留一行注释说明原因；补 3 条测试（禁网时不得写入 no_proxy、父进程 no_proxy 不泄漏、**真实进程环回禁网实测**含正负对照）。
-- 未覆盖（已知接受）：`ftp://` 等非 HTTP 协议（未设 `all_proxy`）、裸 socket 程序；硬隔离需 OS 层方案。
+- 范围决策（2026-10-02 用户确认）：沙箱禁网**只覆盖 HTTP(S)**，不补 `all_proxy`、不追非 HTTP 协议与裸 socket 程序；验证以 `tests/sandbox.test.ts` 单元测试为准（含真实进程环回实测），不再追加更高层验证。
 
 ## 用户明确偏好与禁忌（尽量原样）
 

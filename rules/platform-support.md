@@ -37,7 +37,7 @@
 - 文件类工具必须复用 `src/main/tools.ts` 的 `resolveInside()` 做真实路径越界校验；新增文件读写入口不得绕过。敏感文件名（`.env*`、`*.pem`、`*.key`、`id_rsa*`、`credentials*`）默认拒绝访问。
 - 命令沙箱是"弱隔离"：仅正则黑名单 + 环境变量清理/代理改写，不是内核级隔离。涉及沙箱的改动不得在文档或提示词中宣称提供强隔离。
 - **沙箱禁网实现与已知坑（2026-10-01 实测确认并修复）**：禁网靠环境变量——`http_proxy`/`https_proxy`（含大写）指向黑洞端口 9，外加 `npm_config_offline`、`PIP_NO_INDEX` 两个包管理器专用开关。**绝对禁止再写入 `no_proxy`/`NO_PROXY`**：`'*'` 的语义是"所有主机直连、绕过代理"，会整体抵消黑洞代理，使 `git clone`/`curl`/`wget`/`pip install <直链>` 全部直连成功（历史缺陷，已删）。改动沙箱后必须跑 `tests/sandbox.test.ts`——其中含**真实进程**的环回禁网实测（本地 HTTP 服务 + curl，正负对照），不再只断言变量值。
-- 仍未覆盖的禁网缺口（已知且接受）：`ftp://` 等非 HTTP 协议（未设 `all_proxy`）、以及任何不看代理变量的裸 socket 程序（Node `net`、`socket`、`nc`、`ssh`、`git://`）。需要硬隔离必须上 OS 层（Linux `unshare -n` / `bwrap`），当前不做。
+- **禁网范围决策（2026-10-02，用户确认）：只覆盖 HTTP(S)。** 不引入 `all_proxy`，不追非 HTTP 协议（`ftp://`）与裸 socket 程序（Node `net`、`socket`、`nc`、`ssh`、`git://`）的拦截——这些是该方案的原理上限，需要硬隔离必须另上 OS 层（Linux `unshare -n` / `bwrap`），不在本项目范围内。验证方式即 `tests/sandbox.test.ts` 的单元测试，不再追加更高层验证。
 
 ## 不可逆操作清单（执行前必须先确认）
 
