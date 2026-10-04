@@ -103,7 +103,9 @@
 
 - **asar 锁定**：`npm run dist` 打包时 `release\win-unpacked\resources\app.asar` 可能被杀软/索引器锁定（非 Cubex/node 进程），导致 `Remove-Item release` 失败。绕过：结束进程 + 删 `release`/`out` 后重试；仍失败用 `npx electron-builder --win nsis "-c.directories.output=dist-out"`（`-c` 参数在 PowerShell 必须加引号）。本轮清理进程与产物后 `npm run dist` 一次成功。
 - **Program Files 权限**：删除 `C:\Program Files\Cubex` 需管理员，`-Verb RunAs` 提权可能被用户取消；当前该空文件夹壳残留，不影响重装。
-- **本目录现为 git 仓库**（此前记录的「非 git 仓库」已过时）：remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，默认分支 `main`，最新 commit f57ade2。`.gitignore` 已忽略 `node_modules/`、`out/`、`release/`。仍遵循「未获用户明确指令不擅自提交/推送」。
+- **本目录现为 git 仓库**（此前记录的「非 git 仓库」已过时）：remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，默认分支 `main`，最新 commit `80c4e4d`（2026-10-04 推送成功，含全网爬取与资料报告）。`.gitignore` 已忽略 `node_modules/`、`out/`、`release/`。仍遵循「未获用户明确指令不擅自提交/推送」。
+- **push 需走本地代理**：本机直连 `github.com:443` 返回 `Connection was reset`（`Test-NetConnection github.com -Port 443` = False），但本地 7890 端口有代理（Clash 类）。成功命令：`git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin main`。未写入 git 全局配置（避免影响其它仓库）。
+- **PowerShell 下 git push 的 stderr 会被当作错误**：push 实际成功时仍显示 `NativeCommandError`，必须以 `git status -sb`（无 ahead）或 `git ls-remote origin main` 核对，不要只看退出码。
 - **lint 既有告警**：`npm run lint` 现有 9 个 `react-hooks/exhaustive-deps` warning（App.tsx，多为 `tr`/`thread` 依赖），为既有告警、非本轮引入，0 error。
 - **探测函数的副作用/耗时**：`probeContextWindow` 一次点击会发多轮（约 5–18 次）真实请求，默认上界 100 万 tokens；对超大模型首轮可能较慢，属预期。`low`/`high` 可调。
 - **摘要压缩依赖模型可用**：无 API Key / 模型被删时 `summarize` 直接返回移除标记（非摘要），不会报错也不阻塞。
@@ -124,7 +126,7 @@
 - `npm run lint` → exit 0（9 warning，0 error）。
 - `npm test` / `npx vitest run` → 94 passed，2 skipped（新增 citations.test.ts 8 例；此前基线 86/2）。
 - `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe`（已签名 + blockmap，x64）。
-- git：`git add -A` → `git commit`（commit f57ade2，24 文件 +1793/−231）→ `git push origin main`（`46cbaa7`→`f57ade2`）成功。
+- git：`git add -A` → `git commit`（commit `80c4e4d`，30 文件 +3572/−244）→ 走 7890 代理 `git push origin main` 成功（`ac8be26`→`80c4e4d`，远端 ls-remote 核对一致）。
 
 ## 未解决问题 / 待确认
 
