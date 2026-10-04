@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, ArchiveRestore, ArrowLeft, Bell, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Monitor, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, Bell, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Monitor, Palette, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
 import {
-  accents, approvalLabels, approvalModes, densities, fontFamilies, languages, providerKinds, providerLabels, responseStyles, sendKeys, settingsSchema, shells, themes, uiLanguages,
-  type Automation, type ConnectionTest, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type Settings, type SkillMeta, type Workflow as WorkflowType,
+  accents, approvalLabels, approvalModes, densities, fontFamilies, imageSizes, languages, providerKinds, providerLabels, responseStyles, searchEngines, sendKeys, settingsSchema, shells, themes, uiLanguages,
+  type Automation, type ConnectionTest, type CrawlMode, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type SearchEngine, type Settings, type SkillMeta, type Workflow as WorkflowType,
 } from '../../shared/schema'
 import { nextRunAt, weekdayNames } from '../../shared/schedule'
 import { api } from './bridge'
@@ -115,7 +115,7 @@ const densityLabels: Record<(typeof densities)[number], string> = { comfortable:
 const shellLabels: Record<(typeof shells)[number], string> = { auto: '自动（Windows 用 PowerShell）', powershell: 'Windows PowerShell', pwsh: 'PowerShell 7 (pwsh)', cmd: '命令提示符 (cmd)', bash: 'Bash', sh: 'sh' }
 const sendKeyLabels: Record<(typeof sendKeys)[number], string> = { enter: 'Enter 发送，Shift+Enter 换行', 'ctrl-enter': 'Ctrl+Enter 发送，Enter 换行' }
 
-export type SectionId = 'language' | 'archived' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'sound' | 'worktree' | 'rules' | 'appearance' | 'shortcuts' | 'about'
+export type SectionId = 'language' | 'archived' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'image' | 'github' | 'automation' | 'work' | 'browser' | 'sound' | 'worktree' | 'rules' | 'appearance' | 'shortcuts' | 'about'
 
 const sections: { id: SectionId; title: string; hint: string; icon: typeof Settings2 }[] = [
   { id: 'language', title: '语言', hint: '界面语言、回复语言与回复风格', icon: Languages },
@@ -125,9 +125,11 @@ const sections: { id: SectionId; title: string; hint: string; icon: typeof Setti
   { id: 'skills', title: '技能', hint: '上传技能文件，用 / 名称在对话中快速调用', icon: Sparkles },
   { id: 'providers', title: '模型', hint: '提供商、模型、连接测试与单模型高级参数', icon: Cpu },
   { id: 'plugins', title: '插件', hint: '浏览器、电脑控制与自定义插件', icon: Puzzle },
+  { id: 'image', title: '图片生成', hint: '生图模型提供商、模型 ID 与默认尺寸', icon: Palette },
   { id: 'github', title: 'GitHub', hint: '访问令牌、目标仓库与自动推送', icon: CloudUpload },
   { id: 'automation', title: '自动化', hint: '按间隔或每天/每周定时自动执行的任务', icon: Timer },
   { id: 'work', title: 'Work 模式', hint: '工作流运行方式与电脑/浏览器操控', icon: MonitorCog },
+  { id: 'browser', title: 'Browser 模式', hint: '起始页、逐步审批、会话时长与下载/新窗口策略', icon: Globe },
   { id: 'sound', title: '提示音', hint: '完成、等待审批与等待输入时的提示音', icon: Bell },
   { id: 'worktree', title: '工作树', hint: '命令执行环境与改动验证', icon: GitBranch },
   { id: 'rules', title: '规则与记忆', hint: '项目上下文文件、计划方式与跨应用交接', icon: BookOpen },
@@ -145,11 +147,13 @@ const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   rules: ['agent.maxSteps', 'agent.planFirst', 'agent.autoTodo'],
   shortcuts: ['chat.sendKey'],
   plugins: ['plugins'],
+  image: ['image'],
   mcp: ['mcp'],
   skills: ['skills'],
   github: ['github'],
   automation: ['automations'],
   work: ['work'],
+  browser: ['browser'],
   sound: ['sound'],
 }
 
@@ -337,7 +341,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({})
   const [keyBusy, setKeyBusy] = useState<string | null>(null)
   const [tests, setTests] = useState<Record<string, ConnectionTest | 'pending'>>({})
-  const [discovery, setDiscovery] = useState<Record<string, { status: 'loading' } | { status: 'error'; message: string } | { status: 'done'; models: DiscoveredModelInfo[] }>>({})
+  const [discovery, setDiscovery] = useState<Record<string, { status: 'loading' } | { status: 'error'; message: string } | { status: 'info'; message: string } | { status: 'done'; models: DiscoveredModelInfo[] }>>({})
   const [copied, setCopied] = useState(false)
   const [restoring, setRestoring] = useState<string | null>(null)
   const [plugins, setPlugins] = useState<PluginInfo[] | null>(null)
@@ -600,7 +604,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     setDraft(updater)
   }
 
-  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'sound'>(group: K, value: Partial<Settings[K]>) =>
+  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'browser' | 'sound' | 'image'>(group: K, value: Partial<Settings[K]>) =>
     edit((current) => ({ ...current, [group]: { ...current[group], ...value } }))
 
   const pickBackground = () => {
@@ -652,7 +656,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     edit((current) => ({ ...current, automations: current.automations.filter((item) => item.id !== id) }))
 
   const togglePlugin = (name: string, enabled: boolean) => {
-    if (name === 'browser' || name === 'search' || name === 'computer') patch('plugins', { [name]: enabled })
+    if (name === 'browser' || name === 'search' || name === 'computer' || name === 'image') patch('plugins', { [name]: enabled })
     else edit((current) => {
       const disabled = new Set(current.plugins.disabled)
       if (enabled) disabled.delete(name)
@@ -771,15 +775,13 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'loading' } }))
     try {
       const apiKey = (keyDrafts[provider.id] ?? '').trim()
-      const result = await api.listProviderModels({ provider, ...(apiKey ? { apiKey } : {}) })
+      const result = await api.probeContextWindow({ provider, model, ...(apiKey ? { apiKey } : {}) })
       if (!result.ok) { setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: result.error } })); return }
-      const match = result.data.find((item) => item.modelId === model.modelId)
-      if (match?.contextWindow) {
-        updateModel(index, { contextWindow: match.contextWindow })
-        setDiscovery((current) => { const next = { ...current }; delete next[`ctx-${model.id}`]; return next })
-      } else {
-        setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: tr('未能自动识别该模型的上下文长度，请手动填写') } }))
-      }
+      const measured = result.data.contextWindow
+      updateModel(index, { contextWindow: measured })
+      setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'info', message: result.data.capped
+        ? tr('实测上下文至少 {n} tokens（已达探测上限，按此填写）', { n: measured.toLocaleString() })
+        : tr('实测上下文约 {n} tokens（{tries} 次探测）', { n: measured.toLocaleString(), tries: result.data.attempts }) } }))
     } catch (error) {
       setDiscovery((current) => ({ ...current, [`ctx-${model.id}`]: { status: 'error', message: error instanceof Error ? error.message : String(error) } }))
     }
@@ -823,7 +825,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     return () => window.clearTimeout(timer)
   }, [draft, dirty])
 
-  const { general, appearance, modelParams, agent, permissions, chat, github, work, sound } = draft
+  const { general, appearance, modelParams, agent, permissions, chat, github, work, browser, sound, image } = draft
   const activeProjects = projects.filter((item) => !item.archived)
 
   const rows: Row[] = [
@@ -897,6 +899,31 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       </div>
     ) },
 
+    { key: 'imageProvider', section: 'image', label: tr('提供商'), hint: tr('使用「模型」分区中已配置的提供商调用其 OpenAI 兼容 /images/generations 接口；密钥复用提供商设置'), keywords: 'image provider 生图 图片 提供商 dall-e flux', wide: true, paths: ['image.providerId'], render: () => (
+      <div className="image-provider">
+        <Select className="field-select" label={tr('生图提供商')} value={image.providerId}
+          options={draft.providers.length === 0
+            ? [{ value: '', label: tr('请先在「模型」中添加提供商') }]
+            : [{ value: '', label: tr('未选择') }, ...draft.providers.map((item) => ({ value: item.id, label: item.name }))]}
+          onChange={(providerId) => patch('image', { providerId })} />
+        {draft.providers.length === 0 && <p className="field-hint">{tr('还没有提供商。先到「模型」分区添加提供商并保存 API Key。')}</p>}
+      </div>
+    ) },
+    { key: 'imageModel', section: 'image', label: tr('模型 ID'), hint: tr('生图模型名称，如 dall-e-3、flux-schnell 或 provider 的其它图像模型'), keywords: 'image model 生图 模型 id', paths: ['image.modelId'], render: () => (
+      <input aria-label={tr('生图模型 ID')} value={image.modelId} placeholder="dall-e-3" spellCheck={false} onChange={(event) => patch('image', { modelId: event.target.value })} />
+    ) },
+    { key: 'imageSize', section: 'image', label: tr('默认尺寸'), hint: tr('generate_image 未显式指定 size 时使用；auto 表示交给模型决定'), keywords: 'image size 生图 尺寸 分辨率', paths: ['image.size'], render: () => (
+      <Select className="field-select" label={tr('默认尺寸')} value={image.size}
+        options={imageSizes.map((size) => ({ value: size, label: size === 'auto' ? tr('自动（模型决定）') : `${size} px` }))}
+        onChange={(size) => patch('image', { size })} />
+    ) },
+    { key: 'imageHint', section: 'image', label: tr('使用说明'), keywords: 'image generate 生图 说明 工具', wide: true, render: () => (
+      <div className="about-block">
+        <p>{tr('配置后模型会获得 generate_image 工具：传入提示词即可生成图片，结果自动保存到项目 .cubex/images 并直接显示在对话里。')}</p>
+        <p>{tr('接口为 OpenAI 兼容的 POST /images/generations，支持返回 b64_json 或 url 两种格式；可在「插件」分区关闭该功能。')}</p>
+      </div>
+    ) },
+
     { key: 'githubToken', section: 'github', label: tr('访问令牌'), hint: tr('需要 repo 权限的 Personal Access Token；通过系统加密保存在本机'), keywords: 'github token pat 令牌 密钥', wide: true, render: () => (
       <div className="github-token">
         <div className="key-row">
@@ -933,6 +960,31 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     { key: 'confirmBeforeRun', section: 'work', label: tr('运行工作流前确认'), hint: tr('点击运行时先弹出确认，避免误触'), keywords: 'work confirm run 确认 运行', render: () => <Toggle label={tr('运行工作流前确认')} checked={work.confirmBeforeRun} onChange={(confirmBeforeRun) => patch('work', { confirmBeforeRun })} /> },
     { key: 'showControlBanner', section: 'work', label: tr('操控时显示提示条'), hint: tr('电脑或浏览器被自动操控时，在界面顶部显示醒目提示条'), keywords: 'control banner 操控 提示 浏览器 电脑', render: () => <Toggle label={tr('操控时显示提示条')} checked={work.showControlBanner} onChange={(showControlBanner) => patch('work', { showControlBanner })} /> },
     { key: 'escToStopControl', section: 'work', label: tr('按 Esc 结束操控'), hint: tr('操控进行中按 Esc 立即请求停止电脑/浏览器操控'), keywords: 'esc stop control 结束 操控', render: () => <Toggle label={tr('按 Esc 结束操控')} checked={work.escToStopControl} onChange={(escToStopControl) => patch('work', { escToStopControl })} /> },
+
+    { key: 'browserHomepage', section: 'browser', label: tr('起始页'), hint: tr('新建浏览器任务时自动打开的网址，留空则显示空白工作台'), keywords: 'browser homepage 起始页 主页 网址', paths: ['browser.homepage'], render: () => (
+      <input aria-label={tr('起始页')} value={browser.homepage} placeholder={tr('https://example.com（可留空）')} spellCheck={false} onChange={(event) => patch('browser', { homepage: event.target.value })} />
+    ) },
+    { key: 'browserSearchEngine', section: 'browser', label: tr('默认搜索引擎'), hint: tr('地址栏输入关键词按 Ctrl/Cmd+Enter，或 AI 搜索时使用的引擎'), keywords: 'browser search engine 搜索 引擎 bing google baidu', paths: ['browser.searchEngine'], render: () => (
+      <Select<SearchEngine> className="field-select" label={tr('默认搜索引擎')} value={browser.searchEngine}
+        options={searchEngines.map((engine) => ({ value: engine, label: engine === 'custom' ? tr('自定义') : ({ bing: 'Bing', google: 'Google', duckduckgo: 'DuckDuckGo', baidu: tr('百度') } as Record<string, string>)[engine] }))}
+        onChange={(searchEngine) => patch('browser', { searchEngine })} />
+    ) },
+    { key: 'browserSearchTemplate', section: 'browser', label: tr('自定义搜索地址'), hint: tr('仅在搜索引擎选“自定义”时生效，用 {q} 表示查询词，例如 https://example.com/s?q={q}'), keywords: 'browser search template 自定义 搜索 地址', paths: ['browser.searchTemplate'], render: () => (
+      <input aria-label={tr('自定义搜索地址')} value={browser.searchTemplate} placeholder={tr('https://example.com/search?q={q}')} spellCheck={false} disabled={browser.searchEngine !== 'custom'} onChange={(event) => patch('browser', { searchTemplate: event.target.value })} />
+    ) },
+    { key: 'browserStepApproval', section: 'browser', label: tr('逐步审批浏览器操作'), hint: tr('打开网址、点击、输入等敏感操作在执行前请求确认（受审批模式影响）'), keywords: 'browser approval step 审批 逐步 操作', render: () => <Toggle label={tr('逐步审批浏览器操作')} checked={browser.stepApproval} onChange={(stepApproval) => patch('browser', { stepApproval })} /> },
+    { key: 'browserCrawlMode', section: 'browser', label: tr('全网爬取方式'), hint: tr('browser_crawl 批量抓取网页时的呈现方式：后台并行抓取并显示进度，或在可见视图里逐页打开'), keywords: 'browser crawl mode 爬取 全网 并行 逐页 后台 前台', paths: ['browser.crawlMode'], render: () => (
+      <Select<CrawlMode> className="field-select" label={tr('全网爬取方式')} value={browser.crawlMode}
+        options={[{ value: 'background', label: tr('后台并行（带进度）') }, { value: 'visible', label: tr('前台逐页可见') }]}
+        onChange={(crawlMode) => patch('browser', { crawlMode })} />
+    ) },
+    { key: 'browserCrawlPages', section: 'browser', label: tr('单次爬取最多页数'), hint: tr('browser_crawl 单次最多抓取的网页数，3–20'), keywords: 'browser crawl pages 页数 爬取 最多', paths: ['browser.crawlPages'], render: () => <NumberField label={tr('单次爬取最多页数')} value={browser.crawlPages} min={3} max={20} unit={tr('页')} onChange={(value) => patch('browser', { crawlPages: value ?? Number.NaN })} /> },
+    { key: 'browserLeaseMinutes', section: 'browser', label: tr('会话保留时长'), hint: tr('浏览器任务空闲后保留会话与登录状态的时长，1–180 分钟'), keywords: 'browser lease session 会话 时长 租约', paths: ['browser.leaseMinutes'], render: () => <NumberField label={tr('会话保留时长')} value={browser.leaseMinutes} min={1} max={180} unit={tr('分钟')} onChange={(value) => patch('browser', { leaseMinutes: value ?? Number.NaN })} /> },
+    { key: 'browserAllowDownloads', section: 'browser', label: tr('允许下载文件'), hint: tr('关闭时会阻止页面触发的文件下载，避免自动写入磁盘'), keywords: 'browser download 下载', render: () => <Toggle label={tr('允许下载文件')} checked={browser.allowDownloads} onChange={(allowDownloads) => patch('browser', { allowDownloads })} /> },
+    { key: 'browserAllowNewWindows', section: 'browser', label: tr('允许打开新窗口'), hint: tr('页面尝试打开新窗口/标签页时，在当前视图内加载 http/https 网址；关闭则一律拦截'), keywords: 'browser popup new window 新窗口 弹窗', render: () => <Toggle label={tr('允许打开新窗口')} checked={browser.allowNewWindows} onChange={(allowNewWindows) => patch('browser', { allowNewWindows })} /> },
+    { key: 'browserUserAgent', section: 'browser', label: tr('自定义 User-Agent'), hint: tr('留空则使用默认 UA；仅在需要模拟特定浏览器时填写'), keywords: 'browser user agent ua 标识', paths: ['browser.userAgent'], render: () => (
+      <input aria-label={tr('自定义 User-Agent')} value={browser.userAgent} placeholder={tr('留空使用默认')} spellCheck={false} onChange={(event) => patch('browser', { userAgent: event.target.value })} />
+    ) },
 
     { key: 'soundEnabled', section: 'sound', label: tr('启用提示音'), hint: tr('任务状态变化时播放轻提示音（使用系统音频，无需额外文件）'), keywords: 'sound audio 提示音 声音', render: () => <Toggle label={tr('启用提示音')} checked={sound.enabled} onChange={(enabled) => patch('sound', { enabled })} /> },
     { key: 'soundOnDone', section: 'sound', label: tr('完成时提示音'), hint: tr('回复完成时播放'), keywords: 'sound done 完成 提示音', render: () => <Toggle label={tr('完成时提示音')} checked={sound.onDone} onChange={(onDone) => patch('sound', { onDone })} /> },
@@ -1094,6 +1146,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     const enabledIn = (item: PluginInfo) => item.name === 'browser' && item.builtin ? draft.plugins.browser
       : item.name === 'search' && item.builtin ? draft.plugins.search
       : item.name === 'computer' && item.builtin ? draft.plugins.computer
+      : item.name === 'image' && item.builtin ? draft.plugins.image
       : !item.error && !draft.plugins.disabled.includes(item.name)
     return (
       <div className="plugin-block">
@@ -1129,6 +1182,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
           </ul>
         )}
         {draft.plugins.computer && <p className="field-hint">{tr('电脑控制可以截屏、输入和点击，每一步都会请求你批准。')}</p>}
+        {draft.plugins.image && <p className="field-hint">{tr('图片生成使用「图片生成」分区中配置的生图模型，生成结果会保存到项目 .cubex/images。')}</p>}
       </div>
     )
   }
@@ -1460,7 +1514,9 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
                           </div>
                           {(() => {
                             const ctx = discovery[`ctx-${model.id}`]
-                            return ctx?.status === 'error' ? <span className="field-hint danger">{ctx.message}</span> : null
+                            if (ctx?.status === 'error') return <span className="field-hint danger">{ctx.message}</span>
+                            if (ctx?.status === 'info') return <span className="field-hint">{ctx.message}</span>
+                            return null
                           })()}
                           <FieldError message={errors.get(`models.${index}.contextWindow`) && tr('范围 4000–4000000 的整数')} />
                         </label>

@@ -1,26 +1,11 @@
 import type { Message } from '../shared/schema'
+import { messageTokens } from '../shared/tokens'
+
+export { estimateTokens, messageTokens } from '../shared/tokens'
 
 export const DEFAULT_CONTEXT_WINDOW = 128_000
 const KEEP_RECENT = 8
 const OLD_TOOL_OUTPUT = 1_500
-
-export function estimateTokens(text: string): number {
-  let wide = 0
-  for (const char of text) if (char.charCodeAt(0) > 0x2e80) wide++
-  return Math.ceil(wide + (text.length - wide) / 4)
-}
-
-export function messageTokens(message: Message): number {
-  switch (message.role) {
-    case 'user':
-    case 'system':
-      return estimateTokens(message.content) + 4
-    case 'assistant':
-      return estimateTokens(message.content) + message.toolCalls.reduce((sum, call) => sum + estimateTokens(JSON.stringify(call.args)) + 8, 4)
-    case 'tool':
-      return message.results.reduce((sum, result) => sum + estimateTokens(result.output) + estimateTokens(result.diff ?? '') + 8, 0)
-  }
-}
 
 function shrinkTool(message: Message): Message {
   if (message.role !== 'tool') return message

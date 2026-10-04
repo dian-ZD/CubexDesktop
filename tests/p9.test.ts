@@ -164,6 +164,8 @@ describe('GitHub 与迁移', () => {
     expect(parsed.github.branch).toBe('main')
     expect(parsed.plugins.browser).toBe(true)
     expect(parsed.plugins.computer).toBe(false)
+    expect(parsed.plugins.image).toBe(true)
+    expect(parsed.image.size).toBe('1024x1024')
     expect(parsed.automations.map((item) => item.id)).toEqual(['a1'])
   })
 })

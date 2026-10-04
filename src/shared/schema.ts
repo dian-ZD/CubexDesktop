@@ -6,7 +6,7 @@ const isoTime = z.string().datetime()
 
 export const providerKinds = ['openai-compatible', 'anthropic', 'ollama'] as const
 export const approvalModes = ['ask', 'auto-edit', 'full-auto'] as const
-export const toolNames = ['read_file', 'list_directory', 'search_files', 'write_file', 'edit_file', 'run_command', 'ask_user', 'manage_todos', 'delegate', 'github_push', 'browser_open', 'web_search', 'computer_use', 'plugin_call', 'mcp_call'] as const
+export const toolNames = ['read_file', 'list_directory', 'search_files', 'write_file', 'edit_file', 'run_command', 'ask_user', 'manage_todos', 'delegate', 'github_push', 'browser_open', 'web_search', 'computer_use', 'generate_image', 'plugin_call', 'mcp_call', 'browser_navigate', 'browser_click', 'browser_type', 'browser_extract', 'browser_screenshot', 'browser_wait', 'browser_search', 'browser_tab', 'browser_crawl', 'browser_extract_links'] as const
 
 export const projectSchema = z.object({
   id: identifier,
@@ -131,6 +131,7 @@ export const pluginsSchema = z.object({
   browser: z.boolean(),
   search: z.boolean(),
   computer: z.boolean(),
+  image: z.boolean(),
   disabled: z.array(z.string().max(100)).max(100),
 })
 
@@ -156,12 +157,39 @@ export const workSchema = z.object({
   escToStopControl: z.boolean(),
 })
 
+export const searchEngines = ['bing', 'google', 'duckduckgo', 'baidu', 'custom'] as const
+export type SearchEngine = (typeof searchEngines)[number]
+
+export const crawlModes = ['background', 'visible'] as const
+export type CrawlMode = (typeof crawlModes)[number]
+
+export const browserSettingsSchema = z.object({
+  homepage: z.string().trim().max(4000).default(''),
+  stepApproval: z.boolean(),
+  leaseMinutes: z.number().int().min(1).max(180),
+  allowDownloads: z.boolean(),
+  allowNewWindows: z.boolean(),
+  userAgent: z.string().trim().max(500).default(''),
+  searchEngine: z.enum(searchEngines).default('bing'),
+  searchTemplate: z.string().trim().max(2000).default(''),
+  crawlMode: z.enum(crawlModes).default('background'),
+  crawlPages: z.number().int().min(3).max(20).default(8),
+})
+
 export const soundSchema = z.object({
   enabled: z.boolean(),
   onDone: z.boolean(),
   onApproval: z.boolean(),
   onQuestion: z.boolean(),
   volume: z.number().min(0).max(1),
+})
+
+export const imageSizes = ['1024x1024', '1024x1536', '1536x1024', '512x512', '768x768', 'auto'] as const
+
+export const imageSettingsSchema = z.object({
+  providerId: z.string().max(100).default(''),
+  modelId: z.string().trim().max(160).default(''),
+  size: z.enum(imageSizes).default('1024x1024'),
 })
 
 export const automationSchedules = ['interval', 'daily', 'weekly'] as const
@@ -199,7 +227,9 @@ export const settingsSchema = z.object({
   plugins: pluginsSchema,
   mcp: mcpSchema,
   work: workSchema,
+  browser: browserSettingsSchema,
   sound: soundSchema,
+  image: imageSettingsSchema,
   automations: z.array(automationSchema).max(30),
 }).superRefine((value, ctx) => {
   if (new Set(value.providers.map((item) => item.id)).size !== value.providers.length) {
@@ -248,7 +278,7 @@ export const messageImageSchema = z.object({
 })
 
 export const messageSchema = z.discriminatedUnion('role', [
-  z.object({ id: identifier, role: z.literal('user'), time: isoTime, content: z.string().max(60_000), card: messageCardSchema.optional(), images: z.array(messageImageSchema).max(8).optional() }),
+  z.object({ id: identifier, role: z.literal('user'), time: isoTime, content: z.string().max(60_000), card: messageCardSchema.optional(), images: z.array(messageImageSchema).max(8).optional(), steering: z.boolean().optional() }),
   z.object({
     id: identifier,
     role: z.literal('assistant'),
@@ -292,6 +322,23 @@ export const todoItemSchema = z.object({
   status: z.enum(todoStatuses),
 })
 
+export const agentModes = ['code', 'work', 'browser'] as const
+export type AgentMode = (typeof agentModes)[number]
+
+export const searchEngineTemplates: Record<Exclude<SearchEngine, 'custom'>, string> = {
+  bing: 'https://www.bing.com/search?q={q}',
+  google: 'https://www.google.com/search?q={q}',
+  duckduckgo: 'https://duckduckgo.com/?q={q}',
+  baidu: 'https://www.baidu.com/s?wd={q}',
+}
+
+export function buildSearchUrl(query: string, engine: SearchEngine, template = ''): string {
+  const tpl = engine === 'custom'
+    ? (template.includes('{q}') ? template : 'https://www.bing.com/search?q={q}')
+    : searchEngineTemplates[engine]
+  return tpl.replace('{q}', encodeURIComponent(query.trim()))
+}
+
 export const threadSchema = z.object({
   id: identifier,
   projectId: identifier,
@@ -306,6 +353,7 @@ export const threadSchema = z.object({
   queue: z.array(queuedMessageSchema).max(20).optional(),
   todos: z.array(todoItemSchema).max(40).optional(),
   pinned: z.boolean().optional(),
+  mode: z.enum(agentModes).optional(),
 })
 
 export const workflowNodeKinds = ['task', 'check', 'review', 'note', 'computer', 'browser', 'launch', 'command', 'search', 'file', 'git', 'plugin', 'mcp', 'wait', 'ask'] as const
@@ -337,20 +385,22 @@ export const stateSchema = z.object({
   workflows: z.array(workflowSchema).max(50).optional(),
 })
 
-export const createThreadInputSchema = z.object({ projectId: identifier, modelId: z.string().max(100) }).strict()
+export const createThreadInputSchema = z.object({ projectId: identifier, modelId: z.string().max(100), mode: z.enum(agentModes).optional() }).strict()
 export const sendMessageInputSchema = z.object({ threadId: identifier, content: z.string().trim().max(60_000), modelId: z.string().max(100).optional(), card: messageCardSchema.optional(), images: z.array(messageImageSchema).max(8).optional() }).strict().refine((value) => value.content.length > 0 || (value.images?.length ?? 0) > 0, { message: '请输入内容或添加图片' })
 export const regenerateMessageInputSchema = z.object({ threadId: identifier, messageId: identifier, modelId: z.string().max(100).optional() }).strict()
 export const rollbackMessageInputSchema = z.object({ threadId: identifier, messageId: identifier }).strict()
 export const deleteMessageInputSchema = z.object({ threadId: identifier, messageId: identifier }).strict()
 export const threadInputSchema = z.object({ threadId: identifier }).strict()
+export const exportTextInputSchema = z.object({ title: z.string().trim().min(1).max(120), defaultName: z.string().trim().min(1).max(80), content: z.string().max(2_000_000) }).strict()
 export const projectInputSchema = z.object({ projectId: identifier }).strict()
 export const updateProjectInputSchema = z.object({ projectId: identifier, name: shortText.optional(), archived: z.boolean().optional() }).strict()
 export const updateThreadInputSchema = z.object({ threadId: identifier, title: shortText.optional(), pinned: z.boolean().optional() }).strict()
-export const windowActions = ['minimize', 'maximize', 'close'] as const
+export const windowActions = ['minimize', 'maximize', 'close', 'fullscreen'] as const
 export const windowActionSchema = z.enum(windowActions)
 export const approvalInputSchema = z.object({ threadId: identifier, callId: identifier, approved: z.boolean() }).strict()
 export const answerInputSchema = z.object({ threadId: identifier, callId: identifier, answer: z.string().trim().min(1).max(4000) }).strict()
 export const dequeueInputSchema = z.object({ threadId: identifier, queuedId: identifier }).strict()
+export const steerInputSchema = z.object({ threadId: identifier, content: z.string().trim().min(1).max(60_000) }).strict()
 export const providerKeyInputSchema = z.object({ providerId: identifier, apiKey: z.string().max(4000) }).strict()
 export const projectPathInputSchema = z.object({ projectId: identifier, path: z.string().max(2000) }).strict()
 export const runShellInputSchema = z.object({ projectId: identifier, command: z.string().trim().min(1).max(4000) }).strict()
@@ -360,6 +410,7 @@ export const fileEntrySchema = z.object({ name: z.string(), path: z.string(), ki
 export const fileContentSchema = z.object({ path: z.string(), content: z.string(), truncated: z.boolean(), size: z.number().nonnegative() })
 export const testConnectionInputSchema = z.object({ provider: providerSchema, model: modelSchema, apiKey: z.string().max(4000).optional() }).strict()
 export const listProviderModelsInputSchema = z.object({ provider: providerSchema, apiKey: z.string().max(4000).optional() }).strict()
+export const probeContextWindowInputSchema = z.object({ provider: providerSchema, model: modelSchema, apiKey: z.string().max(4000).optional() }).strict()
 export const streamDeltaSchema = z.object({ threadId: identifier, messageId: identifier, delta: z.string() })
 export const activityPhaseSchema = z.enum(['thinking', 'planning', 'writing', 'tool', 'delegating', 'waiting'])
 export type ActivityPhase = z.infer<typeof activityPhaseSchema>
@@ -377,6 +428,13 @@ export const githubPushInputSchema = z.object({ projectId: identifier, message: 
 export const saveWorkflowInputSchema = workflowSchema.strict()
 export const workflowInputSchema = z.object({ workflowId: identifier }).strict()
 export const automationInputSchema = z.object({ automationId: identifier }).strict()
+export const browserBoundsInputSchema = z.object({ threadId: identifier, x: z.number().int(), y: z.number().int(), width: z.number().int().nonnegative().max(20_000), height: z.number().int().nonnegative().max(20_000) }).strict()
+export const browserNavigateInputSchema = z.object({ threadId: identifier, url: z.string().trim().min(1).max(4000) }).strict()
+export const browserTabSchema = z.object({ id: identifier, title: z.string(), url: z.string(), loading: z.boolean() })
+export const browserStateSchema = z.object({ threadId: identifier, url: z.string(), title: z.string(), loading: z.boolean(), canGoBack: z.boolean(), canGoForward: z.boolean(), tabs: z.array(browserTabSchema), activeTabId: identifier.nullable() })
+export type BrowserTab = z.infer<typeof browserTabSchema>
+export type BrowserState = z.infer<typeof browserStateSchema>
+export const browserTabInputSchema = z.object({ threadId: identifier, action: z.enum(['new', 'close', 'activate']), tabId: identifier.optional(), url: z.string().trim().max(4000).optional() }).strict()
 export const pluginToolSchema = z.object({
   name: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/i, '工具名只能包含字母、数字、_ -'),
   description: z.string().max(1000),
@@ -413,6 +471,7 @@ export type StreamDelta = z.infer<typeof streamDeltaSchema>
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string }
 export type ConnectionTest = { ok: boolean; latencyMs: number; message: string }
 export type DiscoveredModelInfo = { modelId: string; contextWindow?: number }
+export type ContextProbeInfo = { contextWindow: number; attempts: number; capped: boolean }
 export type WindowAction = (typeof windowActions)[number]
 export type WindowState = { maximized: boolean; focused: boolean; panelDetached?: boolean }
 export type ControlState = { active: true; kind: 'computer' | 'browser'; label: string; threadId: string } | { active: false }
@@ -435,7 +494,7 @@ export type SkillDetail = SkillMeta & { content: string }
 export interface CubexAPI {
   getState: () => Promise<Result<AppState>>
   selectProject: () => Promise<Result<Project | null>>
-  createThread: (input: { projectId: string; modelId: string }) => Promise<Result<Thread>>
+  createThread: (input: { projectId: string; modelId: string; mode?: AgentMode }) => Promise<Result<Thread>>
   sendMessage: (input: { threadId: string; content: string; modelId?: string; card?: MessageCard; images?: MessageImage[] }) => Promise<Result<void>>
   regenerateMessage: (input: { threadId: string; messageId: string; modelId?: string }) => Promise<Result<void>>
   rollbackMessage: (input: { threadId: string; messageId: string }) => Promise<Result<void>>
@@ -445,6 +504,7 @@ export interface CubexAPI {
   updateThread: (input: { threadId: string; title?: string; pinned?: boolean }) => Promise<Result<void>>
   compactThread: (input: { threadId: string }) => Promise<Result<{ removed: number }>>
   exportThread: (input: { threadId: string }) => Promise<Result<string | null>>
+  exportText: (input: { title: string; defaultName: string; content: string }) => Promise<Result<string | null>>
   deleteProject: (input: { projectId: string }) => Promise<Result<void>>
   updateProject: (input: { projectId: string; name?: string; archived?: boolean }) => Promise<Result<void>>
   revealProject: (input: { projectId: string }) => Promise<Result<void>>
@@ -452,6 +512,7 @@ export interface CubexAPI {
   resolveApproval: (input: { threadId: string; callId: string; approved: boolean }) => Promise<Result<void>>
   answerQuestion: (input: { threadId: string; callId: string; answer: string }) => Promise<Result<void>>
   dequeueMessage: (input: { threadId: string; queuedId: string }) => Promise<Result<void>>
+  steerMessage: (input: { threadId: string; content: string }) => Promise<Result<void>>
   pickFiles: (input: { projectId: string }) => Promise<Result<string[]>>
   listFiles: (input: { projectId: string; path: string }) => Promise<Result<FileEntry[]>>
   readProjectFile: (input: { projectId: string; path: string }) => Promise<Result<FileContent>>
@@ -463,6 +524,7 @@ export interface CubexAPI {
   setProviderKey: (input: { providerId: string; apiKey: string }) => Promise<Result<void>>
   testConnection: (input: { provider: ProviderConfig; model: ModelConfig; apiKey?: string }) => Promise<Result<ConnectionTest>>
   listProviderModels: (input: { provider: ProviderConfig; apiKey?: string }) => Promise<Result<DiscoveredModelInfo[]>>
+  probeContextWindow: (input: { provider: ProviderConfig; model: ModelConfig; apiKey?: string }) => Promise<Result<ContextProbeInfo>>
   shareThreadImage: (input: { threadId: string }) => Promise<Result<string | null>>
   setGithubToken: (input: { token: string }) => Promise<Result<string | null>>
   githubPush: (input: { projectId: string; message?: string }) => Promise<Result<GithubPushResult>>
@@ -479,6 +541,12 @@ export interface CubexAPI {
   deleteWorkflow: (input: { workflowId: string }) => Promise<Result<void>>
   runWorkflow: (input: { workflowId: string }) => Promise<Result<Thread>>
   runAutomation: (input: { automationId: string }) => Promise<Result<void>>
+  browserBounds: (input: { threadId: string; x: number; y: number; width: number; height: number }) => Promise<Result<BrowserState>>
+  browserHide: (input: { threadId: string }) => Promise<Result<null>>
+  browserNavigate: (input: { threadId: string; url: string }) => Promise<Result<BrowserState>>
+  browserCapture: (input: { threadId: string }) => Promise<Result<{ title: string; url: string; selection: string; screenshot?: string }>>
+  browserTab: (input: { threadId: string; action: 'new' | 'close' | 'activate'; tabId?: string; url?: string }) => Promise<Result<BrowserState>>
+  onBrowserState: (listener: (state: BrowserState) => void) => () => void
   onState: (listener: (state: AppState) => void) => () => void
   onDelta: (listener: (delta: StreamDelta) => void) => () => void
   onActivity: (listener: (activity: AgentActivity) => void) => () => void
@@ -513,10 +581,12 @@ export function defaultSettings(): Settings {
     permissions: { readOnly: false, sandbox: true, sandboxNetwork: false, allowCommands: [], denyCommands: ['rm -rf /', 'format', 'shutdown', 'git push --force'] },
     chat: { sendKey: 'enter', showUsage: true, expandTools: false, autoScroll: true, notifyOnDone: true },
     github: { hasToken: false, autoPush: false, repo: '', branch: 'main', private: true },
-    plugins: { browser: true, search: true, computer: false, disabled: [] },
+    plugins: { browser: true, search: true, computer: false, image: true, disabled: [] },
     mcp: { servers: [] },
     work: { autoSwitchToChat: true, confirmBeforeRun: true, showControlBanner: true, escToStopControl: true },
+    browser: { homepage: '', stepApproval: true, leaseMinutes: 30, allowDownloads: false, allowNewWindows: false, userAgent: '', searchEngine: 'bing', searchTemplate: '', crawlMode: 'background', crawlPages: 8 },
     sound: { enabled: true, onDone: true, onApproval: true, onQuestion: true, volume: 0.5 },
+    image: { providerId: '', modelId: '', size: '1024x1024' },
     automations: [],
   }
 }
@@ -555,7 +625,9 @@ export function migrateState(raw: unknown): unknown {
     plugins: mergeGroup(pluginsSchema, defaults.plugins, legacy.plugins),
     mcp: mcpSchema.safeParse(legacy.mcp).success ? mcpSchema.parse(legacy.mcp) : defaults.mcp,
     work: mergeGroup(workSchema, defaults.work, legacy.work),
+    browser: mergeGroup(browserSettingsSchema, defaults.browser, legacy.browser),
     sound: mergeGroup(soundSchema, defaults.sound, legacy.sound),
+    image: mergeGroup(imageSettingsSchema, defaults.image, legacy.image),
     automations: Array.isArray(legacy.automations)
       ? legacy.automations.flatMap((item) => {
           const parsed = automationSchema.safeParse(item)

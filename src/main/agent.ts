@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { mergeModelParams, type ActivityPhase, type AgentActivity, type AssistantMessage, type Message, type MessageCard, type MessageImage, type PendingApproval, type PendingQuestion, type Settings, type StreamDelta, type Thread, type TodoItem, type ToolCall, type ToolResult } from '../shared/schema'
-import { estimateTokens, fitContext } from './context'
+import { mergeModelParams, type ActivityPhase, type AgentActivity, type AgentMode, type AssistantMessage, type Message, type MessageCard, type MessageImage, type PendingApproval, type PendingQuestion, type Settings, type StreamDelta, type Thread, type TodoItem, type ToolCall, type ToolResult } from '../shared/schema'
+import { estimateTokens, historyTokens } from '../shared/tokens'
+import { fitContext } from './context'
 import { describeError } from './errors'
-import { streamChat, type ToolSpec } from './llm'
+import { isContextOverflowError, streamChat, type ToolSpec } from './llm'
 import { buildSystemPrompt } from './prompt'
 import { ensureProjectFiles, PROJECT_FILES, readProjectFiles, renderProjectContext } from './projectFiles'
 import type { SecretStore } from './secrets'
 import type { StateStore } from './store'
 import { commandTools, delegateTools, extensionToolNames, interactiveTools, matchesCommandRule, mutatingTools, runTool, sensitiveExtensionTools, summarizeCall, todoTools, toolSpecs } from './tools'
+import { browserEngine } from './browser'
 
 export interface ExtensionRunner {
-  specs(settings: Settings): ToolSpec[]
+  specs(settings: Settings, mode?: AgentMode): ToolSpec[]
   run(call: ToolCall, context: { root: string; signal: AbortSignal; threadId?: string }): Promise<{ output: string; image?: string }>
 }
 
@@ -62,25 +64,26 @@ export class AgentRunner {
     return this.runs.size
   }
 
-  async createThread(projectId: string, modelId: string): Promise<Thread> {
+  async createThread(projectId: string, modelId: string, mode?: AgentMode): Promise<Thread> {
     const state = this.store.get()
     const project = state.projects.find((item) => item.id === projectId)
     if (!project) throw new Error('项目不存在，请重新选择目录')
     await ensureProjectFiles(project.path, project.name).catch(() => [])
     const now = new Date().toISOString()
-    const thread: Thread = { id: randomUUID(), projectId, title: '新任务', modelId: modelId || state.settings.defaultModelId, status: 'idle', createdAt: now, updatedAt: now, messages: [] }
+    const thread: Thread = { id: randomUUID(), projectId, title: '新任务', modelId: modelId || state.settings.defaultModelId, status: 'idle', createdAt: now, updatedAt: now, messages: [], ...(mode && mode !== 'code' ? { mode } : {}) }
     await this.store.update((draft) => { draft.threads.push(thread) })
     return thread
   }
 
   async deleteThread(threadId: string): Promise<void> {
     await this.cancel(threadId).catch(() => undefined)
+    browserEngine.close(threadId)
     await this.store.update((draft) => { draft.threads = draft.threads.filter((item) => item.id !== threadId) })
   }
 
   async deleteProject(projectId: string): Promise<void> {
     const ids = this.store.get().threads.filter((item) => item.projectId === projectId).map((item) => item.id)
-    for (const id of ids) await this.cancel(id).catch(() => undefined)
+    for (const id of ids) { await this.cancel(id).catch(() => undefined); browserEngine.close(id) }
     await this.store.update((draft) => {
       draft.projects = draft.projects.filter((item) => item.id !== projectId)
       draft.threads = draft.threads.filter((item) => item.projectId !== projectId)
@@ -99,6 +102,16 @@ export class AgentRunner {
       return
     }
     await this.start(threadId, content, modelId, card, images)
+  }
+
+  async steer(threadId: string, content: string): Promise<void> {
+    const thread = this.find(threadId)
+    if (thread.status === 'idle' || !this.runs.has(threadId)) throw new Error('当前没有正在进行的回复，请直接发送消息')
+    await this.store.update((draft) => {
+      const target = draft.threads.find((item) => item.id === threadId)!
+      target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content, steering: true })
+      target.updatedAt = new Date().toISOString()
+    })
   }
 
   async regenerateMessage(threadId: string, messageId: string, modelId?: string): Promise<void> {
@@ -148,19 +161,82 @@ export class AgentRunner {
   async compactThread(threadId: string): Promise<{ removed: number }> {
     const thread = this.find(threadId)
     if (thread.status !== 'idle' || this.runs.has(threadId)) throw new Error('当前会话正在运行，请先停止后再压缩上下文')
+    return this.compactMessages(threadId)
+  }
+
+  /**
+   * 摘要式压缩：用模型把较早的消息总结成结构化摘要，保留最近若干条原始消息。
+   * 可在会话运行中调用（自动压缩）；模型不可用时退化为普通移除标记，保证始终能释放空间。
+   */
+  private async compactMessages(threadId: string): Promise<{ removed: number }> {
+    const thread = this.find(threadId)
     const keep = 10
     if (thread.messages.length <= keep + 1) return { removed: 0 }
     let start = thread.messages.length - keep
     while (start > 0 && thread.messages[start].role !== 'user') start--
     if (start <= 0) return { removed: 0 }
-    const removed = start
-    const marker: Message = { id: randomUUID(), role: 'system', time: new Date().toISOString(), level: 'info', content: `（已压缩上下文：较早的 ${removed} 条消息已从会话中移除以节省空间）` }
+    const older = thread.messages.slice(0, start)
+    const removed = older.length
+    const summary = await this.summarize(thread, older)
+    const marker: Message = { id: randomUUID(), role: 'system', time: new Date().toISOString(), level: 'info', content: summary.slice(0, 24_000) }
     await this.store.update((draft) => {
       const t = draft.threads.find((item) => item.id === threadId)!
       t.messages = [marker, ...t.messages.slice(start)]
       t.updatedAt = new Date().toISOString()
     })
     return { removed }
+  }
+
+  private renderTranscript(messages: Message[]): string {
+    const lines: string[] = []
+    for (const message of messages) {
+      if (message.role === 'user') lines.push(`用户：${message.content.slice(0, 4000)}`)
+      else if (message.role === 'assistant') {
+        const calls = message.toolCalls.map((call) => call.name).join('、')
+        lines.push(`助手：${message.content.slice(0, 4000)}${calls ? `（调用工具：${calls}）` : ''}`)
+      } else if (message.role === 'tool') {
+        const out = message.results.map((result) => `- ${result.name} ${result.ok ? '成功' : '失败'}：${result.output.slice(0, 800)}`).join('\n')
+        if (out) lines.push(`工具结果：\n${out}`)
+      } else if (message.role === 'system') {
+        lines.push(`系统：${message.content.slice(0, 1000)}`)
+      }
+    }
+    const text = lines.join('\n\n')
+    return text.length > 60_000 ? `${text.slice(0, 60_000)}\n…（历史过长，已截断）` : text
+  }
+
+  private async summarize(thread: Thread, older: Message[]): Promise<string> {
+    const plain = `（已压缩上下文：较早的 ${older.length} 条消息已移除以节省空间。请依据其余上下文继续任务。）`
+    const state = this.store.get()
+    const model = state.settings.models.find((item) => item.id === thread.modelId)
+    const provider = model ? state.settings.providers.find((item) => item.id === model.providerId) : undefined
+    if (!model || !provider) return plain
+    const apiKey = this.secrets.get(provider.id)
+    if (provider.kind !== 'ollama' && !apiKey) return plain
+    const transcript = this.renderTranscript(older)
+    if (!transcript.trim()) return plain
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 90_000)
+    try {
+      const turn = await streamChat({
+        provider, apiKey, model, tools: [],
+        system: '你是一个对话摘要助手。请把给定的历史对话压缩成一份结构化的中文摘要，务必保留：①用户的目标与需求；②已确认的结论与决策；③涉及的文件路径与关键代码位置；④未完成事项与下一步；⑤重要约束与偏好。只依据给定对话，不要编造。',
+        messages: [{ id: randomUUID(), role: 'user', time: new Date().toISOString(), content: `请总结以下对话历史：\n\n${transcript}` }],
+        signal: controller.signal,
+        onText: () => undefined,
+        temperature: 0,
+        maxTokens: 2000,
+        timeoutMs: 90_000,
+        retries: 1,
+      })
+      const summary = turn.content.trim()
+      if (!summary) return plain
+      return `（上下文已压缩：较早的 ${older.length} 条消息已总结为以下摘要，供你继续任务参考）\n\n${summary}`
+    } catch {
+      return plain
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async resume(threadId: string, modelId?: string): Promise<void> {
@@ -175,16 +251,36 @@ export class AgentRunner {
     })
     const run: Run = { controller: new AbortController() }
     this.runs.set(threadId, run)
+    let failed = false
     void this.loop(threadId, run).catch(async (error: unknown) => {
+      failed = true
       await this.system(threadId, 'error', describeError(error))
     }).finally(async () => {
-      this.runs.delete(threadId)
-      await this.store.update((draft) => {
-        const target = draft.threads.find((item) => item.id === threadId)
-        if (target) { target.status = 'idle'; target.pending = undefined; target.question = undefined; target.updatedAt = new Date().toISOString() }
-      })
-      void this.drain(threadId)
+      await this.finish(threadId, run.controller.signal, failed)
     })
+  }
+
+  private async finish(threadId: string, signal: AbortSignal, failed: boolean): Promise<void> {
+    this.runs.delete(threadId)
+    await this.store.update((draft) => {
+      const target = draft.threads.find((item) => item.id === threadId)
+      if (target) { target.status = 'idle'; target.pending = undefined; target.question = undefined; target.updatedAt = new Date().toISOString() }
+    })
+    if (!failed && !signal.aborted && this.pendingSteering(threadId)) {
+      await this.resume(threadId).catch(() => undefined)
+      return
+    }
+    void this.drain(threadId)
+  }
+
+  private pendingSteering(threadId: string): boolean {
+    const thread = this.store.get().threads.find((item) => item.id === threadId)
+    if (!thread) return false
+    let lastAssistant = -1
+    for (let i = thread.messages.length - 1; i >= 0; i--) {
+      if (thread.messages[i].role === 'assistant') { lastAssistant = i; break }
+    }
+    return thread.messages.some((item, index) => index > lastAssistant && item.role === 'user' && item.steering === true)
   }
 
   async dequeue(threadId: string, queuedId: string): Promise<void> {
@@ -208,15 +304,12 @@ export class AgentRunner {
     })
     const run: Run = { controller: new AbortController() }
     this.runs.set(threadId, run)
+    let failed = false
     void this.loop(threadId, run).catch(async (error: unknown) => {
+      failed = true
       await this.system(threadId, 'error', describeError(error))
     }).finally(async () => {
-      this.runs.delete(threadId)
-      await this.store.update((draft) => {
-        const target = draft.threads.find((item) => item.id === threadId)
-        if (target) { target.status = 'idle'; target.pending = undefined; target.question = undefined; target.updatedAt = new Date().toISOString() }
-      })
-      void this.drain(threadId)
+      await this.finish(threadId, run.controller.signal, failed)
     })
   }
 
@@ -288,6 +381,10 @@ export class AgentRunner {
     const maxSteps = this.store.get().settings.agent.maxSteps
     const MAX_CONTINUATIONS = 5
     let continuations = 0
+    let recoveries = 0
+    let autoCompactions = 0
+    const callCounts = new Map<string, number>()
+    let blockedStreak = 0
     for (let step = 0; step < maxSteps && !signal.aborted; step++) {
       const state = this.store.get()
       const { agent } = state.settings
@@ -302,9 +399,23 @@ export class AgentRunner {
       const apiKey = this.secrets.get(provider.id)
       if (provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${provider.name}」尚未配置 API Key`)
 
+      // 接近上下文上限时先做摘要压缩，避免下一步请求直接超限
+      const window = model.contextWindow
+      if (window && autoCompactions < 3 && historyTokens(thread.messages) > window * 0.9) {
+        const { removed } = await this.compactMessages(threadId).catch(() => ({ removed: 0 }))
+        if (removed > 0) {
+          autoCompactions++
+          await this.system(threadId, 'info', `上下文接近上限，已自动把较早的 ${removed} 条消息压缩为摘要。`)
+          step--
+          continue
+        }
+        autoCompactions = 3
+      }
+      const steeringSeen = new Set(thread.messages.filter((item) => item.role === 'user' && item.steering).map((item) => item.id))
+
       const messageId = randomUUID()
       const projectFiles = await readProjectFiles(project.path)
-      const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles) })
+      const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles), mode: thread.mode })
       const extraParts = [
         thread.todos && thread.todos.length > 0 ? `## 当前任务待办（这份清单始终可见，即使历史被裁剪也不会丢失，请据此判断做到哪一步、还剩什么，并及时用 manage_todos 更新状态）\n${renderTodos(thread.todos)}` : '',
         model.systemPromptExtra?.trim() ? `## 模型专属提示\n${model.systemPromptExtra.trim()}` : '',
@@ -322,7 +433,7 @@ export class AgentRunner {
       let turn
       try {
         turn = await streamChat({
-          provider, apiKey, model, tools: [...toolSpecs, ...(this.extensions?.specs(state.settings) ?? [])], signal,
+          provider, apiKey, model, tools: [...toolSpecs, ...(this.extensions?.specs(state.settings, thread.mode) ?? [])], signal,
           system,
           messages: history,
           temperature: modelParams.temperature ?? undefined,
@@ -337,6 +448,15 @@ export class AgentRunner {
       } catch (error) {
         await this.dropEmpty(threadId, messageId)
         if (signal.aborted) return
+        if (isContextOverflowError(error) && recoveries < 3) {
+          const { removed } = await this.compactMessages(threadId).catch(() => ({ removed: 0 }))
+          if (removed > 0) {
+            recoveries++
+            await this.system(threadId, 'info', `检测到上下文超限，已自动把较早的 ${removed} 条消息压缩为摘要并重试。`)
+            step--
+            continue
+          }
+        }
         throw error
       }
       await this.store.update((draft) => {
@@ -359,13 +479,25 @@ export class AgentRunner {
           })
           continue
         }
+        const steeringPending = this.store.get().threads.find((item) => item.id === threadId)?.messages
+          .filter((item) => item.role === 'user' && item.steering && !steeringSeen.has(item.id)) ?? []
+        if (steeringPending.length > 0 && !signal.aborted && step + 1 < maxSteps) continue
         return
       }
       if (signal.aborted) return
 
       const results: ToolResult[] = []
+      let blockedCount = 0
       for (const call of turn.toolCalls) {
         if (signal.aborted) return
+        const signature = `${call.name}:${JSON.stringify(call.args)}`
+        const seen = (callCounts.get(signature) ?? 0) + 1
+        callCounts.set(signature, seen)
+        if (seen > 3) {
+          blockedCount++
+          results.push({ callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与参数已执行多次，本次已拦截。请更换方法或直接给出结论。' })
+          continue
+        }
         if (typeof call.args.__raw === 'string') {
           results.push({ callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' })
           continue
@@ -399,9 +531,27 @@ export class AgentRunner {
         results.push(await runTool(call, { root: project.path, signal, commandTimeoutMs: agent.commandTimeoutSec * 1000, shell: agent.shell, sandbox: { enabled: state.settings.permissions.sandbox, allowNetwork: state.settings.permissions.sandboxNetwork } }))
       }
       if (signal.aborted) return
+      // 空转治理：若整步工具调用都因重复被拦截，连续两次则中止本轮
+      if (turn.toolCalls.length > 0 && blockedCount === turn.toolCalls.length) {
+        blockedStreak++
+        if (blockedStreak >= 2) {
+          await this.system(threadId, 'info', '检测到重复空转（连续多次调用相同工具与参数），已中止本轮以避免浪费。请调整思路后重试。')
+          return
+        }
+      } else {
+        blockedStreak = 0
+      }
       await this.store.update((draft) => {
         const target = draft.threads.find((item) => item.id === threadId)!
-        target.messages = this.append(target.messages, { id: randomUUID(), role: 'tool', time: new Date().toISOString(), results })
+        const toolMessage: Message = { id: randomUUID(), role: 'tool', time: new Date().toISOString(), results }
+        const anchor = target.messages.findIndex((item) => item.id === messageId)
+        if (anchor >= 0) {
+          const messages = [...target.messages]
+          messages.splice(anchor + 1, 0, toolMessage)
+          target.messages = messages.slice(-400)
+        } else {
+          target.messages = this.append(target.messages, toolMessage)
+        }
         target.updatedAt = new Date().toISOString()
       })
     }

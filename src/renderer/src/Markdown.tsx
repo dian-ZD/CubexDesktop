@@ -1,9 +1,12 @@
 import { createContext, memo, useContext, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useI18n } from './i18n'
+import { extractSources, parseSourceLine, type SourceRef } from './sources'
 
 export type OpenTarget = { kind: 'url' | 'file' | 'folder'; value: string }
 export const OpenTargetContext = createContext<((target: OpenTarget) => void) | null>(null)
+
+const SOURCE_HEADING = /参考来源|来源列表|资料来源|Sources/i
 
 type Block =
   | { kind: 'code'; lang: string; text: string }
@@ -11,6 +14,7 @@ type Block =
   | { kind: 'list'; ordered: boolean; start: number; items: string[] }
   | { kind: 'quote'; text: string }
   | { kind: 'table'; head: string[]; rows: string[][]; align: Array<'left' | 'center' | 'right'> }
+  | { kind: 'sources'; items: SourceRef[] }
   | { kind: 'hr' }
   | { kind: 'para'; text: string }
 
@@ -34,7 +38,26 @@ function parseBlocks(source: string): Block[] {
     }
     if (!line.trim()) { index++; continue }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line)
-    if (heading) { blocks.push({ kind: 'heading', level: heading[1].length, text: heading[2].replace(/#+\s*$/, '') }); index++; continue }
+    if (heading) {
+      const title = heading[2].replace(/#+\s*$/, '')
+      blocks.push({ kind: 'heading', level: heading[1].length, text: title })
+      index++
+      // 「参考来源」小节：把紧随其后的编号行收集为来源卡片，其余仍按常规块解析。
+      if (SOURCE_HEADING.test(title)) {
+        const items: SourceRef[] = []
+        while (index < lines.length) {
+          const next = lines[index]
+          if (!next.trim()) break
+          if (/^(#{1,6}\s|\s*>|\s*(`{3,}|~{3,}))/.test(next)) break
+          const ref = parseSourceLine(next)
+          if (!ref) break
+          items.push(ref)
+          index++
+        }
+        if (items.length) blocks.push({ kind: 'sources', items })
+      }
+      continue
+    }
     if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { blocks.push({ kind: 'hr' }); index++; continue }
     if (line.includes('|') && index + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[index + 1])) {
       const head = splitRow(line)
@@ -72,9 +95,9 @@ function parseBlocks(source: string): Block[] {
   return blocks
 }
 
-const inlinePattern = /(`+)([\s\S]+?)\1|\[\[(url|file|dir):([^\]]+?)(?:\|([^\]]+?))?\]\]|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\n]+)\*|_([^_\n]+)_|\[([^\]]+)\]\(([^)\s]+)\)/g
+const inlinePattern = /(`+)([\s\S]+?)\1|\[\[(url|file|dir):([^\]]+?)(?:\|([^\]]+?))?\]\]|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|~~([\s\S]+?)~~|\*([^*\n]+)\*|_([^_\n]+)_|\[([^\]]+)\]\(([^)\s]+)\)|\[(\d{1,3})\]/g
 
-function inline(text: string, keyBase = 'i'): ReactNode[] {
+function inline(text: string, keyBase = 'i', citations?: Map<number, SourceRef>): ReactNode[] {
   const out: ReactNode[] = []
   let last = 0
   let count = 0
@@ -90,14 +113,29 @@ function inline(text: string, keyBase = 'i'): ReactNode[] {
       if (type === 'url') out.push(<UrlToken key={key} url={value} label={label} />)
       else out.push(<PathToken key={key} kind={type === 'dir' ? 'folder' : 'file'} value={value} label={label} />)
     }
-    else if (match[6] !== undefined || match[7] !== undefined) out.push(<strong key={key}>{inline(match[6] ?? match[7], key)}</strong>)
-    else if (match[8] !== undefined) out.push(<del key={key}>{inline(match[8], key)}</del>)
-    else if (match[9] !== undefined || match[10] !== undefined) out.push(<em key={key}>{inline(match[9] ?? match[10], key)}</em>)
-    else if (match[11] !== undefined) out.push(link(match[12], inline(match[11], key), key))
+    else if (match[6] !== undefined || match[7] !== undefined) out.push(<strong key={key}>{inline(match[6] ?? match[7], key, citations)}</strong>)
+    else if (match[8] !== undefined) out.push(<del key={key}>{inline(match[8], key, citations)}</del>)
+    else if (match[9] !== undefined || match[10] !== undefined) out.push(<em key={key}>{inline(match[9] ?? match[10], key, citations)}</em>)
+    else if (match[11] !== undefined) out.push(link(match[12], inline(match[11], key, citations), key))
+    else if (match[13] !== undefined) out.push(cite(match[13], key, citations))
     last = start + match[0].length
   }
   if (last < text.length) out.push(...breaks(text.slice(last), `${keyBase}e`))
   return out
+}
+
+// 正文中的 [n] 引用角标：命中「参考来源」小节时渲染为可点角标，否则原样保留。
+function cite(number: string, key: string, citations?: Map<number, SourceRef>): ReactNode {
+  const ref = citations?.get(Number(number))
+  if (!ref) return <span key={key} className="md-cite-plain">[{number}]</span>
+  return <CiteToken key={key} refItem={ref} />
+}
+
+function CiteToken({ refItem }: { refItem: SourceRef }) {
+  const open = useContext(OpenTargetContext)
+  const label = `${refItem.title} — ${refItem.url}`
+  if (!open) return <a className="md-cite" href={refItem.url} target="_blank" rel="noreferrer noopener" title={label}>[{refItem.index}]</a>
+  return <button type="button" className="md-cite" title={label} onClick={() => open({ kind: 'url', value: refItem.url })}>[{refItem.index}]</button>
 }
 
 function PathToken({ kind, value, label }: { kind: 'file' | 'folder'; value: string; label?: string }) {
@@ -170,33 +208,45 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   )
 }
 
-function renderBlock(block: Block, key: number): ReactNode {
+function renderBlock(block: Block, key: number, citations?: Map<number, SourceRef>): ReactNode {
   switch (block.kind) {
     case 'code': return <CodeBlock key={key} lang={block.lang} text={block.text} />
     case 'heading': {
       const Tag = `h${Math.min(block.level + 2, 6)}` as 'h3'
-      return <Tag key={key} className="md-heading">{inline(block.text)}</Tag>
+      return <Tag key={key} className="md-heading">{inline(block.text, 'i', citations)}</Tag>
     }
     case 'hr': return <hr key={key} />
     case 'quote': return <blockquote key={key}><Markdown source={block.text} /></blockquote>
+    case 'sources': return (
+      <ol key={key} className="md-sources">
+        {block.items.map((item) => (
+          <li key={`${item.index}-${item.url}`}>
+            <span className="md-cite">{item.index}</span>
+            <a href={item.url} target="_blank" rel="noreferrer noopener" title={item.url}>{item.title}</a>
+          </li>
+        ))}
+      </ol>
+    )
     case 'list': {
       const items = block.items.map((item, index) => {
         const task = /^\[([ xX])\]\s+(.*)$/s.exec(item)
-        if (task) return <li key={index} className="md-task"><span className={`md-check${task[1] !== ' ' ? ' done' : ''}`}>{task[1] !== ' ' && <Check size={10} />}</span>{inline(task[2])}</li>
-        return <li key={index}>{inline(item)}</li>
+        if (task) return <li key={index} className="md-task"><span className={`md-check${task[1] !== ' ' ? ' done' : ''}`}>{task[1] !== ' ' && <Check size={10} />}</span>{inline(task[2], 'i', citations)}</li>
+        return <li key={index}>{inline(item, 'i', citations)}</li>
       })
       return block.ordered ? <ol key={key} start={block.start}>{items}</ol> : <ul key={key}>{items}</ul>
     }
     case 'table': return (
       <div key={key} className="md-table-wrap"><table>
-        <thead><tr>{block.head.map((cell, index) => <th key={index} style={{ textAlign: block.align[index] ?? 'left' }}>{inline(cell)}</th>)}</tr></thead>
-        <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.head.map((_, index) => <td key={index} style={{ textAlign: block.align[index] ?? 'left' }}>{inline(row[index] ?? '')}</td>)}</tr>)}</tbody>
+        <thead><tr>{block.head.map((cell, index) => <th key={index} style={{ textAlign: block.align[index] ?? 'left' }}>{inline(cell, 'i', citations)}</th>)}</tr></thead>
+        <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{block.head.map((_, index) => <td key={index} style={{ textAlign: block.align[index] ?? 'left' }}>{inline(row[index] ?? '', 'i', citations)}</td>)}</tr>)}</tbody>
       </table></div>
     )
-    case 'para': return <p key={key}>{inline(block.text)}</p>
+    case 'para': return <p key={key}>{inline(block.text, 'i', citations)}</p>
   }
 }
 
 export const Markdown = memo(function Markdown({ source }: { source: string }) {
-  return <div className="md">{parseBlocks(source).map(renderBlock)}</div>
+  const cited = extractSources(source)
+  const citations = cited.length ? new Map(cited.map((item) => [item.index, item])) : undefined
+  return <div className="md">{parseBlocks(source).map((block, index) => renderBlock(block, index, citations))}</div>
 })

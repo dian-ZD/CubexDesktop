@@ -1,10 +1,10 @@
 # CubexDesktop Goal
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
+> 最后更新时间：2026-10-04 ｜ 更新者：AI Agent（资料报告 + 引用溯源）
 
 ## 当前任务目标（一句话）
 
-在稳定 0.1.2-dev 的基础上，为 CubexDesktop 新增与 Code / Work 并列的第三个主模式 **Browser（浏览器自动化工作台）**；当前正处于「Browser 模式 plan 已获用户确认、尚未开始编码」的状态。执行进度详见 plan.md，过程细节详见 memory.md。
+新增**资料报告 + 引用溯源**（经用户选择题确认）：助手调研类回答末尾附「## 参考来源」并在正文标 `[n]` 角标（点击跳转来源），右栏「联网搜索」分组升级为「资料报告」并可导出 Markdown；当前状态：**已实现并通过全量校验**（typecheck 0 / lint 0 error / test 94 passed + 2 skipped），**尚未真实会话实测**。上一阶段「Browser 模式全网爬取」同为已实现未实测。执行进度详见 plan.md，过程细节详见 memory.md。
 
 ### 背景与动机
 
@@ -12,16 +12,16 @@
 - 已有只读的 `browser_open`（离屏 BrowserWindow，仅打开+抽取文本），不足以支撑交互式浏览；需升级为可见 + 可交互后端。
 - 前置已完成：修复多处输出/工具截断问题、新增自动检测可用模型与上下文长度、放大白底 logo 图标、输入框自适应高度，并编译 0.1.2-dev 推送至 GitHub。
 
-### 验收标准 / Definition of Done（Browser 模式）
+### 验收标准 / Definition of Done（Browser 模式）—— 全部达成 ✅
 
-- [ ] `view` 联合类型与标题栏 radiogroup 新增 `browser`，与 Code/Work 并列。
-- [ ] `thread.mode` 下沉到 schema（`code|work|browser`），agent 按模式注入专属 system prompt 段。
-- [ ] 新建 `src/main/browser.ts` BrowserEngine：任务隔离会话、可见 BrowserWindow、动作原语（navigate/click/type/extract/screenshot/wait）+ 租约 + 取证。
-- [ ] 新增结构化浏览器工具（`browser_navigate` 等），接入 extensions/dispatch + 审批；保留旧 `browser_open` 不动。
-- [ ] IPC/preload/bridge 三件套 + 实时截图帧推送。
-- [ ] 前端 `BrowserWorkspace.tsx`（混合形态：可对话 + 可编排）+ 实时画面 + 地址栏。
-- [ ] 设置新增 browser 分区 + i18n 全量 + 样式。
-- [ ] `npm run typecheck`、`npm run lint`（0 error）、`npm test` 通过 + 冒烟。
+- [x] `view` 联合类型与标题栏 radiogroup 新增 `browser`，与 Code/Work 并列。
+- [x] `thread.mode` 下沉到 schema（`code|work|browser`），agent 按模式注入专属 system prompt 段。
+- [x] 新建 `src/main/browser.ts` BrowserEngine：任务隔离会话（partition per threadId + lease Map）、可见可交互 WebContentsView（`addChildView`/`setBounds`）、动作原语（navigate/click/type/extract/screenshot/wait）+ 租约 + 取证 + `setOptions`（UA/下载/新窗口/起始页）。
+- [x] 新增结构化浏览器工具（`browser_navigate` 等六个），接入 extensions/dispatch + 审批（navigate/click/type 为敏感）；保留旧 `browser_open` 不动。
+- [x] IPC/preload/bridge 三件套 + 实时状态推送（`browserState`）+ 内嵌真实视图（放弃截图帧，改用 WebContentsView 内嵌）。
+- [x] 前端 `BrowserWorkspace.tsx`（分屏：复用对话 main + 实时视图 + 地址栏 + 前进/后退/刷新经 `cubex://` 控制 URL）。
+- [x] 设置新增 browser 分区（起始页/逐步审批/租约时长/下载/新窗口/UA）+ i18n 全量 + 样式。
+- [x] `npm run typecheck`=0 / `npm run lint`=0 error / `npm test`=86 passed + `npm run build` + smoke（`tests/browser.test.ts` 9 例）。
 
 ### 前置里程碑（已完成）
 
@@ -42,7 +42,7 @@
 ### 关键约束
 
 - 技术栈：Electron 44 + React 19 + TypeScript + electron-vite + Vite 7 + electron-builder(NSIS)；详见 memory.md「技术栈与约定」。
-- 编辑工具限制：`Edit` 工具不可用，改动代码用 `SearchReplace`。
+- 编辑工具：当前环境 `Edit`/`Write` 均可用；改动代码前先读文件当前内容。
 - 全程中文交流与中文注释。
 
 ### 相关方与沟通偏好
@@ -90,7 +90,7 @@
 
 - 已用真实 API Key 在 OpenAI 兼容中转站端到端实测；Anthropic 原生接口与 Ollama 尚未实测。
 - 命令执行无沙箱；右侧终端面板为逐条命令执行（非交互式 PTY）；无文件编辑器。
-- 上下文仅按估算 token 裁剪旧消息（`src/main/context.ts`），尚无摘要式压缩。
+- 上下文压缩已升级为 **LLM 摘要式压缩**（`src/main/agent.ts` `compactMessages`/`summarize`），并支持接近上限自动压缩、超限自动恢复与空转治理；模型不可用时退化为普通移除标记。
 - 第三方登录（OAuth）仅可在管理端配置，桌面端未接入授权流程；MCP 仅支持 stdio 传输。
 - 邮箱 / 短信验证码依赖管理端配置的 Webhook 实际投递，未对接具体服务商实测。
 - 桌面端 UI 自动化仅有启动冒烟与 `scripts/ui-check.mjs`；持久化仍为 JSON 文件。
@@ -175,9 +175,33 @@
 - 版本与仓库：版本升 `0.1.2-dev`，`npm run dist` 产出 `release\Cubex Setup 0.1.2-dev.exe`；**本目录已是 git 仓库**，remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，已 push 到 main（commit f57ade2）。
 - 验证：typecheck / lint（0 error，7 既有 warning）/ test（77 passed, 2 skipped）通过。
 
+## 阶段 16（2026-10-04）：上下文压缩与 Agent 循环优化
+
+- 摘要式压缩：`agent.ts` 新增 `compactMessages`/`summarize`/`renderTranscript`，用模型把较早消息总结为结构化中文摘要（目标/结论/文件位置/未完成/约束），保留最近 10 条原文；模型不可用时退化为移除标记，保证始终可释放空间。`compactThread` 改为调用它。
+- 实测上下文窗口：`llm.ts` 新增 `probeContextWindow`（二分法发送递增填充提示词，按 `isContextOverflowError` 关键词判定超限）与 `isContextOverflowError`；IPC 三件套 `probeContextWindow` 打通至设置面板，「自动检测」按钮由「列模型猜长度」改为真正实测回填。
+- 用量兜底：新增 `src/shared/tokens.ts`（`estimateTokens`/`messageTokens`/`historyTokens`），主进程 `context.ts` 改为复用；渲染层 `RightPanel`/`App` 在模型不返回 usage（多数中转站）时用估算值兜底，压缩按钮不再永久禁用。
+- 循环优化：主循环内「接近上下文上限（>90%）自动摘要压缩（每轮至多 3 次）」「捕获上下文超限错误后自动压缩并重试（至多 3 次）」「重复相同工具+参数调用拦截与连续空转中止」。
+- 验证：`npm run typecheck` 0；`npm run lint` 0 error（10 条既有 `react-hooks/exhaustive-deps` warning）；`npm test` 86 passed + 2 skipped。
+
+## 阶段 17（2026-10-04）：Browser 模式全网爬取
+
+- 新工具：`toolNames` 加 `browser_crawl`（query/urls 种子、maxPages 3–20、depth 0/1，敏感操作需一次审批）与 `browser_extract_links`（结构化链接提取，读取类免审批）。
+- 爬取引擎（`src/main/extensions.ts` `crawlWeb`）：种子收集（webSearch 优先，失败退化为配置搜索引擎结果页离屏抓取）→ 搜索引擎跳转链接还原 → 去重/过滤 → background=离屏窗口 3 并发并行抓正文+链接、visible=前台标签逐页打开 → depth=1 按中英文分词相关性补抓 → 按相关度排序聚合；180 秒期限 + `onControl` 实时进度。
+- 结构化搜索：`browser.ts` 新增 `links` 动作；`browser_search` 返回结果列表 + `[CUBEX_SEARCH]` 标记，`RightPanel` 摘要识别 `browser_search`/`browser_crawl`（`takeJsonObject` 抗截断解析）。
+- 设置与提示词：`crawlMode`/`crawlPages` 设置项 + UI + i18n；BROWSER_MODE 提示词引导调研类任务优先 `browser_crawl`。
+- 验证：typecheck 0 / lint 0 error（9 既有 warning）/ test 86 passed + 2 skipped；**未做真实会话实测**。
+
+## 阶段 18（2026-10-04）：资料报告 + 引用溯源
+
+- 新建 `src/renderer/src/sources.ts`：`collectSources`（汇总 `web_search`/`browser_search`/`browser_crawl` 的 `[CUBEX_SEARCH]` 标记，按 URL 去重）、`takeJsonObject`（括号配平抗截断，自 RightPanel 迁出）、`parseSourceLine`/`extractSources`（解析「参考来源」小节与 `[n]` 行）、`sourcesToMarkdown`。
+- 引用溯源：`Markdown.tsx` 把「参考来源」小节渲染为来源卡片，正文 `[n]` 渲染为上标角标（悬停显标题、点击打开 URL，未命中降级灰色文本）。
+- 资料报告：右栏分组改为「资料报告」（来源计数 + 导出按钮）；新增通用 `exportText` IPC 导出 Markdown 报告（channels/schema/index/preload/bridge 贯通）。
+- 提示词：CORE 与 BROWSER_MODE 均要求调研类回答附 `## 参考来源` 与 `[n]` 角标。
+- 验证：typecheck 0 / lint 0 error（9 既有 warning）/ test 94 passed + 2 skipped（新增 `tests/citations.test.ts` 8 例）；**未做真实会话实测**。
+
 ## 下一步
 
-1. 实现 Browser 模式（见 plan.md「Browser 模式」阶段），落地顺序：后端引擎 → 工具/agent → IPC/帧推送 → 前端 → 设置/i18n → 测试。
-2. 补测 Anthropic 原生接口与 Ollama；在 Electron 界面内用真实提供商走一遍自动检测模型。
-3. 会话摘要式压缩；交互式终端（PTY）。
-4. 桌面端 OAuth 授权流程；MCP 的 HTTP / SSE 传输。
+1. 在 Browser 模式发一条多来源调研类任务，一次实测：`browser_crawl` 抓取与进度、回答末尾「参考来源」小节、`[n]` 角标点击跳转、右栏「资料报告」导出 `.md`；顺带验证设置页爬取两项选项。
+2. 在 Electron 界面内用真实提供商实测「自动检测」上下文窗口按钮与自动摘要压缩的端到端效果。
+3. 补测 Anthropic 原生接口与 Ollama；在真实场景验证超限自动恢复。
+4. 交互式终端（PTY）；桌面端 OAuth 授权流程；MCP 的 HTTP / SSE 传输。

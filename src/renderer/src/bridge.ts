@@ -31,6 +31,7 @@ const previewApi: CubexAPI = {
   updateThread: () => unavailable('修改任务'),
   compactThread: () => unavailable('压缩上下文'),
   exportThread: () => unavailable('分享任务'),
+  exportText: () => unavailable('导出文件'),
   deleteProject: () => unavailable('删除项目'),
   updateProject: () => unavailable('修改项目'),
   revealProject: () => unavailable('在资源管理器中打开'),
@@ -38,6 +39,7 @@ const previewApi: CubexAPI = {
   resolveApproval: () => unavailable('审批'),
   answerQuestion: () => unavailable('回答追问'),
   dequeueMessage: () => unavailable('取消排队'),
+  steerMessage: () => unavailable('引导'),
   pickFiles: () => unavailable('添加文件'),
   listFiles: () => unavailable('浏览文件'),
   readProjectFile: () => unavailable('读取文件'),
@@ -63,6 +65,7 @@ const previewApi: CubexAPI = {
   },
   testConnection: () => unavailable('测试连接'),
   listProviderModels: () => unavailable('自动检测模型'),
+  probeContextWindow: () => unavailable('实测上下文长度'),
   shareThreadImage: () => unavailable('分享为图片'),
   setGithubToken: () => unavailable('GitHub 令牌'),
   githubPush: () => unavailable('推送到 GitHub'),
@@ -88,6 +91,12 @@ const previewApi: CubexAPI = {
   },
   runWorkflow: () => unavailable('运行工作流'),
   runAutomation: () => unavailable('运行自动化'),
+  browserBounds: () => unavailable('浏览器画面'),
+  browserHide: () => unavailable('浏览器画面'),
+  browserNavigate: () => unavailable('浏览器导航'),
+  browserCapture: () => unavailable('浏览器引用'),
+  browserTab: () => unavailable('浏览器标签'),
+  onBrowserState: () => () => undefined,
   onState: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

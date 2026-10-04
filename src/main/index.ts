@@ -1,9 +1,10 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, screen, session, shell, type IpcMainInvokeEvent, type Rectangle } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { answerInputSchema, approvalInputSchema, automationInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, testConnectionInputSchema, threadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type ControlState, type MessageCard, type Result, type StreamDelta, type Thread, type Workflow } from '../shared/schema'
-import { listModels, testConnection } from './llm'
+import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type MessageCard, type Result, type StreamDelta, type Thread, type Workflow } from '../shared/schema'
+import { browserEngine } from './browser'
+import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, runShellCommand } from './tools'
 import { StateStore } from './store'
@@ -46,6 +47,7 @@ const extensions = new ExtensionHost({
   pluginsDir: join(app.getPath('userData'), 'plugins'),
   getSettings: () => store.get().settings,
   getGithubToken: () => secrets.get(GITHUB_SECRET),
+  getProviderKey: (providerId: string) => secrets.get(providerId),
   mcp,
   onControl: (control) => {
     const payload: ControlState = control.active ? control : { active: false }
@@ -56,6 +58,9 @@ const agent = new AgentRunner(store, secrets, (delta: StreamDelta) => {
   for (const win of liveWindows()) win.webContents.send(channels.delta, delta)
 }, undefined, extensions, (activity: AgentActivity) => {
   for (const win of liveWindows()) win.webContents.send(channels.activity, activity)
+})
+browserEngine.setStateListener((state: BrowserState) => {
+  for (const win of liveWindows()) win.webContents.send(channels.browserState, state)
 })
 
 const ok = <T>(data: T): Result<T> => ({ ok: true, data })
@@ -172,41 +177,20 @@ function loadRenderer(win: BrowserWindow, hash?: string) {
   return win.loadFile(join(__dirname, '../renderer/index.html'), hash ? { hash } : undefined)
 }
 
-const restoreBounds = new WeakMap<BrowserWindow, Rectangle>()
-
-function fillsWorkArea(win: BrowserWindow) {
-  const bounds = win.getBounds()
-  const workArea = screen.getDisplayMatching(bounds).workArea
-  return bounds.width >= workArea.width - 1 && bounds.height >= workArea.height - 1
-    && bounds.x <= workArea.x + 1 && bounds.y <= workArea.y + 1
-}
-
 function toggleMaximize(win: BrowserWindow) {
+  // 透明无边框窗口此前用 setBounds(workArea) 模拟最大化，在高 DPI / 任务栏场景下只贴了边、
+  // 却没真正铺满（看起来“边角变方但没全屏”）。改用原生 maximize/unmaximize，由系统保证铺满与还原。
   if (win.isFullScreen()) {
     win.setFullScreen(false)
     return
   }
-  if (win.isMaximized() || fillsWorkArea(win)) {
-    if (win.isMaximized()) win.unmaximize()
-    const saved = restoreBounds.get(win)
-    if (saved) win.setBounds(saved)
-    broadcastWindowState()
-    return
-  }
-  restoreBounds.set(win, win.getBounds())
-  const workArea = screen.getDisplayMatching(win.getBounds()).workArea
-  win.setBounds(workArea)
+  if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
   broadcastWindowState()
 }
 
 function isEdgeToEdge(win: BrowserWindow) {
-  if (win.isMaximized() || win.isFullScreen()) return true
-  const bounds = win.getBounds()
-  const workArea = screen.getDisplayMatching(bounds).workArea
-  const fillsWidth = bounds.width >= workArea.width - 1 && bounds.x <= workArea.x + 1 && bounds.x + bounds.width >= workArea.x + workArea.width - 1
-  const fillsHeight = bounds.height >= workArea.height - 1 && bounds.y <= workArea.y + 1 && bounds.y + bounds.height >= workArea.y + workArea.height - 1
-  const touchesEdge = bounds.x <= workArea.x + 1 || bounds.x + bounds.width >= workArea.x + workArea.width - 1
-  return (fillsWidth && fillsHeight) || (fillsHeight && touchesEdge)
+  return win.isMaximized() || win.isFullScreen()
 }
 
 const lastWindowState = new WeakMap<BrowserWindow, string>()
@@ -293,7 +277,13 @@ function createWindow() {
   bindWindowStateEvents(mainWindow)
   mainWindow.webContents.on('did-finish-load', broadcastWindowState)
   guardNavigation(mainWindow)
+  browserEngine.setWindow(mainWindow)
+  {
+    const browser = store.get().settings.browser
+    browserEngine.setOptions({ allowDownloads: browser.allowDownloads, allowNewWindows: browser.allowNewWindows, userAgent: browser.userAgent, homepage: browser.homepage })
+  }
   mainWindow.on('closed', () => {
+    browserEngine.setWindow(null)
     mainWindow = null
     if (panelWindow && !panelWindow.isDestroyed()) panelWindow.close()
   })
@@ -363,9 +353,43 @@ function registerIpc() {
     await agent.dequeue(input.threadId, input.queuedId)
   })
 
+  handle(channels.steerMessage, async (_event, payload) => {
+    const input = steerInputSchema.parse(payload)
+    await agent.steer(input.threadId, input.content)
+  })
+
   handle(channels.createThread, async (_event, payload) => {
     const input = createThreadInputSchema.parse(payload)
-    return agent.createThread(input.projectId, input.modelId)
+    return agent.createThread(input.projectId, input.modelId, input.mode)
+  })
+
+  handle(channels.browserBounds, async (_event, payload) => {
+    const input = browserBoundsInputSchema.parse(payload)
+    browserEngine.attach(input.threadId)
+    browserEngine.setBounds(input.threadId, { x: input.x, y: input.y, width: input.width, height: input.height })
+    return browserEngine.state(input.threadId)
+  })
+
+  handle(channels.browserHide, async (_event, payload) => {
+    const input = browserThreadInputSchema.parse(payload)
+    browserEngine.hide(input.threadId)
+    return null
+  })
+
+  handle(channels.browserNavigate, async (_event, payload) => {
+    const input = browserNavigateInputSchema.parse(payload)
+    await browserEngine.manualNavigate(input.threadId, input.url)
+    return browserEngine.state(input.threadId)
+  })
+
+  handle(channels.browserCapture, async (_event, payload) => {
+    const input = browserThreadInputSchema.parse(payload)
+    return browserEngine.captureReference(input.threadId)
+  })
+
+  handle(channels.browserTab, async (_event, payload) => {
+    const input = browserTabInputSchema.parse(payload)
+    return browserEngine.tab(input)
   })
 
   handle(channels.sendMessage, async (_event, payload) => {
@@ -422,6 +446,17 @@ function registerIpc() {
     return result.filePath
   })
 
+  handle(channels.exportText, async (_event, payload) => {
+    const input = exportTextInputSchema.parse(payload)
+    if (!mainWindow) throw new Error('窗口不存在')
+    const safe = input.defaultName.replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60) || 'report'
+    const result = await dialog.showSaveDialog(mainWindow, { title: input.title, defaultPath: `${safe}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] })
+    if (result.canceled || !result.filePath) return null
+    await writeFile(result.filePath, input.content, 'utf8')
+    shell.showItemInFolder(result.filePath)
+    return result.filePath
+  })
+
   handle(channels.deleteProject, async (_event, payload) => {
     await agent.deleteProject(projectInputSchema.parse(payload).projectId)
   })
@@ -450,6 +485,12 @@ function registerIpc() {
     if (!target) return
     if (action === 'minimize') target.minimize()
     else if (action === 'maximize') toggleMaximize(target)
+    else if (action === 'fullscreen') {
+      // 真全屏（独立于最大化）：让系统与其他应用能检测到全屏状态，
+      // 例如 Windows 下触发任务栏/Dock 类装饰应用的自动隐藏。
+      target.setFullScreen(!target.isFullScreen())
+      broadcastWindowState()
+    }
     else target.close()
   })
 
@@ -510,6 +551,7 @@ function registerIpc() {
     })
     await secrets.prune(new Set([...settings.providers.map((provider) => provider.id), GITHUB_SECRET]))
     mcp.sync(settings.mcp.servers)
+    browserEngine.setOptions({ allowDownloads: settings.browser.allowDownloads, allowNewWindows: settings.browser.allowNewWindows, userAgent: settings.browser.userAgent, homepage: settings.browser.homepage })
     publish()
   })
 
@@ -657,6 +699,13 @@ function registerIpc() {
     if (input.provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${input.provider.name}」尚未填写 API Key`)
     return listModels(input.provider, apiKey)
   })
+
+  handle(channels.probeContextWindow, async (_event, payload) => {
+    const input = probeContextWindowInputSchema.parse(payload)
+    const apiKey = input.apiKey?.trim() || secrets.get(input.provider.id)
+    if (input.provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${input.provider.name}」尚未填写 API Key`)
+    return probeContextWindow({ provider: input.provider, apiKey, model: input.model })
+  })
 }
 
 app.on('web-contents-created', (_event, contents) => {
@@ -719,6 +768,7 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   void agent.terminateAll()
   mcp.stopAll()
+  browserEngine.closeAll()
   store.flushSync()
 })
 

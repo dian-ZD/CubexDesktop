@@ -115,6 +115,119 @@ export function guessContextWindow(modelId: string): number | undefined {
   return undefined
 }
 
+const CONTEXT_OVERFLOW_PATTERNS: RegExp[] = [
+  /context[_ ]?length/i,
+  /maximum context/i,
+  /max(?:imum)? (?:number of )?tokens/i,
+  /too many tokens/i,
+  /token limit/i,
+  /reduce the length/i,
+  /(?:input|prompt|request) is too long/i,
+  /exceed(?:s|ed)?[^.\n]{0,40}(?:context|token)/i,
+  /request entity too large/i,
+  /\b413\b/,
+]
+
+/** 判断某个错误是否属于「输入超出模型上下文上限」类错误，用于触发自动压缩并重试。 */
+export function isContextOverflowError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => pattern.test(message))
+}
+
+export interface ContextProbe {
+  contextWindow: number
+  attempts: number
+  capped: boolean
+}
+
+function buildFiller(tokens: number): string {
+  const target = Math.max(1, Math.floor(tokens * 4))
+  const unit = 'The quick brown fox jumps over the lazy dog and keeps walking. '
+  let out = ''
+  while (out.length < target) out += unit
+  return out.slice(0, target)
+}
+
+/**
+ * 通过二分法实测模型可接受的最大输入长度：发送递增的填充提示词，
+ * 依据服务端返回的「上下文超限」错误确定上限。返回可行区间内最大的成功值。
+ */
+export async function probeContextWindow(input: {
+  provider: ProviderConfig
+  apiKey: string | undefined
+  model: ModelConfig
+  signal?: AbortSignal
+  low?: number
+  high?: number
+  onProgress?: (info: { attempt: number; tokens: number; ok: boolean }) => void
+}): Promise<ContextProbe> {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  input.signal?.addEventListener('abort', onAbort, { once: true })
+  const { signal } = controller
+  const low0 = Math.max(2_000, Math.floor(input.low ?? 4_000))
+  const cap = Math.min(4_000_000, Math.floor(input.high ?? 1_000_000))
+  const guess = Math.max(low0, Math.min(cap, input.model.contextWindow ?? guessContextWindow(input.model.modelId) ?? 128_000))
+  let attempts = 0
+  let capped = false
+  const probe = async (tokens: number): Promise<boolean> => {
+    attempts++
+    try {
+      await streamChat({
+        provider: input.provider,
+        apiKey: input.apiKey,
+        model: input.model,
+        system: 'You are a helpful assistant.',
+        messages: [{ id: 'probe', role: 'user', time: new Date().toISOString(), content: `请只回复“好”，不要重复我下面的填充文本。\n\n${buildFiller(tokens)}` }],
+        tools: [],
+        signal,
+        onText: () => undefined,
+        maxTokens: 16,
+        timeoutMs: 60_000,
+        retries: 0,
+      })
+      input.onProgress?.({ attempt: attempts, tokens, ok: true })
+      return true
+    } catch (error) {
+      input.onProgress?.({ attempt: attempts, tokens, ok: false })
+      if (signal.aborted) throw error
+      if (isContextOverflowError(error)) return false
+      throw error
+    }
+  }
+  try {
+    // 逐步抬高上界，直到超出上限或触顶
+    let lo = low0
+    let hi = guess
+    if (!(await probe(guess))) {
+      lo = Math.floor(guess / 2)
+      while (lo > low0 && !(await probe(lo))) {
+        hi = lo
+        lo = Math.floor(lo / 2)
+      }
+      if (lo < low0) { lo = low0; hi = low0 * 2 }
+    } else {
+      lo = guess
+      hi = Math.min(cap, guess * 2)
+      while (hi > lo && (await probe(hi))) {
+        lo = hi
+        if (lo >= cap) { capped = true; return { contextWindow: cap, attempts, capped } }
+        hi = Math.min(cap, lo * 2)
+      }
+    }
+    const span = Math.max(1_024, Math.floor(lo * 0.05))
+    while (hi - lo > span && attempts < 18) {
+      const mid = Math.floor((lo + hi) / 2)
+      if (await probe(mid)) lo = mid
+      else hi = mid
+    }
+    // 若最低值本身都不被接受，返回一个保守的最小值
+    return { contextWindow: lo, attempts, capped }
+  } finally {
+    input.signal?.removeEventListener('abort', onAbort)
+  }
+}
+
 async function fetchJson(url: string, headers: Record<string, string>, signal?: AbortSignal): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 20_000)

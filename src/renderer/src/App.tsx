@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X } from 'lucide-react'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X, Zap } from 'lucide-react'
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
+import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
 import { Logo } from './Logo'
 import { Markdown, OpenTargetContext, type OpenTarget } from './Markdown'
@@ -14,9 +15,11 @@ import type { SectionId as SettingsSection } from './SettingsPanel'
 const importRightPanel = () => import('./RightPanel')
 const importSettingsPanel = () => import('./SettingsPanel')
 const importWorkflowCanvas = () => import('./WorkflowCanvas')
+const importBrowserWorkspace = () => import('./BrowserWorkspace')
 const SettingsPanel = lazy(() => importSettingsPanel().then((module) => ({ default: module.SettingsPanel })))
 const RightPanel = lazy(() => importRightPanel().then((module) => ({ default: module.RightPanel })))
 const WorkflowCanvas = lazy(() => importWorkflowCanvas().then((module) => ({ default: module.WorkflowCanvas })))
+const BrowserWorkspace = lazy(() => importBrowserWorkspace().then((module) => ({ default: module.BrowserWorkspace })))
 
 function prefetchPanels() {
   const run = () => { void importRightPanel(); void importSettingsPanel(); void importWorkflowCanvas() }
@@ -45,17 +48,34 @@ const toolIcon = {
   browser_open: Globe,
   web_search: Search,
   computer_use: Monitor,
+  generate_image: Palette,
   plugin_call: Puzzle,
   mcp_call: PlugZap,
+  browser_navigate: Globe,
+  browser_click: Hand,
+  browser_type: Pencil,
+  browser_extract: FileCode2,
+  browser_screenshot: Image,
+  browser_wait: LoaderCircle,
+  browser_search: Search,
+  browser_tab: Layers,
+  browser_crawl: Globe,
+  browser_extract_links: ListOrdered,
 } as const
 
 const approvalDetail: Partial<Record<ToolCall['name'], string>> = {
   run_command: '将在项目目录中执行命令',
   github_push: '将提交当前改动并推送到 GitHub 仓库',
   computer_use: '将操控你的鼠标、键盘或读取屏幕，请确认后再批准',
+  generate_image: '将调用你配置的生图模型生成一张图片',
   plugin_call: '将调用第三方插件，插件可访问项目目录',
   mcp_call: '将调用外部 MCP 服务器提供的工具',
   browser_open: '将在隔离的浏览器会话中打开网页',
+  browser_navigate: '将在浏览器工作台中打开该网址',
+  browser_click: '将点击页面上的元素',
+  browser_type: '将向页面输入框填入文本',
+  browser_tab: '将新建、切换或关闭浏览器标签页',
+  browser_crawl: '将批量打开并抓取多个网页内容',
 }
 
 type Translate = (zhText: string, vars?: Record<string, string | number>) => string
@@ -73,8 +93,10 @@ const toolTitle = (call: ToolCall, tr: Translate) => {
     case 'github_push': return tr('推送到 GitHub {message}', { message: args.message ?? '' })
     case 'browser_open': return tr('打开网页 {url}', { url: args.url ?? '' })
     case 'computer_use': return tr('电脑操控 {action}', { action: args.action ?? '' })
+    case 'generate_image': return tr('生成图片 {prompt}', { prompt: (args.prompt ?? '').slice(0, 40) })
     case 'plugin_call': return tr('插件 {plugin}/{tool}', { plugin: args.plugin ?? '', tool: args.tool ?? '' })
     case 'mcp_call': return tr('MCP {server}/{tool}', { server: args.server ?? '', tool: args.tool ?? '' })
+    default: return tr(call.name)
   }
 }
 
@@ -117,7 +139,7 @@ function playCue(kind: 'done' | 'approval' | 'question', volume: number) {
 export function App() {
   const [state, setState] = useState<AppState>(() => createInitialState())
   const [loaded, setLoaded] = useState(false)
-  const [view, setView] = useState<'chat' | 'settings' | 'work'>('chat')
+  const [view, setView] = useState<'chat' | 'settings' | 'work' | 'browser'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>()
   const [projectId, setProjectId] = useState<string | null>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -197,6 +219,38 @@ export function App() {
   const [focused, setFocused] = useState(true)
   const [rightPanelOpen, setRightPanelOpen] = useState(true)
   const [panelDetached, setPanelDetached] = useState(false)
+  const [sideWidth, setSideWidth] = useState<number | null>(() => { try { const v = Number(localStorage.getItem('cubex.sideWidth')); return v >= 208 ? v : null } catch { return null } })
+  const [rightWidth, setRightWidth] = useState<number | null>(() => { try { const v = Number(localStorage.getItem('cubex.rightWidth')); return v >= 208 ? v : null } catch { return null } })
+  const startColumnDrag = useCallback((column: 'side' | 'right', event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const target = event.currentTarget
+    target.classList.add('dragging')
+    document.documentElement.classList.add('col-resizing')
+    const startX = event.clientX
+    const MIN = 208
+    const MAX = Math.min(720, Math.round(window.innerWidth * 0.6))
+    const begin = column === 'side'
+      ? (sideWidth ?? document.querySelector('.sidebar')?.getBoundingClientRect().width ?? 240)
+      : (rightWidth ?? (document.querySelector('.right-panel') ?? document.querySelector('.work-inspector') ?? document.querySelector('.workspace.is-browser .center'))?.getBoundingClientRect().width ?? 320)
+    const onMove = (move: PointerEvent) => {
+      const delta = move.clientX - startX
+      const raw = column === 'side' ? begin + delta : begin - delta
+      const next = Math.max(MIN, Math.min(MAX, Math.round(raw)))
+      if (column === 'side') setSideWidth(next)
+      else setRightWidth(next)
+    }
+    const onUp = () => {
+      target.classList.remove('dragging')
+      document.documentElement.classList.remove('col-resizing')
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }, [sideWidth, rightWidth])
+  useEffect(() => { try { if (sideWidth) localStorage.setItem('cubex.sideWidth', String(sideWidth)); else localStorage.removeItem('cubex.sideWidth') } catch { /* 忽略 */ } }, [sideWidth])
+  useEffect(() => { try { if (rightWidth) localStorage.setItem('cubex.rightWidth', String(rightWidth)); else localStorage.removeItem('cubex.rightWidth') } catch { /* 忽略 */ } }, [rightWidth])
+  const [queueGuideOpen, setQueueGuideOpen] = useState(false)
   const [openRequest, setOpenRequest] = useState<OpenRequest | null>(null)
   const requestOpen = useCallback((target: OpenTarget) => {
     if (target.kind === 'url' && !isDesktop) { void api.openExternal({ url: target.value }); return }
@@ -450,6 +504,29 @@ export function App() {
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [])
 
+  const selectMode = useCallback((next: 'chat' | 'work' | 'browser') => {
+    setView(next)
+    setModelOverride('')
+    setError(null)
+    if (next === 'browser') {
+      // Browser 模式的专属系统提示词与浏览器工具由会话的 mode 决定；
+      // 从其它模式的会话切入时切到本项目最近的浏览器会话；
+      // 新建任务（threadId 为空）时保持空白工作台，首次发送时再创建。
+      if (thread && thread.mode !== 'browser') {
+        const existing = state.threads.filter((item) => item.mode === 'browser' && item.projectId === project?.id)
+        setThreadId(existing.length ? existing[existing.length - 1].id : null)
+      }
+    } else if (thread?.mode === 'browser') {
+      setThreadId(null)
+    }
+  }, [thread?.mode, state.threads, project?.id])
+
+  // 记录离开前的视图，退出设置时原样返回（此前一律回到 Code 模式）
+  const returnView = useRef<'chat' | 'work' | 'browser'>('chat')
+  useEffect(() => {
+    if (view !== 'settings') returnView.current = view
+  }, [view])
+
   const selectProject = useCallback(async () => {
     if (!isDesktop || actionLock.current) return
     actionLock.current = true
@@ -471,7 +548,7 @@ export function App() {
     }
   }, [])
 
-  const send = useCallback(async () => {
+  const queue = useCallback(async () => {
     const content = input.trim()
     const attached = images
     if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
@@ -485,7 +562,45 @@ export function App() {
     try {
       let target = thread
       if (!target) {
-        const created = await api.createThread({ projectId: project.id, modelId })
+        const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
+        if (!created.ok) { setError(created.error); return }
+        target = created.data
+        setThreadId(target.id)
+      }
+      const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
+      if (!result.ok) setError(result.error)
+      else {
+        setInput('')
+        setImages([])
+        ui.toast(tr('已加入队列，当前回复结束后自动发送'), 'success')
+      }
+    } catch {
+      setError(tr('消息未能发送，请重试。'))
+    } finally {
+      actionLock.current = false
+      setBusy(false)
+    }
+  }, [project, input, images, loaded, thread, modelId, ui, view])
+
+  const send = useCallback(async () => {
+    const content = input.trim()
+    const attached = images
+    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
+    if (!modelId) {
+      setError(tr('请先在设置中添加提供商与模型。'))
+      return
+    }
+    if (thread && isActive) {
+      await queue()
+      return
+    }
+    actionLock.current = true
+    setBusy(true)
+    setError(null)
+    try {
+      let target = thread
+      if (!target) {
+        const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
         if (!created.ok) { setError(created.error); return }
         target = created.data
         setThreadId(target.id)
@@ -497,6 +612,7 @@ export function App() {
           const message = target.messages[i]
           if (message.role === 'assistant' && message.usage) { used = message.usage.input + message.usage.output; break }
         }
+        if (used === 0 && target.messages.length > 0) used = historyTokens(target.messages)
         if (used / window >= 0.92) await api.compactThread({ threadId: target.id }).catch(() => undefined)
       }
       const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
@@ -504,7 +620,6 @@ export function App() {
       else {
         setInput('')
         setImages([])
-        if (isActive) ui.toast(tr('已加入队列，当前回复结束后自动发送'), 'success')
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
@@ -512,7 +627,7 @@ export function App() {
       actionLock.current = false
       setBusy(false)
     }
-  }, [project, input, images, loaded, thread, modelId, isActive, ui])
+  }, [project, input, images, loaded, thread, modelId, isActive, ui, view, model, queue])
 
   const answer = useCallback(async (question: PendingQuestion, value: string) => {
     if (!thread) return
@@ -521,6 +636,23 @@ export function App() {
       if (!result.ok) setError(result.error)
     } catch { setError(tr('回答未能提交，请重试。')) }
   }, [thread])
+
+  const steerQueued = async (queuedId: string) => {
+    if (!thread) return
+    const item = thread.queue?.find((q) => q.id === queuedId)
+    if (!item) return
+    try {
+      const dequeued = await api.dequeueMessage({ threadId: thread.id, queuedId })
+      if (!dequeued.ok) {
+        setError(dequeued.error)
+        return
+      }
+      const steered = await api.steerMessage({ threadId: thread.id, content: item.content })
+      if (!steered.ok) setError(steered.error)
+    } catch {
+      setError(tr('引导未能发送，请重试。'))
+    }
+  }
 
   const dequeue = async (queuedId: string) => {
     if (!thread) return
@@ -558,6 +690,8 @@ export function App() {
     setImages((current) => [...current, ...valid].slice(0, 8))
   }, [])
 
+  const removeImage = useCallback((index: number) => setImages((current) => current.filter((_, i) => i !== index)), [])
+
   const pickImages = useCallback(() => {
     const picker = document.createElement('input')
     picker.type = 'file'
@@ -566,8 +700,6 @@ export function App() {
     picker.onchange = () => { void addImageFiles(Array.from(picker.files ?? [])) }
     picker.click()
   }, [addImageFiles])
-
-  const removeImage = useCallback((index: number) => setImages((current) => current.filter((_, i) => i !== index)), [])
 
   const addToChat = useCallback((text: string) => {
     const snippet = text.trim()
@@ -581,6 +713,16 @@ export function App() {
   const onSpeechText = useCallback((text: string) => {
     setInput((current) => (current ? `${current}${current.endsWith(' ') || current.endsWith('\n') ? '' : ' '}${text}` : text))
   }, [])
+
+  const onBrowserReference = useCallback((ref: { title: string; url: string; selection: string; screenshot?: string }) => {
+    const header = ref.selection
+      ? `> 引用自《${ref.title || ref.url}》（${ref.url}）：\n> ${ref.selection.replace(/\n/g, '\n> ')}`
+      : `> 引用页面《${ref.title || ref.url}》（${ref.url}）的截图`
+    setInput((current) => current ? `${current.replace(/\s*$/, '')}\n\n${header}\n\n` : `${header}\n\n`)
+    if (ref.screenshot) setImages((current) => [...current, { dataUrl: ref.screenshot!, name: `${(ref.title || 'page').slice(0, 40)}.png` }].slice(0, 8))
+    requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(inputRef.current.value.length, inputRef.current.value.length) })
+    ui.toast(ref.selection ? tr('已引用选中文字到对话') : tr('已引用页面截图到对话'), 'success')
+  }, [ui, tr])
   const onSpeechError = useCallback((message: string) => ui.toast(message, 'error'), [ui])
   const speech = useSpeech(general.uiLanguage, onSpeechText, onSpeechError)
   const toggleListening = speech.toggle
@@ -696,7 +838,7 @@ export function App() {
     { label: tr('删除任务'), icon: Trash2, danger: true, disabled: !isDesktop, onSelect: () => void removeThread(item) },
   ]
 
-  const windowAction = (action: 'minimize' | 'maximize' | 'close') => {
+  const windowAction = (action: 'minimize' | 'maximize' | 'close' | 'fullscreen') => {
     if (action === 'maximize' && !isDesktop) setMaximized((value) => !value)
     void api.windowControl(action).catch(() => undefined)
   }
@@ -733,6 +875,13 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'F11' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+        // 真全屏独立于最大化：标题栏按钮仍是最大化，F11 切换系统级全屏，
+        // 让其他应用（如任务栏/Dock 装饰应用）能检测到全屏状态。
+        event.preventDefault()
+        windowAction('fullscreen')
+        return
+      }
       if (event.key === 'Escape' && work.escToStopControl && control.active && !event.defaultPrevented) {
         event.preventDefault()
         void stopControl()
@@ -740,7 +889,7 @@ export function App() {
       }
       if (event.key === 'Escape' && view === 'settings' && !event.defaultPrevented) {
         event.preventDefault()
-        setView('chat')
+        setView(returnView.current)
         return
       }
       if (!(event.ctrlKey || event.metaKey)) return
@@ -752,7 +901,7 @@ export function App() {
         newThread()
       } else if (event.key === ',') {
         event.preventDefault()
-        setView((current) => current === 'settings' ? 'chat' : 'settings')
+        setView((current) => current === 'settings' ? returnView.current : 'settings')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -765,7 +914,7 @@ export function App() {
   const ctrlSend = chat.sendKey === 'ctrl-enter'
   const sendLabel = ctrlSend ? 'Ctrl Enter' : 'Enter'
   const showSidebar = sidebarOpen && view !== 'settings'
-  const panelMode = view === 'chat' || view === 'work'
+  const panelMode = view === 'chat' || view === 'work' || view === 'browser'
   const showRightPanel = rightPanelOpen && view === 'chat' && !panelDetached
 
   if (detachedThreadId) {
@@ -798,7 +947,7 @@ export function App() {
   return (
     <LanguageContext.Provider value={uiLang}>
     <OpenTargetContext.Provider value={requestOpen}>
-    <div className={`shell${showSidebar ? '' : ' sidebar-collapsed'}${maximized ? ' maximized' : ''}${focused ? '' : ' blurred'}`}>
+    <div className={`shell${showSidebar ? '' : ' sidebar-collapsed'}${maximized ? ' maximized' : ''}${focused ? '' : ' blurred'}`} style={{ ...(sideWidth ? { ['--side-col' as string]: `${sideWidth}px` } : {}), ...(rightWidth ? { ['--right-col' as string]: `${rightWidth}px` } : {}) }}>
       {showSidebar && (
         <aside className="sidebar" aria-label={tr('工作区导航')}>
           <div className="sidebar-brand">
@@ -830,8 +979,8 @@ export function App() {
                       <ul className="task-list">
                         {list.map((task) => (
                           <li key={task.id} className="thread-item" onContextMenu={(event) => { event.preventDefault(); ui.openMenu({ x: event.clientX, y: event.clientY }, threadMenu(task)) }}>
-                            <button className="nav-row task-row" aria-current={view === 'chat' && thread?.id === task.id ? 'page' : undefined} title={task.title} onClick={() => { setProjectId(task.projectId); setThreadId(task.id); setModelOverride(''); setView('chat') }}>
-                              {task.status !== 'idle' ? <LoaderCircle size={14} className="spin" /> : task.pinned ? <Pin size={13} className="pin-mark" /> : <MessageSquare size={14} />}
+                            <button className="nav-row task-row" aria-current={(view === 'chat' || view === 'work' || view === 'browser') && thread?.id === task.id ? 'page' : undefined} title={task.title} onClick={() => { setProjectId(task.projectId); setThreadId(task.id); setModelOverride(''); setView(task.mode === 'browser' ? 'browser' : task.mode === 'work' ? 'work' : 'chat') }}>
+                              {task.status !== 'idle' ? <LoaderCircle size={14} className="spin" /> : task.mode === 'browser' ? <Globe size={14} /> : task.pinned ? <Pin size={13} className="pin-mark" /> : <MessageSquare size={14} />}
                               <span className="truncate">{task.title}</span>
                               {task.status === 'awaiting-approval' && <span className="status-pip" title={tr('等待审批')} />}
                               {task.status === 'awaiting-input' && <span className="status-pip input" title={tr('等待补充信息')} />}
@@ -854,19 +1003,21 @@ export function App() {
           </div>
         </aside>
       )}
+      {showSidebar && <div className="col-resizer" role="separator" aria-label={tr('拖动调整侧栏宽度')} aria-orientation="vertical" onPointerDown={(event) => startColumnDrag('side', event)} onDoubleClick={() => setSideWidth(null)} />}
 
       <div className="main-shell">
         <header className="titlebar" onDoubleClick={(event) => { if (event.target === event.currentTarget) windowAction('maximize') }}>
           <div className="titlebar-context">
             {!sidebarOpen && view !== 'settings' && <button className="icon-button" aria-label={tr('展开侧栏')} title={tr('展开侧栏')} onClick={() => setSidebarOpen(true)}><PanelLeft size={18} /></button>}
-            <span className="view-label truncate">{view === 'settings' ? tr('设置') : view === 'work' ? tr('工作流') : thread ? thread.title : tr('新建任务')}</span>
+            <span className="view-label truncate">{view === 'settings' ? tr('设置') : view === 'work' ? tr('工作流') : view === 'browser' ? (thread ? thread.title : tr('浏览器工作台')) : thread ? thread.title : tr('新建任务')}</span>
             {project && view !== 'settings' && <><ChevronRight size={13} /><span className="context-project truncate" title={project.path}>{project.name}</span></>}
           </div>
           <div className="titlebar-actions">
             {view !== 'settings' && (
               <div className="mode-switch" role="radiogroup" aria-label={tr('工作模式')}>
-                <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'active' : ''} title={tr('Code：对话式编码')} onClick={() => setView('chat')}><CodeXml size={14} />Code</button>
-                <button role="radio" aria-checked={view === 'work'} className={view === 'work' ? 'active' : ''} title={tr('Work：画布工作流')} onClick={() => setView('work')}><Workflow size={14} />Work</button>
+                <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'active' : ''} title={tr('Code：对话式编码')} onClick={() => selectMode('chat')}><CodeXml size={14} />Code</button>
+                <button role="radio" aria-checked={view === 'work'} className={view === 'work' ? 'active' : ''} title={tr('Work：画布工作流')} onClick={() => selectMode('work')}><Workflow size={14} />Work</button>
+                <button role="radio" aria-checked={view === 'browser'} className={view === 'browser' ? 'active' : ''} title={tr('Browser：浏览器操控')} onClick={() => selectMode('browser')}><Globe size={14} />Browser</button>
               </div>
             )}
             {!isDesktop && <span className="preview-badge" title={state.notice}>{tr('浏览器预览')}</span>}
@@ -895,8 +1046,8 @@ export function App() {
           </div>
         )}
 
-        <div className="workspace">
-          {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView('chat'); reloadSkills() }} /></Suspense>
+        <div className={`workspace${view === 'browser' ? ' is-browser' : ''}${view === 'browser' && !rightPanelOpen ? ' right-collapsed' : ''}`}>
+          {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView(returnView.current); reloadSkills() }} /></Suspense>
             : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} settings={state.settings} panelOpen={rightPanelOpen && !panelDetached} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
             <main className={`center${thread ? ' has-task' : ' is-home'}`}>
               {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div> : (
@@ -948,14 +1099,30 @@ export function App() {
                   )}
                   <div className="composer-area content-column">
                     {thread && (thread.queue?.length ?? 0) > 0 && (
-                      <ul className="queue-list" aria-label={tr('排队消息')}>
-                        {thread.queue!.map((item, index) => (
-                          <li key={item.id} className="queue-item">
-                            <ListOrdered size={13} /><span className="queue-index">{index + 1}</span><span className="truncate" title={item.content}>{item.content}</span>
-                            <button className="icon-button" aria-label={tr('移除排队消息')} title={tr('移除')} onClick={() => void dequeue(item.id)}><X size={13} /></button>
-                          </li>
-                        ))}
-                      </ul>
+                      <div className="queue-wrap" style={{ position: 'relative' }}>
+                        <div className="queue-head">
+                          <span className="queue-head-label">{tr('排队中 · 当前回复结束后依次发送（{n} 条）', { n: thread.queue!.length })}</span>
+                          <button type="button" className="queue-guide" aria-label={tr('排队功能说明')} title={tr('排队功能说明')} aria-expanded={queueGuideOpen} onClick={() => setQueueGuideOpen((value) => !value)}><CircleHelp size={13} /></button>
+                        </div>
+                        {queueGuideOpen && (
+                          <div className="queue-guide-pop" role="dialog" aria-label={tr('排队功能说明')} style={{ right: 0, bottom: '100%', marginBottom: 6 }}>
+                            <strong>{tr('消息排队')}</strong>
+                            <p>{tr('排队消息等当前任务完成后按顺序自动发送；点每条右侧的引导按钮可立即注入当前任务，点 × 可移除。')}</p>
+                            <div className="queue-guide-foot"><button type="button" className="btn-primary" onClick={() => setQueueGuideOpen(false)}>{tr('知道了')}</button></div>
+                          </div>
+                        )}
+                        <ul className="queue-list" aria-label={tr('排队消息')}>
+                          {thread.queue!.map((item, index) => (
+                            <li key={item.id} className="queue-item">
+                              <ListOrdered size={13} /><span className="queue-index">{index + 1}</span><span className="truncate" title={item.content}>{item.content}</span>
+                              <div className="queue-item-actions">
+                                <button className="icon-button queue-steer-btn" aria-label={tr('引导（立即注入当前任务）')} title={tr('引导 · 立即注入当前任务')} onClick={() => void steerQueued(item.id)}><Zap size={13} /></button>
+                                <button className="icon-button" aria-label={tr('移除排队消息')} title={tr('移除')} onClick={() => void dequeue(item.id)}><X size={13} /></button>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
                     )}
                     <div className="composer-stack">
                       {thread && (thread.todos?.length ?? 0) > 0 && (() => {
@@ -996,13 +1163,17 @@ export function App() {
                           }} />
                         <div className="composer-toolbar">
                           <button className="composer-project" type="button" onClick={() => void selectProject()} disabled={busy || !isDesktop} title={project?.path ?? (isDesktop ? tr('选择项目 · Ctrl O') : tr('本机目录仅在桌面应用中可用'))}><FolderOpen size={15} /><span className="truncate">{project?.name ?? tr('选择项目')}</span><ChevronDown size={12} /></button>
-                          <Select className="composer-model" label={tr('模型')} icon={Cpu} value={modelId} disabled={models.length === 0} onChange={setModelOverride}
+                          <Select className="composer-model" label={tr('模型')} icon={Cpu} value={modelId} disabled={models.length === 0} iconOnly={view === 'browser'} onChange={setModelOverride}
                             options={models.map((item) => ({ value: item.id, label: item.name, hint: item.modelId }))} />
-                          <Select className="composer-approval" label={tr('审批模式')} icon={ShieldCheck} value={state.settings.approvalMode} disabled={!isDesktop} onChange={(value) => void changeApprovalMode(value as Settings['approvalMode'])}
+                          <Select className="composer-approval" label={tr('审批模式')} icon={ShieldCheck} value={state.settings.approvalMode} disabled={!isDesktop} iconOnly={view === 'browser'} onChange={(value) => void changeApprovalMode(value as Settings['approvalMode'])}
                             options={approvalModes.map((mode) => ({ value: mode, label: tr(approvalLabels[mode].name), hint: tr(approvalLabels[mode].hint) }))} />
                           <div className="composer-tools" role="group" aria-label={tr('输入工具')}>
-                            <button className="icon-button" type="button" aria-label={tr('添加文件')} title={tr('添加项目文件到消息')} disabled={!project || !isDesktop} onClick={() => void attachFiles()}><Paperclip size={16} /></button>
-                            <button className="icon-button" type="button" aria-label={tr('添加图片')} title={tr('添加图片（可粘贴或拖拽）')} disabled={!project || !isDesktop || images.length >= 8} onClick={pickImages}><Image size={16} /></button>
+                            {view !== 'browser' && (
+                              <button className="icon-button" type="button" aria-label={tr('添加文件')} title={tr('添加项目文件到消息')} disabled={!project || !isDesktop} onClick={() => void attachFiles()}><Paperclip size={16} /></button>
+                            )}
+                            {view !== 'browser' && (
+                              <button className="icon-button" type="button" aria-label={tr('添加图片')} title={tr('添加图片（可粘贴或拖拽）')} disabled={!project || !isDesktop || images.length >= 8} onClick={pickImages}><Image size={16} /></button>
+                            )}
                             {(() => {
                               const busySpeech = speech.status === 'loading' || speech.status === 'transcribing'
                               const label = speech.status === 'recording' ? tr('停止语音输入') : speech.status === 'loading' ? tr('正在下载语音模型 {progress}%', { progress: speech.progress }) : speech.status === 'transcribing' ? tr('正在识别语音…') : tr('语音输入')
@@ -1012,13 +1183,18 @@ export function App() {
                                 </button>
                               )
                             })()}
-                            <button className="icon-button" type="button" aria-label={tr('技能与 MCP')} title={tr('技能与 MCP（在设置中管理）')} onClick={() => { setSettingsSection('skills'); setView('settings') }}><Puzzle size={16} /></button>
+                            {view !== 'browser' && (
+                              <button className="icon-button" type="button" aria-label={tr('技能与 MCP')} title={tr('技能与 MCP（在设置中管理）')} onClick={() => { setSettingsSection('skills'); setView('settings') }}><Puzzle size={16} /></button>
+                            )}
                           </div>
                           {isActive ? (
-                            <div className="send-group">
-                              {input.trim() && <button className="send-button queue" type="submit" aria-label={tr('加入队列')} title={tr('加入队列，当前回复结束后发送')} disabled={!canSend}><ListOrdered size={16} /></button>}
-                              <button className="send-button stop" type="button" aria-label={tr('停止回复')} title={tr('停止回复')} onClick={() => void cancel()}><Square size={15} /></button>
-                            </div>
+                            <>
+                              {input.trim() || images.length ? (
+                                <button className="send-button queue" type="button" aria-label={tr('加入队列')} title={tr('加入队列，当前回复结束后发送')} disabled={!canSend} onClick={() => void queue()}><ListOrdered size={14} /></button>
+                              ) : (
+                                <button className="send-button stop" type="button" aria-label={tr('停止回复')} title={tr('停止回复')} onClick={() => void cancel()}><Square size={15} /></button>
+                              )}
+                            </>
                           ) : (
                             <button className="send-button" type="submit" aria-label={tr('发送')} title={tr('发送 · {key}', { key: sendLabel })} disabled={!canSend}>{busy ? <LoaderCircle size={17} className="spin" /> : <ArrowUp size={19} />}</button>
                           )}
@@ -1026,7 +1202,7 @@ export function App() {
                       </form>
                       {awaitingInput && thread?.question && <QuestionOverlay key={thread.question.callId} question={thread.question} onAnswer={(value) => void answer(thread.question!, value)} onCancel={() => void cancel()} />}
                     </div>
-                    <p className="composer-hint" id="execution-hint">{!isDesktop ? tr('预览模式 · 会话与模型调用需在桌面应用中使用') : models.length === 0 ? tr('尚未配置模型，先到设置中添加提供商与模型。') : isActive ? tr('回复进行中 · 可继续输入补充说明，发送后自动排队') : `${tr(approvalLabels[state.settings.approvalMode].name)} · ${tr(approvalLabels[state.settings.approvalMode].hint)}`}</p>
+                    <p className="composer-hint" id="execution-hint">{!isDesktop ? tr('预览模式 · 会话与模型调用需在桌面应用中使用') : models.length === 0 ? tr('尚未配置模型，先到设置中添加提供商与模型。') : isActive ? tr('回复进行中 · 发送后将加入队列排队等待') : `${tr(approvalLabels[state.settings.approvalMode].name)} · ${tr(approvalLabels[state.settings.approvalMode].hint)}`}</p>
                     {!thread && <div className="quick-actions">
                       <button onClick={() => setView('settings')}><Cpu size={15} />{models.length === 0 ? t('action.configureModel') : t('action.manageModels')}<ArrowUpRight size={13} /></button>
                     </div>}
@@ -1034,6 +1210,18 @@ export function App() {
                 </>
               )}
             </main>
+          )}
+          {view === 'browser' && (
+            <Suspense fallback={<div className="browser-workspace loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开浏览器…')}</div>}>
+              {thread ? <BrowserWorkspace threadId={thread.id} active={view === 'browser'} onError={setError} searchEngine={state.settings.browser.searchEngine} searchTemplate={state.settings.browser.searchTemplate} onReference={onBrowserReference} />
+                : <div className="browser-workspace browser-empty"><Globe size={40} /><strong>{tr('浏览器工作台')}</strong><span>{tr('在右侧输入需求，助手将新建任务并在这里操控网页。')}</span></div>}
+            </Suspense>
+          )}
+          {view === 'browser' && rightPanelOpen && (
+            <div className="col-resizer browser-resizer" role="separator" aria-label={tr('拖动调整右栏宽度')} aria-orientation="vertical" onPointerDown={(event) => startColumnDrag('right', event)} onDoubleClick={() => setRightWidth(null)} />
+          )}
+          {showRightPanel && (
+            <div className="col-resizer" role="separator" aria-label={tr('拖动调整右栏宽度')} aria-orientation="vertical" onPointerDown={(event) => startColumnDrag('right', event)} onDoubleClick={() => setRightWidth(null)} />
           )}
           {showRightPanel && (
             <Suspense fallback={null}>
@@ -1302,7 +1490,7 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
                 ))}
               </div>
             )}
-            {message.content && <div className="bubble">{message.content}</div>}
+            {message.content && <div className="bubble">{message.content}{message.steering && <span className="steer-badge"><Zap size={10} />{tr('引导')}</span>}</div>}
           </>
         )}
         <div className="msg-toolbar">

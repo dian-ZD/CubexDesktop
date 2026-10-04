@@ -34,11 +34,18 @@ interface UiApi {
 }
 
 const UiContext = createContext<UiApi | null>(null)
+// 模态弹窗（确认框/菜单）打开中：原生浏览器视图永远盖在 DOM 之上，
+// 弹窗期间必须隐藏视图，否则遮罩压暗应用时浏览器仍全亮，看起来像单独弹出的窗口。
+const ModalOpenContext = createContext(false)
 
 export function useUi(): UiApi {
   const value = useContext(UiContext)
   if (!value) throw new Error('UiProvider 缺失')
   return value
+}
+
+export function useModalOpen(): boolean {
+  return useContext(ModalOpenContext)
 }
 
 const toastIcon: Record<ToastKind, LucideIcon> = { success: CheckCircle2, error: XCircle, info: Info, warning: AlertTriangle }
@@ -83,11 +90,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
     openMenu: (anchor, items) => api.current.openMenu(anchor, items),
   }))
 
+  const modalOpen = Boolean(dialog || menu)
+
   return (
     <UiContext.Provider value={stable}>
-      {children}
-      {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
-      {dialog && <Dialog request={dialog} onClose={() => setDialog(null)} />}
+      <ModalOpenContext.Provider value={modalOpen}>
+        {children}
+        {menu && <ContextMenu {...menu} onClose={() => setMenu(null)} />}
+        {dialog && <Dialog request={dialog} onClose={() => setDialog(null)} />}
+      </ModalOpenContext.Provider>
       <div className="toast-stack" aria-live="polite">
         {toasts.map((item) => {
           const Icon = toastIcon[item.kind]
@@ -191,7 +202,7 @@ function ContextMenu({ x, y, alignRight, items, onClose }: { x: number; y: numbe
 
 export interface SelectOption<T extends string> { value: T; label: string; hint?: string; icon?: LucideIcon }
 
-export function Select<T extends string>({ value, options, onChange, disabled, label, icon: Icon, className, invalid }: { value: T; options: Array<SelectOption<T>>; onChange: (value: T) => void; disabled?: boolean; label: string; icon?: LucideIcon; className?: string; invalid?: boolean }) {
+export function Select<T extends string>({ value, options, onChange, disabled, label, icon: Icon, className, invalid, iconOnly }: { value: T; options: Array<SelectOption<T>>; onChange: (value: T) => void; disabled?: boolean; label: string; icon?: LucideIcon; className?: string; invalid?: boolean; iconOnly?: boolean }) {
   const { tr } = useI18n()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -216,11 +227,11 @@ export function Select<T extends string>({ value, options, onChange, disabled, l
   }, [open])
 
   return (
-    <div ref={ref} className={`select${open ? ' open' : ''}${className ? ` ${className}` : ''}`}>
-      <button type="button" className="select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} aria-invalid={invalid || undefined} title={current?.hint ?? label} disabled={disabled} onClick={() => setOpen((item) => !item)}>
+    <div ref={ref} className={`select${open ? ' open' : ''}${iconOnly ? ' icon-only' : ''}${className ? ` ${className}` : ''}`}>
+      <button type="button" className="select-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} aria-invalid={invalid || undefined} title={iconOnly ? `${current?.label ?? label}` : current?.hint ?? label} disabled={disabled} onClick={() => setOpen((item) => !item)}>
         {Icon && <Icon size={14} />}
-        <span className="truncate">{current?.label ?? tr('未选择')}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+        {!iconOnly && <span className="truncate">{current?.label ?? tr('未选择')}</span>}
+        {!iconOnly && <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>}
       </button>
       {open && (
         <div className="select-popover" role="listbox" aria-label={label}>

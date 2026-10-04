@@ -28,8 +28,9 @@ export const delegateTools: ReadonlySet<ToolName> = new Set(['delegate'])
 
 export const mutatingTools: ReadonlySet<ToolName> = new Set(['write_file', 'edit_file'])
 export const commandTools: ReadonlySet<ToolName> = new Set(['run_command'])
-export const extensionToolNames: ReadonlySet<ToolName> = new Set(['github_push', 'browser_open', 'web_search', 'computer_use', 'plugin_call', 'mcp_call'])
-export const sensitiveExtensionTools: ReadonlySet<ToolName> = new Set(['github_push', 'computer_use', 'plugin_call', 'mcp_call'])
+export const browserTools: ReadonlySet<ToolName> = new Set(['browser_navigate', 'browser_click', 'browser_type', 'browser_extract', 'browser_screenshot', 'browser_wait', 'browser_search', 'browser_tab', 'browser_crawl', 'browser_extract_links'])
+export const extensionToolNames: ReadonlySet<ToolName> = new Set(['github_push', 'browser_open', 'web_search', 'computer_use', 'generate_image', 'plugin_call', 'mcp_call', 'browser_navigate', 'browser_click', 'browser_type', 'browser_extract', 'browser_screenshot', 'browser_wait', 'browser_search', 'browser_tab', 'browser_crawl', 'browser_extract_links'])
+export const sensitiveExtensionTools: ReadonlySet<ToolName> = new Set(['github_push', 'computer_use', 'plugin_call', 'mcp_call', 'browser_navigate', 'browser_click', 'browser_type', 'browser_tab', 'browser_crawl'])
 
 const normalizeCommand = (text: string) => text.trim().replace(/\s+/g, ' ').toLowerCase()
 
@@ -70,6 +71,17 @@ export function summarizeCall(call: ToolCall): string {
       const detail = a.action === 'type' ? `输入「${String(a.text ?? '').slice(0, 200)}」` : a.action === 'key' ? `按键 ${String(a.keys ?? '')}` : a.action === 'click' ? `单击 (${String(a.x)}, ${String(a.y)})` : a.action === 'open' ? `打开 ${String(a.target ?? '')}` : '截屏'
       return `电脑操控：${detail}`
     }
+    case 'browser_navigate': return `浏览器打开 ${String(a.url ?? '')}`
+    case 'browser_click': return `浏览器点击 ${String(a.selector ?? '')}`
+    case 'browser_type': return `浏览器输入到 ${String(a.selector ?? '')}：「${String(a.text ?? '').slice(0, 120)}」`
+    case 'browser_extract': return `浏览器提取内容${a.selector ? `（${String(a.selector)}）` : ''}`
+    case 'browser_screenshot': return '浏览器截屏'
+    case 'browser_wait': return `浏览器等待${a.selector ? ` ${String(a.selector)}` : `${String(a.ms ?? 1000)}ms`}`
+    case 'browser_search': return `浏览器搜索 ${String(a.query ?? '')}`
+    case 'browser_crawl': return `全网爬取 ${String(a.query ?? '')}${Array.isArray(a.urls) && a.urls.length ? `（${a.urls.length} 个种子链接）` : ''}`
+    case 'browser_extract_links': return `浏览器提取链接${a.selector ? `（${String(a.selector)}）` : ''}`
+    case 'browser_tab': return `浏览器标签页 ${String(a.action ?? '')}${a.tabId ? ` ${String(a.tabId)}` : ''}`
+    case 'generate_image': return `生成图片：「${String(a.prompt ?? '').slice(0, 80)}」`
     case 'plugin_call': return `插件 ${String(a.plugin ?? '')}/${String(a.tool ?? '')}${a.args ? ` ${JSON.stringify(a.args).slice(0, 300)}` : ''}`
     case 'mcp_call': return `MCP ${String(a.server ?? '')}/${String(a.tool ?? '')}${a.args ? ` ${JSON.stringify(a.args).slice(0, 300)}` : ''}`
     default: return `调用 ${String(call.name)}`

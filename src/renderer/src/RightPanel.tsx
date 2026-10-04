@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
+import { ArrowLeft, ChevronLeft, ChevronRight, CircleCheck, CircleDashed, ExternalLink, FileCode2, FileDown, FileText, FoldVertical, Folder, FolderOpen, Gauge, Globe, ListChecks, LoaderCircle, MessageSquarePlus, PictureInPicture2, Play, Plug, Puzzle, RotateCw, Terminal, Trash2, TriangleAlert, Wrench } from 'lucide-react'
 import type { FileContent, FileEntry, Project, Thread, ToolResult } from '../../shared/schema'
+import { historyTokens } from '../../shared/tokens'
 import type { OpenTarget } from './Markdown'
 import { api, isDesktop } from './bridge'
 import { useI18n } from './i18n'
+import { collectSources, sourcesToMarkdown, type SearchHit } from './sources'
 
 export type OpenRequest = { target: OpenTarget; nonce: number }
 
@@ -394,7 +396,8 @@ function SummaryView({ thread, project, contextWindow, onError }: { thread: Thre
       const message = thread.messages[i]
       if (message.role === 'assistant' && message.usage) return message.usage.input + message.usage.output
     }
-    return 0
+    // 模型服务未返回 usage 时，用估算值兜底，保证压缩按钮可用
+    return thread.messages.length > 0 ? historyTokens(thread.messages) : 0
   }, [thread.messages])
   const ratio = Math.min(1, usedTokens / window)
   const percent = Math.round(ratio * 100)
@@ -463,7 +466,7 @@ function SummaryView({ thread, project, contextWindow, onError }: { thread: Thre
           {done && todoDone === todos.length && <div className="summary-done"><CircleCheck size={14} />{tr('全部待办已完成')}</div>}
         </section>
       )}
-      <SearchGroup searches={summary.searches} />
+      <SearchGroup searches={summary.searches} reportTitle={thread.title} onError={onError} />
       <SummaryGroup icon={FileText} title={tr('上下文')} items={project ? [project.name, ...summary.contextFiles] : summary.contextFiles} empty={tr('尚未引用上下文')} />
       <SummaryGroup icon={FileCode2} title={tr('读写文件')} items={summary.files.map((item) => trFileEntry(tr, item))} empty={tr('尚未读写文件')} />
       <SummaryGroup icon={Wrench} title={tr('工具')} items={summary.tools} empty={tr('尚未调用工具')} />
@@ -496,12 +499,25 @@ function usePaged<T>(items: T[]): { pageItems: T[]; page: number; pageCount: num
   return { pageItems, page, pageCount, prev: () => setPage((p) => Math.max(0, p - 1)), next: () => setPage((p) => Math.min(pageCount - 1, p + 1)) }
 }
 
-function SearchGroup({ searches }: { searches: SearchHit[] }) {
+function SearchGroup({ searches, reportTitle, onError }: { searches: SearchHit[]; reportTitle: string; onError: (message: string) => void }) {
   const { tr } = useI18n()
   const { pageItems, page, pageCount, prev, next } = usePaged(searches)
+  const [exporting, setExporting] = useState(false)
+  const exportReport = async () => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const result = await api.exportText({ title: tr('导出资料报告'), defaultName: `${reportTitle || '资料'}-报告`, content: sourcesToMarkdown(reportTitle || '资料报告', searches) })
+      if (!result.ok) onError(result.error)
+    } catch { onError(tr('导出失败，请重试。')) } finally { setExporting(false) }
+  }
   return (
     <section className="summary-group">
-      <header><Globe size={13} />{tr('联网搜索')}<span className="panel-meta">{searches.length}</span></header>
+      <header>
+        <Globe size={13} />{tr('资料报告')}
+        <span className="panel-meta">{searches.length}</span>
+        {searches.length > 0 && <button type="button" className="panel-action" disabled={exporting || !isDesktop} title={isDesktop ? tr('导出 Markdown 报告') : tr('请在桌面应用中使用')} onClick={() => void exportReport()}><FileDown size={12} />{tr('导出')}</button>}
+      </header>
       {searches.length === 0 ? <p className="panel-note">{tr('联网搜索到的网页会显示在这里。可在设置 → 插件中开启联网搜索。')}</p> : (
         <>
           <ul className="search-hits">
@@ -585,15 +601,14 @@ function formatSize(bytes: number): string {
 
 const CONTEXT_FILES = new Set(['goal.md', 'plan.md', 'memory.md', 'agents.md'])
 
-export interface SearchHit { title: string; url: string; snippet: string }
+export type { SearchHit } from './sources'
 
 export function summarize(thread: Thread): { todos: Array<{ text: string; done: boolean }>; files: string[]; tools: string[]; contextFiles: string[]; searches: SearchHit[] } {
   const todos: Array<{ text: string; done: boolean }> = []
   const files = new Set<string>()
   const tools = new Set<string>()
   const contextFiles = new Set<string>()
-  const searches: SearchHit[] = []
-  const seenUrls = new Set<string>()
+  const searches = collectSources(thread)
   const lastAssistant = [...thread.messages].reverse().find((message) => message.role === 'assistant' && /^\s*[-*]\s+\[[ xX]\]/m.test(message.content))
   if (lastAssistant && lastAssistant.role === 'assistant') {
     for (const line of lastAssistant.content.split('\n')) {
@@ -602,22 +617,6 @@ export function summarize(thread: Thread): { todos: Array<{ text: string; done: 
     }
   }
   for (const message of thread.messages) {
-    if (message.role === 'tool') {
-      for (const result of message.results) {
-        if (result.name !== 'web_search' || !result.ok) continue
-        const marker = result.output.indexOf('[CUBEX_SEARCH]')
-        if (marker < 0) continue
-        try {
-          const parsed = JSON.parse(result.output.slice(marker + '[CUBEX_SEARCH]'.length)) as { results?: SearchHit[] }
-          for (const hit of parsed.results ?? []) {
-            if (!hit.url || seenUrls.has(hit.url)) continue
-            seenUrls.add(hit.url)
-            searches.push({ title: hit.title || hit.url, url: hit.url, snippet: hit.snippet || '' })
-          }
-        } catch { /* 忽略无法解析的结果 */ }
-      }
-      continue
-    }
     if (message.role !== 'assistant') continue
     for (const call of message.toolCalls) {
       tools.add(call.name)

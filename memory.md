@@ -1,6 +1,6 @@
 # 记忆
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
+> 最后更新时间：2026-10-04 ｜ 更新者：AI Agent（资料报告 + 引用溯源）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
@@ -23,6 +23,13 @@
 - 模式架构哲学（延续）：Code/Work/Browser **共用同一 agent 与全量工具集**，差异只靠「注入不同 system prompt 段 + prompt 引导」实现，不为某模式裁剪工具集。Browser 模式因此需要把 `mode` 下沉到 `thread`（schema），让 agent 能感知并注入浏览器提示段。
 - Browser 模式后端选型：用 **Electron 内置 BrowserWindow**（复用现有离屏窗口安全加固，升级为可见+可交互），**不引入 Playwright/Puppeteer**；交互形态为「可对话 + 可编排」混合；本轮交付完整版。用户经选择题确认。
 - 旧 `browser_open`（只读抽取）保留不动，Browser 模式新增独立 `browser_*` 交互工具，避免破坏 Work/Code 引用。
+- 上下文压缩采用 **LLM 摘要式**（用户选择题确认）：`compactMessages` 保留最近 10 条原文，较早消息交模型总结为结构化摘要后替换为一条 system 消息。原因：原实现只是删除早期消息，会丢失任务上下文。模型不可用时退化为移除标记，保证「始终能压缩」。
+- 上下文检测改为 **二分法实测**（用户原文「本身也有检测上下文长度的按钮，优化一下就可以用了」）：不依赖服务端 `/models` 的 `context_length`。探测从已知/猜测值起倍增上界再二分，靠关键词（context length / maximum context / too many tokens / 413 …）判定超限。
+- 「压缩不了」的**真正根因**：多数 OpenAI 兼容中转站即使请求 `stream_options.include_usage` 也不返回 usage → `usedTokens=0` → 压缩按钮的 `ratio>=0.7` 永false。修复=渲染层用 `historyTokens` 估算兜底（`estimateTokens` 抽到 `src/shared/tokens.ts` 供主进程与渲染层共用）。
+- 循环治理三项（用户全选）：①占用 >90% 窗口自动摘要压缩（每轮至多 3 次）；②捕获上下文超限错误后自动压缩并重试（至多 3 次）；③相同「工具+参数」签名第 4 次起拦截，连续整步空转两次则中止。
+- Browser 模式全网爬取（用户选择题「两者都做」+「两种方案可供选择」）：既新增 `browser_crawl` 聚合爬取工具，也增强 `browser_search` 返回结构化结果；呈现方式做成设置项 `crawlMode`（background=离屏并行+进度条 label / visible=前台标签逐页），`crawlPages` 3–20 控制规模。爬取总时长硬限 180 秒（`CRAWL_DEADLINE_MS`）防失控。
+- 爬取种子优先走 `webSearch`（DuckDuckGo html），失败才退化为「配置的搜索引擎结果页离屏抓取 + 通用链接提取」，两者都经 `resolveResultUrl`（Bing /ck/a base64、DuckDuckGo uddg、百度 /link）还原真实地址。
+- `[CUBEX_SEARCH]` 标记从「仅 web_search 尾部」改为「web_search 尾部 / browser_search 尾部 / browser_crawl **头部**」；渲染层用 `takeJsonObject` 括号配平解析（带字符串转义处理），因此标记前后有正文或被 40k 截断都能解析。
 
 ## 本轮改动文件清单（0.1.2-dev，每项一句话）
 
@@ -49,12 +56,58 @@
 
 - `src/main/skills.ts`、`src/main/unzip.ts`、`src/renderer/src/SkillMenu.tsx`、`plugins.md` —— 技能菜单/技能加载/解压相关（随 commit f57ade2 一并入库）。
 
+## 本轮改动文件清单（上下文压缩与 Agent 循环优化，每项一句话）
+
+- `src/shared/tokens.ts`（**新建**）—— `estimateTokens`/`messageTokens`/`historyTokens`，主进程与渲染层共用。
+- `src/main/context.ts` —— 删除本地 token 估算实现，改从 `shared/tokens` 导入并 re-export（保住 `tests/context.test.ts` 与 agent 的既有导入）。
+- `src/main/llm.ts` —— 新增 `isContextOverflowError`、`ContextProbe`、`probeContextWindow`（二分法实测）。
+- `src/shared/channels.ts` —— 新增 `probeContextWindow: 'cubex:probe-context-window'`。
+- `src/shared/schema.ts` —— 新增 `probeContextWindowInputSchema`、`ContextProbeInfo`、`CubexAPI.probeContextWindow`。
+- `src/main/index.ts` —— import `probeContextWindow` + `probeContextWindowInputSchema`，新增 IPC handler。
+- `src/preload/index.ts` —— 新增 `probeContextWindow` 桥接。
+- `src/renderer/src/bridge.ts` —— 补 `probeContextWindow` 预览 stub。
+- `src/renderer/src/SettingsPanel.tsx` —— `detectContext` 改调实测；`discovery` 状态联合新增 `info` 项与渲染。
+- `src/renderer/src/RightPanel.tsx` —— 用量缺失时 `historyTokens` 兜底；导入共享模块。
+- `src/renderer/src/App.tsx` —— 自动压缩前的用量同样兜底。
+- `src/renderer/src/phrases.ts` —— 补实测结果与「实测上下文长度」英文词条。
+- `src/main/agent.ts` —— 新增 `compactMessages`/`summarize`/`renderTranscript`；`compactThread` 改调用；主循环加自动压缩、超限恢复、空转治理。
+- `src/renderer/src/App.tsx` —— 运行中发送直接加入队列，输入框右侧移除引导按钮，排队列表每项新增引导按钮；`steerQueued` 触发移出队列并立即注入引导。
+- `src/renderer/src/styles.css` —— `.queue-item-actions` 与 `.queue-steer-btn` 样式。
+- `src/renderer/src/phrases.ts` —— 排队栏引导按钮相关提示与国际化词条。
+
+## 本轮改动文件清单（Browser 模式全网爬取，每项一句话）
+
+- `src/shared/schema.ts` —— `toolNames` 加 `browser_crawl`/`browser_extract_links`；`crawlModes`/`CrawlMode`；`browserSettingsSchema` 加 `crawlMode`/`crawlPages`（zod default）；`defaultSettings.browser` 补 `crawlMode:'background', crawlPages:8`。
+- `src/main/tools.ts` —— `browserTools`/`extensionToolNames` 加两新工具，`sensitiveExtensionTools` 加 `browser_crawl`；`summarizeCall` 加 crawl 分支。
+- `src/main/browser.ts` —— `BrowserAction` 加 `{kind:'links', selector?}`；`BrowserActionResult.links`；`PageLink.snippet`；`LINKS_SCRIPT`/`extractLinks`（结构化 a[href] 提取）。
+- `src/main/extensions.ts` —— 新增 `fetchPageOffscreen`/`CRAWL_PAGE_SCRIPT`/`resolveResultUrl`/`keepLink`/`safeHost`/`queryTerms`/`relevanceScore`/`runPool`/`crawlWeb`；specs 加 `browser_crawl`/`browser_extract_links` 并改写 `browser_search` 描述；dispatch 分支 `runBrowserCrawl`；`runBrowser` 支持 links 动作、搜索结果结构化 + `[CUBEX_SEARCH]`。
+- `src/main/prompt.ts` —— BROWSER_MODE 工具清单与选型指引改写（crawl 优先）。
+- `src/renderer/src/SettingsPanel.tsx` —— Browser 分区加「全网爬取方式」Select 与「单次爬取最多页数」NumberField。
+- `src/renderer/src/RightPanel.tsx` —— 搜索结果识别 `browser_search`/`browser_crawl`；新增 `takeJsonObject`。
+- `src/renderer/src/App.tsx` —— `toolIcon` 加两图标、`approvalDetail` 加爬取说明、`toolTitle` 加 `default: return tr(call.name)` 兜底。
+- `src/renderer/src/phrases.ts` —— 爬取设置/审批文案英文词条。
+- `tests/browser.test.ts` —— 工具集扩到 10 个、crawl 敏感性、summarizeCall crawl 摘要、prompt 含 crawl 工具名、设置默认与越界校验。
+
+## 本轮改动文件清单（资料报告 + 引用溯源，每项一句话）
+
+- `src/renderer/src/sources.ts`（新建）—— `takeJsonObject`（自 RightPanel 迁出）、`collectSources`（三工具 `[CUBEX_SEARCH]` 汇总去重）、`parseSourceLine`/`extractSources`（解析「参考来源」小节与 `[n]` 行，URL 尾部中英文标点都要剥）、`sourcesToMarkdown`（导出报告）。
+- `src/renderer/src/Markdown.tsx` —— Block 加 `sources` 种类（来源卡片列表）；`inlinePattern` 末尾加 `\[(\d{1,3})\]`（必须放在链接分支之后，避免 `[1](url)` 被截断）；`cite`/`CiteToken` 渲染上标角标；citations 由 `Markdown` 顶层 `extractSources` 一次提取后作参数下传（不可用 hook：`inline` 是普通函数）。
+- `src/renderer/src/RightPanel.tsx` —— 「联网搜索」分组改为「资料报告」+ 计数 + 导出按钮；`summarize` 复用 `collectSources`；`SearchHit` 改为从 `sources.ts` 再导出。
+- `src/shared/channels.ts` / `src/shared/schema.ts` / `src/main/index.ts` / `src/preload/index.ts` / `src/renderer/src/bridge.ts` —— 新增通用 `exportText` IPC（title/defaultName/content → 保存 `.md` 对话框并定位文件），桥接层含 preview 兜底。
+- `src/main/prompt.ts` —— CORE「工具使用」与 BROWSER_MODE「作答与收尾」都要求附 `## 参考来源` 与 `[n]` 角标；**坑：模板字符串内反引号必须写成 \`，否则整个 prompt 语法炸掉**。
+- `src/renderer/src/phrases.ts` —— `资料报告`/`导出`/`导出资料报告`/`导出 Markdown 报告`/`请在桌面应用中使用` 词条。
+- `src/renderer/src/styles.css` —— `.md-cite`（上标角标）/`.md-cite-plain`（灰色降级）/`.md-sources`（来源卡片）/`.panel-action`（分组头按钮）。
+- `tests/citations.test.ts`（新建）—— 8 例：takeJsonObject 截断、collectSources 去重/失败忽略、parseSourceLine 三种写法、extractSources 节边界、sourcesToMarkdown 编号、两段提示词断言。
+
 ## 已知问题与坑
 
 - **asar 锁定**：`npm run dist` 打包时 `release\win-unpacked\resources\app.asar` 可能被杀软/索引器锁定（非 Cubex/node 进程），导致 `Remove-Item release` 失败。绕过：结束进程 + 删 `release`/`out` 后重试；仍失败用 `npx electron-builder --win nsis "-c.directories.output=dist-out"`（`-c` 参数在 PowerShell 必须加引号）。本轮清理进程与产物后 `npm run dist` 一次成功。
 - **Program Files 权限**：删除 `C:\Program Files\Cubex` 需管理员，`-Verb RunAs` 提权可能被用户取消；当前该空文件夹壳残留，不影响重装。
 - **本目录现为 git 仓库**（此前记录的「非 git 仓库」已过时）：remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，默认分支 `main`，最新 commit f57ade2。`.gitignore` 已忽略 `node_modules/`、`out/`、`release/`。仍遵循「未获用户明确指令不擅自提交/推送」。
-- **lint 既有告警**：`npm run lint` 有 7 个 `react-hooks/exhaustive-deps` 关于 `tr` 的 warning（App.tsx），为既有告警、非本轮引入，0 error。
+- **lint 既有告警**：`npm run lint` 现有 9 个 `react-hooks/exhaustive-deps` warning（App.tsx，多为 `tr`/`thread` 依赖），为既有告警、非本轮引入，0 error。
+- **探测函数的副作用/耗时**：`probeContextWindow` 一次点击会发多轮（约 5–18 次）真实请求，默认上界 100 万 tokens；对超大模型首轮可能较慢，属预期。`low`/`high` 可调。
+- **摘要压缩依赖模型可用**：无 API Key / 模型被删时 `summarize` 直接返回移除标记（非摘要），不会报错也不阻塞。
+- **`step--` 重来**：主循环自动压缩后 `step--; continue`，保证压缩本身不占用步数（注意 `step` 是 `let`）。
 
 ## 用户明确偏好与禁忌（尽量原样）
 
@@ -68,13 +121,15 @@
 ## 已运行的关键命令及结果摘要
 
 - `npm run typecheck` → exit 0。
-- `npm run lint` → exit 0（7 warning，0 error）。
-- `npm test` / `npx vitest run` → 77 passed，2 skipped。
+- `npm run lint` → exit 0（9 warning，0 error）。
+- `npm test` / `npx vitest run` → 94 passed，2 skipped（新增 citations.test.ts 8 例；此前基线 86/2）。
 - `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe`（已签名 + blockmap，x64）。
 - git：`git add -A` → `git commit`（commit f57ade2，24 文件 +1793/−231）→ `git push origin main`（`46cbaa7`→`f57ade2`）成功。
 
 ## 未解决问题 / 待确认
 
+- `browser_crawl` 尚未在真实会话中跑通（需真实网络与已配模型）；后台离屏抓取在国内站点/搜索引擎反爬下的成功率待实测。
+- 引用溯源未实测：回答里的 `[n]` 角标点击跳转、右栏「资料报告」导出 `.md`（`exportText` IPC 走保存对话框）需在真实会话验证。
 - Browser 模式实时画面：MVP 用 `capturePage` 截图流还是完整版直接 `WebContentsView` 内嵌？（已在 plan 中向用户提出，倾向先截图流）
 - 是否需要清掉 `C:\Program Files\Cubex` 空壳？（历史遗留，待确认）
 - `author` 字段缺失导致 electron-builder 警告（不影响安装包），是否补上后重打？

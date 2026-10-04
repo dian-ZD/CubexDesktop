@@ -1,11 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { channels } from '../shared/channels'
-import type { AgentActivity, AppState, ControlState, CubexAPI, Settings, StreamDelta, WindowState, Workflow } from '../shared/schema'
+import type { AgentActivity, AppState, BrowserState, ControlState, CubexAPI, Settings, StreamDelta, WindowState, Workflow } from '../shared/schema'
 
 const api: CubexAPI = {
   getState: () => ipcRenderer.invoke(channels.getState),
   selectProject: () => ipcRenderer.invoke(channels.selectProject),
-  createThread: (input) => ipcRenderer.invoke(channels.createThread, { projectId: input.projectId, modelId: input.modelId }),
+  createThread: (input) => ipcRenderer.invoke(channels.createThread, { projectId: input.projectId, modelId: input.modelId, ...(input.mode ? { mode: input.mode } : {}) }),
   sendMessage: (input) => ipcRenderer.invoke(channels.sendMessage, { threadId: input.threadId, content: input.content, ...(input.modelId ? { modelId: input.modelId } : {}), ...(input.card ? { card: input.card } : {}), ...(input.images?.length ? { images: input.images } : {}) }),
   regenerateMessage: (input) => ipcRenderer.invoke(channels.regenerateMessage, { threadId: input.threadId, messageId: input.messageId, ...(input.modelId ? { modelId: input.modelId } : {}) }),
   rollbackMessage: (input) => ipcRenderer.invoke(channels.rollbackMessage, { threadId: input.threadId, messageId: input.messageId }),
@@ -15,6 +15,7 @@ const api: CubexAPI = {
   updateThread: (input) => ipcRenderer.invoke(channels.updateThread, { threadId: input.threadId, ...(input.title !== undefined ? { title: input.title } : {}), ...(input.pinned !== undefined ? { pinned: input.pinned } : {}) }),
   compactThread: (input) => ipcRenderer.invoke(channels.compactThread, { threadId: input.threadId }),
   exportThread: (input) => ipcRenderer.invoke(channels.exportThread, { threadId: input.threadId }),
+  exportText: (input) => ipcRenderer.invoke(channels.exportText, { title: input.title, defaultName: input.defaultName, content: input.content }),
   deleteProject: (input) => ipcRenderer.invoke(channels.deleteProject, { projectId: input.projectId }),
   updateProject: (input) => ipcRenderer.invoke(channels.updateProject, { projectId: input.projectId, ...(input.name !== undefined ? { name: input.name } : {}), ...(input.archived !== undefined ? { archived: input.archived } : {}) }),
   revealProject: (input) => ipcRenderer.invoke(channels.revealProject, { projectId: input.projectId }),
@@ -22,6 +23,7 @@ const api: CubexAPI = {
   resolveApproval: (input) => ipcRenderer.invoke(channels.resolveApproval, { threadId: input.threadId, callId: input.callId, approved: input.approved }),
   answerQuestion: (input) => ipcRenderer.invoke(channels.answerQuestion, { threadId: input.threadId, callId: input.callId, answer: input.answer }),
   dequeueMessage: (input) => ipcRenderer.invoke(channels.dequeueMessage, { threadId: input.threadId, queuedId: input.queuedId }),
+  steerMessage: (input) => ipcRenderer.invoke(channels.steerMessage, { threadId: input.threadId, content: input.content }),
   pickFiles: (input) => ipcRenderer.invoke(channels.pickFiles, { projectId: input.projectId }),
   listFiles: (input) => ipcRenderer.invoke(channels.listFiles, { projectId: input.projectId, path: input.path }),
   readProjectFile: (input) => ipcRenderer.invoke(channels.readProjectFile, { projectId: input.projectId, path: input.path }),
@@ -33,6 +35,7 @@ const api: CubexAPI = {
   setProviderKey: (input) => ipcRenderer.invoke(channels.setProviderKey, { providerId: input.providerId, apiKey: input.apiKey }),
   testConnection: (input) => ipcRenderer.invoke(channels.testConnection, { provider: input.provider, model: input.model, ...(input.apiKey ? { apiKey: input.apiKey } : {}) }),
   listProviderModels: (input) => ipcRenderer.invoke(channels.listProviderModels, { provider: input.provider, ...(input.apiKey ? { apiKey: input.apiKey } : {}) }),
+  probeContextWindow: (input) => ipcRenderer.invoke(channels.probeContextWindow, { provider: input.provider, model: input.model, ...(input.apiKey ? { apiKey: input.apiKey } : {}) }),
   shareThreadImage: (input) => ipcRenderer.invoke(channels.shareThreadImage, { threadId: input.threadId }),
   setGithubToken: (input) => ipcRenderer.invoke(channels.setGithubToken, { token: input.token }),
   githubPush: (input) => ipcRenderer.invoke(channels.githubPush, { projectId: input.projectId, ...(input.message ? { message: input.message } : {}) }),
@@ -56,6 +59,16 @@ const api: CubexAPI = {
   deleteWorkflow: (input) => ipcRenderer.invoke(channels.deleteWorkflow, { workflowId: input.workflowId }),
   runWorkflow: (input) => ipcRenderer.invoke(channels.runWorkflow, { workflowId: input.workflowId }),
   runAutomation: (input) => ipcRenderer.invoke(channels.runAutomation, { automationId: input.automationId }),
+  browserBounds: (input) => ipcRenderer.invoke(channels.browserBounds, { threadId: input.threadId, x: input.x, y: input.y, width: input.width, height: input.height }),
+  browserHide: (input) => ipcRenderer.invoke(channels.browserHide, { threadId: input.threadId }),
+  browserNavigate: (input) => ipcRenderer.invoke(channels.browserNavigate, { threadId: input.threadId, url: input.url }),
+  browserCapture: (input) => ipcRenderer.invoke(channels.browserCapture, { threadId: input.threadId }),
+  browserTab: (input) => ipcRenderer.invoke(channels.browserTab, { threadId: input.threadId, action: input.action, ...(input.tabId ? { tabId: input.tabId } : {}), ...(input.url ? { url: input.url } : {}) }),
+  onBrowserState: (listener) => {
+    const wrapped = (_event: unknown, state: BrowserState) => listener(state)
+    ipcRenderer.on(channels.browserState, wrapped)
+    return () => ipcRenderer.removeListener(channels.browserState, wrapped)
+  },
   onState: (listener) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state)
     ipcRenderer.on(channels.state, wrapped)

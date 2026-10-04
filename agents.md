@@ -1,6 +1,6 @@
 # 智能体协作说明
 
-> 最后更新时间：2026-09-30 ｜ 更新者：AI Agent（0.1.2-dev 收尾 + Browser 模式规划）
+> 最后更新时间：2026-10-04 ｜ 更新者：AI Agent（资料报告 + 引用溯源）
 >
 > 给接手本项目的任何 AI 智能体阅读：如何在本项目中安全、高效地继续工作。
 
@@ -9,7 +9,7 @@
 1. 先读 `goal.md`（要做成什么、验收标准、边界）。
 2. 再读 `plan.md`（步骤清单与「当前进行到的精确位置 / 下一步第一件事」）。
 3. 再读 `memory.md`（技术栈、决策、坑、命令结果、待确认项）。
-4. 读完后的第一件事：核对 `plan.md`「下一步第一件事」是否仍成立——目前处于「Browser 模式 plan 已获用户确认、尚未开始编码」状态，下一步是 Browser 模式步骤 1（schema `mode` 字段 + `src/main/browser.ts` BrowserEngine 骨架）；动手前先向用户确认实时画面方案（截图流 vs WebContentsView）。
+4. 读完后的第一件事：核对 `plan.md`「下一步第一件事」是否仍成立——目前处于「全网爬取与资料报告/引用溯源均已完成、尚未提交 git」状态，下一步是在 Browser 模式实测一次多来源调研任务（爬取 + 角标跳转 + 资料报告导出）与设置页新选项，随后按需 commit/push。
 
 ## 工作时的行为准则
 
@@ -21,10 +21,10 @@
 
 ## 代码与文档规范
 
-- 代码改动用 `SearchReplace`（`Edit` 工具不可用）；改前先读文件当前内容。
+- 代码改动用当前可用的编辑工具（`Edit`/`Write` 均可用）；改前先读文件当前内容。
 - 遵循现有代码风格：**不加多余注释**（除非用户要求）；沿用邻近文件的命名与库选择。
 - 文案改动走 i18n：中文写 `tr('中文')`，并在 `src/renderer/src/phrases.ts` 补对应英文；新增词条放到已有的某个 `Record` 并确保 `registerPhrases` 已注册。
-- 测试要求：改完运行 `npm run typecheck` 与 `npm run lint`（必须 0 error；已知 7 个 `tr` 相关 warning 可接受）；涉及打包运行 `npm run dist` 并核对产物名。
+- 测试要求：改完运行 `npm run typecheck` 与 `npm run lint`（必须 0 error；已知 9 个 `react-hooks/exhaustive-deps` warning 可接受）；涉及打包运行 `npm run dist` 并核对产物名。
 - 文档中文书写，路径/命令/代码保留原文，不写真实密钥。
 
 ## 禁止事项（绝对不做）
@@ -47,7 +47,7 @@
 - [ ] 四个上下文文件（goal / plan / memory / agents）顶部时间均为最新。
 - [ ] `plan.md` 的「下一步第一件事」具体到可直接执行。
 - [ ] `memory.md`「未解决问题 / 待确认」已更新。
-- [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`（当前基线 77 passed / 2 skipped）。
+- [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`（当前基线 94 passed / 2 skipped）。
 - [ ] 若打包，已核对 `release\Cubex Setup <version>.exe`（当前 0.1.2-dev）存在且大小/签名正常。
 - [ ] 若涉及 git：仅在用户明确要求时 commit/push；push 后核对目标分支/commit hash。
 - [ ] 无遗留占用进程（`Get-Process -Name Cubex` 为空）。
