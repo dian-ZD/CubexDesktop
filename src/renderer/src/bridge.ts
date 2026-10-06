@@ -97,6 +97,7 @@ const previewApi: CubexAPI = {
   browserCapture: () => unavailable('浏览器引用'),
   browserTab: () => unavailable('浏览器标签'),
   onBrowserState: () => () => undefined,
+  workflowControl: () => unavailable('工作流控制'),
   onState: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

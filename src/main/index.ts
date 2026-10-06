@@ -1,8 +1,8 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type MessageCard, type Result, type StreamDelta, type Thread, type Workflow } from '../shared/schema'
+import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type Result, type StreamDelta, type Thread } from '../shared/schema'
 import { browserEngine } from './browser'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
@@ -13,7 +13,8 @@ import { AgentRunner } from './agent'
 import { ExtensionHost } from './extensions'
 import { McpManager } from './mcp'
 import { SkillStore } from './skills'
-import { composeWorkflowPrompt, dueAutomations } from './workflow'
+import { WorkflowRunner } from './workflowRunner'
+import { dueAutomations } from './workflow'
 
 const GITHUB_SECRET = 'github'
 const isDev = !!process.env.ELECTRON_RENDERER_URL
@@ -63,6 +64,8 @@ browserEngine.setStateListener((state: BrowserState) => {
   for (const win of liveWindows()) win.webContents.send(channels.browserState, state)
 })
 
+const workflowRunner = new WorkflowRunner(store, agent)
+
 const ok = <T>(data: T): Result<T> => ({ ok: true, data })
 const fail = (error: unknown): Result<never> => ({ ok: false, error: error instanceof Error ? error.message : String(error) })
 
@@ -85,11 +88,6 @@ function withKeys(state: AppState): AppState {
   return { ...state, settings: { ...state.settings, providers: state.settings.providers.map((provider) => ({ ...provider, hasKey: secrets.has(provider.id) })), github: { ...state.settings.github, hasToken: secrets.has(GITHUB_SECRET) } } }
 }
 
-function workflowCard(workflow: Workflow): MessageCard {
-  const steps = workflow.nodes.filter((node) => node.kind !== 'note').length
-  return { kind: 'workflow', workflowId: workflow.id, name: workflow.name, steps }
-}
-
 async function runAutomation(automation: Automation): Promise<Thread> {
   const state = store.get()
   const workflow = automation.workflowId ? state.workflows?.find((item) => item.id === automation.workflowId) : undefined
@@ -103,7 +101,7 @@ async function runAutomation(automation: Automation): Promise<Thread> {
     if (item) item.lastRun = new Date().toISOString()
   })
   if (workflow) {
-    await agent.send(thread.id, composeWorkflowPrompt(workflow), automation.modelId, workflowCard(workflow))
+    await workflowRunner.start(thread.id, workflow)
   } else {
     await agent.send(thread.id, automation.prompt, automation.modelId)
   }
@@ -413,7 +411,12 @@ function registerIpc() {
   })
 
   handle(channels.cancelThread, async (_event, payload) => {
-    await agent.cancel(threadInputSchema.parse(payload).threadId)
+    const { threadId } = threadInputSchema.parse(payload)
+    if (store.get().threads.find((item) => item.id === threadId)?.workflowRun?.status === 'running') {
+      await workflowRunner.pause(threadId)
+      return
+    }
+    await agent.cancel(threadId)
   })
 
   handle(channels.deleteThread, async (_event, payload) => {
@@ -658,6 +661,8 @@ function registerIpc() {
 
   handle(channels.deleteWorkflow, async (_event, payload) => {
     const { workflowId } = workflowInputSchema.parse(payload)
+    const inUse = store.get().threads.some((item) => item.workflowRun && item.workflowRun.workflowId === workflowId && item.workflowRun.status !== 'done')
+    if (inUse) throw new Error('该工作流正在被任务使用，请先结束对应任务的工作流')
     await store.update((state) => { state.workflows = (state.workflows ?? []).filter((item) => item.id !== workflowId) })
   })
 
@@ -666,10 +671,23 @@ function registerIpc() {
     const state = store.get()
     const workflow = state.workflows?.find((item) => item.id === workflowId)
     if (!workflow) throw new Error('工作流不存在')
-    const prompt = composeWorkflowPrompt(workflow)
     const thread = await agent.createThread(workflow.projectId, state.settings.defaultModelId)
-    await agent.send(thread.id, prompt, state.settings.defaultModelId, workflowCard(workflow))
+    await workflowRunner.start(thread.id, workflow)
     return store.get().threads.find((item) => item.id === thread.id) ?? thread
+  })
+
+  handle(channels.workflowControl, async (_event, payload) => {
+    const input = workflowControlInputSchema.parse(payload)
+    if (!store.get().threads.some((item) => item.id === input.threadId)) throw new Error('任务不存在')
+    if (input.action === 'pause') await workflowRunner.pause(input.threadId)
+    else if (input.action === 'resume') await workflowRunner.resume(input.threadId)
+    else if (input.action === 'retry-node') {
+      if (!input.nodeId) throw new Error('缺少步骤标识')
+      await workflowRunner.retryNode(input.threadId, input.nodeId)
+    } else {
+      if (!input.nodeId) throw new Error('缺少步骤标识')
+      await workflowRunner.skipNode(input.threadId, input.nodeId)
+    }
   })
 
   handle(channels.runAutomation, async (_event, payload) => {
@@ -736,6 +754,9 @@ app.on('web-contents-created', (_event, contents) => {
 app.whenReady().then(async () => {
   hardenSession()
   await Promise.all([store.load(), secrets.load()])
+  if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
+    await store.update((state) => { state.notice = [state.notice, '当前系统无可用密钥环（gnome-keyring/kwallet），API Key 仅弱加密存储，建议启用系统密钥环'].filter(Boolean).join('；') })
+  }
   store.subscribe(publish)
   registerIpc()
   createWindow()

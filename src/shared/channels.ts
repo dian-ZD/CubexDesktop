@@ -59,4 +59,5 @@ export const channels = {
   browserCapture: 'cubex:browser-capture',
   browserTab: 'cubex:browser-tab',
   browserState: 'cubex:browser-state',
+  workflowControl: 'cubex:workflow-control',
 } as const

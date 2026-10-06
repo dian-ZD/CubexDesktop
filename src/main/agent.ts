@@ -20,6 +20,30 @@ interface Run {
   controller: AbortController
   approval?: { callId: string; resolve: (approved: boolean) => void }
   question?: { callId: string; resolve: (answer: string | null) => void }
+  outcome: { ok: boolean; cancelled?: boolean; error?: string; lastText: string }
+  settled: Promise<void>
+  settle: () => void
+}
+
+export interface NodeMeta {
+  index: number
+  total: number
+  title: string
+  attempt: number
+  card?: MessageCard
+}
+
+export interface NodeRunOutcome {
+  ok: boolean
+  cancelled?: boolean
+  error?: string
+  output?: string
+}
+
+function createRun(): Run {
+  let settle = (): void => undefined
+  const settled = new Promise<void>((resolve) => { settle = resolve })
+  return { controller: new AbortController(), outcome: { ok: true, lastText: '' }, settled, settle }
 }
 
 interface Decision {
@@ -249,14 +273,21 @@ export class AgentRunner {
       target.status = 'running'
       target.updatedAt = new Date().toISOString()
     })
-    const run: Run = { controller: new AbortController() }
+    const run = createRun()
     this.runs.set(threadId, run)
     let failed = false
     void this.loop(threadId, run).catch(async (error: unknown) => {
       failed = true
+      run.outcome.ok = false
+      run.outcome.error = describeError(error)
       await this.system(threadId, 'error', describeError(error))
     }).finally(async () => {
-      await this.finish(threadId, run.controller.signal, failed)
+      if (run.controller.signal.aborted) run.outcome.cancelled = true
+      try {
+        await this.finish(threadId, run.controller.signal, failed)
+      } finally {
+        run.settle()
+      }
     })
   }
 
@@ -290,7 +321,7 @@ export class AgentRunner {
     })
   }
 
-  private async start(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[]): Promise<void> {
+  private async start(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[]): Promise<Run> {
     const thread = this.find(threadId)
     const model = this.store.get().settings.models.find((item) => item.id === (modelId || thread.modelId || this.store.get().settings.defaultModelId))
     if (!model) throw new Error('请先在设置中添加模型并选择')
@@ -302,21 +333,65 @@ export class AgentRunner {
       target.updatedAt = new Date().toISOString()
       target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content, ...(card ? { card } : {}), ...(images?.length ? { images } : {}) })
     })
-    const run: Run = { controller: new AbortController() }
+    const run = createRun()
     this.runs.set(threadId, run)
     let failed = false
     void this.loop(threadId, run).catch(async (error: unknown) => {
       failed = true
+      run.outcome.ok = false
+      run.outcome.error = describeError(error)
       await this.system(threadId, 'error', describeError(error))
     }).finally(async () => {
-      await this.finish(threadId, run.controller.signal, failed)
+      if (run.controller.signal.aborted) run.outcome.cancelled = true
+      try {
+        await this.finish(threadId, run.controller.signal, failed)
+      } finally {
+        run.settle()
+      }
     })
+    return run
+  }
+
+  // 工作流节点执行入口（SPEC-003）：与 send 共用同一条 run 路径，额外提供完成信号与产出文本
+  async runNode(threadId: string, instruction: string, meta: NodeMeta): Promise<NodeRunOutcome> {
+    const thread = this.find(threadId)
+    if (thread.status !== 'idle' || this.runs.has(threadId)) throw new Error('会话正在运行，无法启动工作流步骤')
+    const boundary = `▶ 步骤 ${meta.index}/${meta.total}：${meta.title}${meta.attempt > 0 ? `（重试 ${meta.attempt}）` : ''}`
+    await this.store.update((draft) => {
+      const target = draft.threads.find((item) => item.id === threadId)
+      if (!target) throw new Error('会话不存在')
+      target.messages = this.append(target.messages, { id: randomUUID(), role: 'system', time: new Date().toISOString(), level: 'info', content: boundary })
+      target.updatedAt = new Date().toISOString()
+    })
+    const run = await this.start(threadId, instruction, undefined, meta.card)
+    await run.settled
+    const text = run.outcome.lastText.trim()
+    return {
+      ok: run.outcome.ok,
+      ...(run.outcome.cancelled ? { cancelled: true } : {}),
+      ...(run.outcome.error ? { error: run.outcome.error } : {}),
+      ...(text ? { output: text } : {}),
+    }
+  }
+
+  // 中止当前 run 但保留队列与工作流状态（供工作流暂停使用，区别于 cancel）
+  abortRun(threadId: string): boolean {
+    const run = this.runs.get(threadId)
+    if (!run) return false
+    run.controller.abort()
+    run.approval?.resolve(false)
+    run.question?.resolve(null)
+    return true
+  }
+
+  drainQueue(threadId: string): Promise<void> {
+    return this.drain(threadId)
   }
 
   private async drain(threadId: string): Promise<void> {
     const thread = this.store.get().threads.find((item) => item.id === threadId)
     const next = thread?.queue?.[0]
-    if (!thread || !next || thread.status !== 'idle' || this.runs.has(threadId)) return
+    if (!thread || !next || thread.status !== 'idle' || this.runs.has(threadId) || thread.workflowRun?.status === 'running') return
     await this.store.update((draft) => {
       const target = draft.threads.find((item) => item.id === threadId)
       if (target) target.queue = (target.queue ?? []).slice(1)
@@ -469,6 +544,7 @@ export class AgentRunner {
         }
         target.updatedAt = new Date().toISOString()
       })
+      if (turn.content.trim()) run.outcome.lastText = turn.content
       if (turn.usage) void this.onUsage({ input: turn.usage.input, output: turn.usage.output, modelId: model.id }).catch(() => undefined)
       if (turn.toolCalls.length === 0) {
         if (turn.truncated && !signal.aborted && continuations < MAX_CONTINUATIONS) {

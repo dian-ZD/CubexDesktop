@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import type { GithubPushResult, Settings } from '../shared/schema'
+import { killTree, spawnDetached } from './platform/proc'
 
 const API = 'https://api.github.com'
 
@@ -9,12 +10,12 @@ type GitResult = { code: number | null; output: string }
 
 function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal, timeoutMs = 120_000): Promise<GitResult> {
   return new Promise((resolvePromise) => {
-    const child = spawn('git', args, { cwd, env, windowsHide: true })
+    const child = spawn('git', args, { cwd, env, windowsHide: true, detached: spawnDetached })
     let output = ''
     const push = (chunk: Buffer) => { if (output.length < 20_000) output += chunk.toString('utf8') }
     child.stdout.on('data', push)
     child.stderr.on('data', push)
-    const kill = () => child.kill()
+    const kill = () => killTree(child)
     const timer = setTimeout(kill, timeoutMs)
     signal?.addEventListener('abort', kill, { once: true })
     const finish = (code: number | null, extra = '') => {
@@ -28,7 +29,7 @@ function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv, signal?: Ab
 }
 
 export function repoNameFor(settingsRepo: string, projectPath: string): string {
-  const raw = settingsRepo.trim() || basename(projectPath)
+  const raw = settingsRepo.trim() || projectPath.split(/[\\/]/).filter(Boolean).pop() || ''
   const name = raw.includes('/') ? raw.split('/')[1] : raw
   const cleaned = name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100)
   if (!cleaned) throw new Error('无法从项目目录推断仓库名，请在设置中填写仓库')

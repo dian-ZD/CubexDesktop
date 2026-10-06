@@ -953,11 +953,27 @@ const skillPhrases: Record<string, string> = {
   '删除技能 {name}': 'Delete skill {name}',
 }
 
+const workflowPhrases: Record<string, string> = {
+  '工作流进度': 'Workflow progress',
+  '运行中': 'Running',
+  '已暂停': 'Paused',
+  '已完成': 'Completed',
+  '步骤 {i}/{n}': 'Step {i}/{n}',
+  '完成 {done}/{n}': 'Done {done}/{n}',
+  '暂停': 'Pause',
+  '继续': 'Resume',
+  '重试该步骤': 'Retry this step',
+  '跳过该步骤': 'Skip this step',
+  '失败原因：{error}': 'Reason: {error}',
+  '工作流操作失败，请重试。': 'Workflow action failed, please try again.',
+}
+
 registerPhrases(phrases)
 registerPhrases(settingsPhrases)
 registerPhrases(appPhrases)
 registerPhrases(morePhrases)
 registerPhrases(settingsPhrases2)
 registerPhrases(skillPhrases)
+registerPhrases(workflowPhrases)
 
 export {}

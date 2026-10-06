@@ -6,6 +6,8 @@ import { buildSearchUrl, pluginManifestSchema, type PluginInfo, type PluginManif
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
 import { browserEngine, type BrowserAction } from './browser'
+import { killTree, spawnDetached } from './platform/proc'
+import { desktopCaptureSupported } from './platform/capture'
 
 const MAX_OUTPUT = 40_000
 const clip = (text: string) => (text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n…（已截断，共 ${text.length} 字符）` : text)
@@ -104,7 +106,7 @@ export class ExtensionHost {
     const builtin: PluginInfo[] = [
       { name: 'browser', description: '内置浏览器：打开网页并读取标题、正文与链接，供智能体查资料、验证页面。', builtin: true, enabled: settings.plugins.browser, tools: [{ name: 'browser_open', description: '打开 http/https 页面并提取文本' }] },
       { name: 'search', description: '联网搜索：输入关键词，返回相关网页的标题、地址与摘要，搜索到的网页会显示在任务摘要中。', builtin: true, enabled: settings.plugins.search, tools: [{ name: 'web_search', description: '按关键词联网搜索并返回结果列表' }] },
-      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击坐标。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer, tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click' }] },
+      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击坐标。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer && desktopCaptureSupported(), tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click' }] },
       { name: 'image', description: '图片生成：调用用户配置的生图模型（OpenAI 兼容 /images/generations 接口），按提示词生成图片并保存到项目 .cubex/images，同时在对话中展示。', builtin: true, enabled: settings.plugins.image, tools: [{ name: 'generate_image', description: '按提示词生成一张图片' }] },
     ]
     const user = this.plugins.map<PluginInfo>((item) => item.manifest
@@ -133,7 +135,7 @@ export class ExtensionHost {
     // Browser 模式下不提供后台抓取式 web_search：搜索应直接在用户可见的浏览器视图里打开结果页，
     // 由 AI 用 browser_navigate 完成（既能实时展现搜索过程，也避免离屏抓取导致的超时）。
     if (settings.plugins.search && mode !== 'browser') specs.push({ name: 'web_search', description: '联网搜索：输入关键词，返回若干条相关网页的标题、地址与摘要。需要获取最新资料、查证事实或寻找网页时使用；拿到结果后可再用 browser_open 打开某个地址查看详情。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, limit: { type: 'integer', description: '返回结果条数，默认 6，最多 10' } }, required: ['query'] } })
-    if (settings.plugins.computer) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，同时保存到项目 .cubex/screenshots，你可以据此判断屏幕内容）、open（打开应用/文件/网址，target 为路径或 URL）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 屏幕坐标单击）。每次调用都需要用户批准。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' } }, required: ['action'] } })
+    if (settings.plugins.computer && desktopCaptureSupported()) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，同时保存到项目 .cubex/screenshots，你可以据此判断屏幕内容）、open（打开应用/文件/网址，target 为路径或 URL）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 屏幕坐标单击）。每次调用都需要用户批准。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' } }, required: ['action'] } })
     if (settings.plugins.image) {
       const configured = settings.image.providerId && settings.image.modelId
       const sizeHint = settings.image.size === 'auto' ? '由服务自动决定' : settings.image.size
@@ -188,6 +190,7 @@ export class ExtensionHost {
       }
       case 'computer_use': {
         if (!settings.plugins.computer) throw new Error('电脑操控插件已关闭，请在设置 → 插件中开启')
+        if (!desktopCaptureSupported()) throw new Error('当前系统桌面会话不支持电脑操控（Linux 需要 X11 会话；Wayland 下截屏不可用）')
         const actionLabels: Record<string, string> = { screenshot: '截屏', open: '打开应用/文件', type: '输入文字', key: '发送按键', click: '点击屏幕' }
         const action = str(call.args.action)
         this.deps.onControl?.({ active: true, kind: 'computer', label: `正在操控电脑：${actionLabels[action] ?? action}`, threadId: context.threadId ?? '' })
@@ -439,12 +442,12 @@ export class ExtensionHost {
     if (!tool) throw new Error(`插件「${pluginName}」没有工具「${toolName}」`)
     const payload = JSON.stringify(args && typeof args === 'object' ? args : {})
     return new Promise((resolvePromise) => {
-      const child = spawn(tool.command, { cwd: loaded.dir, shell: true, windowsHide: true, env: { ...process.env, CUBEX_ARGS: payload, CUBEX_TOOL: tool.name, CUBEX_PLUGIN: plugin.name, CUBEX_PROJECT_ROOT: context.root } })
+      const child = spawn(tool.command, { cwd: loaded.dir, shell: true, windowsHide: true, detached: spawnDetached, env: { ...process.env, CUBEX_ARGS: payload, CUBEX_TOOL: tool.name, CUBEX_PLUGIN: plugin.name, CUBEX_PROJECT_ROOT: context.root } })
       let output = ''
       const push = (chunk: Buffer) => { if (output.length < MAX_OUTPUT) output += chunk.toString('utf8') }
       child.stdout.on('data', push)
       child.stderr.on('data', push)
-      const kill = () => child.kill()
+      const kill = () => killTree(child)
       const timer = setTimeout(() => { kill(); output += '\n[插件超时 120 秒，已终止]' }, 120_000)
       context.signal.addEventListener('abort', kill, { once: true })
       const finish = (text: string) => {

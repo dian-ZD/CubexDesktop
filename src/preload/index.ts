@@ -69,6 +69,7 @@ const api: CubexAPI = {
     ipcRenderer.on(channels.browserState, wrapped)
     return () => ipcRenderer.removeListener(channels.browserState, wrapped)
   },
+  workflowControl: (input) => ipcRenderer.invoke(channels.workflowControl, { threadId: input.threadId, action: input.action, ...(input.nodeId ? { nodeId: input.nodeId } : {}) }),
   onState: (listener) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state)
     ipcRenderer.on(channels.state, wrapped)

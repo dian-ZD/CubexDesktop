@@ -3,6 +3,9 @@ import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { ToolCall, ToolName, ToolResult } from '../shared/schema'
 import type { ToolSpec } from './llm'
+import { shellCommand } from './platform/shell'
+import { killTree, spawnDetached } from './platform/proc'
+import { buildSandboxEnv, findEscape } from './sandbox'
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.svn', '.hg', 'dist', 'out', 'build', 'coverage', '.venv', 'venv', '__pycache__', 'target', '.next', '.turbo', '.cache'])
 const SENSITIVE = /^(\.env(\..*)?|.*\.pem|.*\.key|id_rsa.*|.*\.p12|.*\.pfx|credentials(\..*)?)$/i
@@ -292,43 +295,6 @@ export function runShellCommand(root: string, command: string, options: { signal
   return commandTool(root, command, undefined, signal, maxMs, options.shell ?? 'auto', options.sandbox)
 }
 
-const SANDBOX_ESCAPE = [
-  /(^|\s)sudo(\s|$)/i,
-  /(^|\s)su(\s|$)/i,
-  /(^|\s)runas(\s|$)/i,
-  /(^|\s)chmod\s+[0-7]*7{2,}/i,
-  /\/etc\/(passwd|shadow|sudoers)/i,
-  /\bnet\s+user\b/i,
-  /\bnew-localuser\b/i,
-  /\breg\s+(add|delete)\b/i,
-  /\bsc\s+(create|config|delete)\b/i,
-  /\bsetx\b/i,
-]
-
-const buildSandboxEnv = (root: string, allowNetwork: boolean): NodeJS.ProcessEnv => {
-  const src = process.env
-  const keep = new Set(['PATH', 'Path', 'PATHEXT', 'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'TMPDIR', 'LANG', 'LC_ALL', 'TERM', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'OS'])
-  const env: NodeJS.ProcessEnv = {}
-  for (const key of Object.keys(src)) {
-    if (keep.has(key)) env[key] = src[key]
-  }
-  env.HOME = root
-  env.USERPROFILE = root
-  env.CUBEX_SANDBOX = '1'
-  if (!allowNetwork) {
-    env.no_proxy = '*'
-    env.NO_PROXY = '*'
-    env.http_proxy = 'http://127.0.0.1:9'
-    env.https_proxy = 'http://127.0.0.1:9'
-    env.HTTP_PROXY = 'http://127.0.0.1:9'
-    env.HTTPS_PROXY = 'http://127.0.0.1:9'
-    env.npm_config_offline = 'true'
-    env.PIP_NO_INDEX = '1'
-    env.GIT_TERMINAL_PROMPT = '0'
-  }
-  return env
-}
-
 export function makeDiff(path: string, before: string, after: string): string {
   const a = before.split('\n')
   const b = after.split('\n')
@@ -353,29 +319,14 @@ export function makeDiff(path: string, before: string, after: string): string {
   return clip(lines.join('\n'), 50_000)
 }
 
-function shellCommand(shell: NonNullable<ToolContext['shell']>, command: string): [string, string[]] {
-  const resolved = shell === 'auto' ? (process.platform === 'win32' ? 'powershell' : 'sh') : shell
-  switch (resolved) {
-    case 'powershell': return ['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command]]
-    case 'pwsh': return ['pwsh', ['-NoProfile', '-NonInteractive', '-Command', command]]
-    case 'cmd': return ['cmd.exe', ['/d', '/s', '/c', `"${command}"`]]
-    case 'bash': return ['bash', ['-c', command]]
-    default: return ['/bin/sh', ['-c', command]]
-  }
-}
-
 function commandTool(root: string, command: string, timeoutMs: number | undefined, signal: AbortSignal, maxMs: number, shell: NonNullable<ToolContext['shell']>, sandbox?: SandboxOptions): Promise<string> {
   if (!command.trim()) throw new Error('命令不能为空')
-  if (sandbox?.enabled) {
-    const escape = SANDBOX_ESCAPE.find((pattern) => pattern.test(command))
-    if (escape) throw new Error(`沙箱已拦截可能越权的命令。如确需执行，请在设置中关闭沙箱或将其加入允许列表。`)
-  }
+  if (sandbox?.enabled && findEscape(command)) throw new Error('沙箱已拦截可能越权的命令。如确需执行，请在设置中关闭沙箱或将其加入允许列表。')
   const limit = Math.min(Math.max(timeoutMs ?? maxMs, 1000), maxMs)
   return new Promise((resolvePromise) => {
-    const isWindows = process.platform === 'win32'
     const [file, args] = shellCommand(shell, command)
     const env = sandbox?.enabled ? buildSandboxEnv(root, sandbox.allowNetwork) : process.env
-    const child = spawn(file, args, { cwd: root, windowsHide: true, env, windowsVerbatimArguments: file === 'cmd.exe' })
+    const child = spawn(file, args, { cwd: root, windowsHide: true, env, detached: spawnDetached, windowsVerbatimArguments: file === 'cmd.exe' })
     let output = ''
     let truncated = false
     const push = (chunk: Buffer) => {
@@ -388,8 +339,7 @@ function commandTool(root: string, command: string, timeoutMs: number | undefine
     let fallback: NodeJS.Timeout | undefined
     const kill = () => {
       if (finished || child.pid === undefined) return
-      if (isWindows) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => undefined)
-      else child.kill('SIGKILL')
+      killTree(child)
       fallback ??= setTimeout(() => done(null), 3000)
     }
     const timer = setTimeout(() => { kill(); output += `\n[超时 ${limit}ms，已终止]` }, limit)
