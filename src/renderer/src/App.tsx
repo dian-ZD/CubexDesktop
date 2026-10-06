@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Trash2, Workflow, X, Zap } from 'lucide-react'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
@@ -957,6 +957,9 @@ export function App() {
           </div>
           <button className="nav-action new-task" onClick={newThread} aria-current={view === 'chat' && !thread ? 'page' : undefined}>
             <SquarePen size={17} /><span>{t('nav.newTask')}</span><kbd>Ctrl N</kbd>
+          </button>
+          <button className="nav-action" onClick={() => { setSettingsSection('automation'); setView('settings') }}>
+            <Timer size={17} /><span>{tr('自动化')}</span>
           </button>
           <nav className="sidebar-scroll" aria-label={tr('项目与任务')}>
             <div className="section-head"><span>{t('nav.projects')}</span><button className="icon-button" aria-label={t('nav.addProject')} title={isDesktop ? `${t('nav.addProject')} · Ctrl O` : tr('请在桌面应用中添加项目')} disabled={busy || !isDesktop} onClick={() => void selectProject()}><Plus size={15} /></button></div>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, ArchiveRestore, ArrowLeft, Bell, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Monitor, Palette, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
 import {
   accents, approvalLabels, approvalModes, densities, fontFamilies, imageSizes, languages, providerKinds, providerLabels, responseStyles, searchEngines, sendKeys, settingsSchema, shells, themes, uiLanguages,
   type Automation, type ConnectionTest, type CrawlMode, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type SearchEngine, type Settings, type SkillMeta, type Workflow as WorkflowType,
@@ -115,46 +115,39 @@ const densityLabels: Record<(typeof densities)[number], string> = { comfortable:
 const shellLabels: Record<(typeof shells)[number], string> = { auto: '自动（Windows 用 PowerShell）', powershell: 'Windows PowerShell', pwsh: 'PowerShell 7 (pwsh)', cmd: '命令提示符 (cmd)', bash: 'Bash', sh: 'sh' }
 const sendKeyLabels: Record<(typeof sendKeys)[number], string> = { enter: 'Enter 发送，Shift+Enter 换行', 'ctrl-enter': 'Ctrl+Enter 发送，Enter 换行' }
 
-export type SectionId = 'language' | 'archived' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'image' | 'github' | 'automation' | 'work' | 'browser' | 'sound' | 'worktree' | 'rules' | 'appearance' | 'shortcuts' | 'about'
+export type SectionId = 'general' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'browser' | 'worktree' | 'rules' | 'shortcuts' | 'archived'
 
-const sections: { id: SectionId; title: string; hint: string; icon: typeof Settings2 }[] = [
-  { id: 'language', title: '语言', hint: '界面语言、回复语言与回复风格', icon: Languages },
-  { id: 'archived', title: '已归档项目', hint: '查看并恢复已归档的项目', icon: Archive },
+const sections: { id: SectionId; title: string; hint: string; icon: typeof Settings2; hidden?: boolean }[] = [
+  { id: 'general', title: '通用', hint: '界面语言、回复语言与风格、提示音、外观与对话显示', icon: Languages },
+  { id: 'providers', title: '模型', hint: '提供商、模型、连接测试、单模型高级参数与图片生成', icon: Cpu },
   { id: 'permissions', title: '权限审批', hint: '审批模式、只读与命令规则', icon: ShieldCheck },
   { id: 'mcp', title: 'MCP', hint: '外部工具服务器（Model Context Protocol）', icon: PlugZap },
   { id: 'skills', title: '技能', hint: '上传技能文件，用 / 名称在对话中快速调用', icon: Sparkles },
-  { id: 'providers', title: '模型', hint: '提供商、模型、连接测试与单模型高级参数', icon: Cpu },
   { id: 'plugins', title: '插件', hint: '浏览器、电脑控制与自定义插件', icon: Puzzle },
-  { id: 'image', title: '图片生成', hint: '生图模型提供商、模型 ID 与默认尺寸', icon: Palette },
   { id: 'github', title: 'GitHub', hint: '访问令牌、目标仓库与自动推送', icon: CloudUpload },
-  { id: 'automation', title: '自动化', hint: '按间隔或每天/每周定时自动执行的任务', icon: Timer },
+  { id: 'automation', title: '自动化', hint: '按间隔或每天/每周定时自动执行的任务', icon: Timer, hidden: true },
   { id: 'work', title: 'Work 模式', hint: '工作流运行方式与电脑/浏览器操控', icon: MonitorCog },
   { id: 'browser', title: 'Browser 模式', hint: '起始页、逐步审批、会话时长与下载/新窗口策略', icon: Globe },
-  { id: 'sound', title: '提示音', hint: '完成、等待审批与等待输入时的提示音', icon: Bell },
   { id: 'worktree', title: '工作树', hint: '命令执行环境与改动验证', icon: GitBranch },
   { id: 'rules', title: '规则与记忆', hint: '项目上下文文件、计划方式与跨应用交接', icon: BookOpen },
-  { id: 'appearance', title: '外观', hint: '主题、配色、背景、字号、密度、动效与对话显示', icon: Monitor },
   { id: 'shortcuts', title: '键盘快捷键', hint: '发送方式与常用快捷键', icon: Keyboard },
-  { id: 'about', title: '关于', hint: '版本与数据位置', icon: Info },
+  { id: 'archived', title: '已归档项目', hint: '查看并恢复已归档的项目', icon: Archive },
 ]
 
 const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
-  providers: ['providers', 'models', 'defaultModelId', 'modelParams'],
+  general: ['general.uiLanguage', 'general.language', 'general.responseStyle', 'general.confirmDelete', 'appearance', 'chat.showUsage', 'chat.expandTools', 'chat.autoScroll', 'chat.notifyOnDone', 'sound'],
+  providers: ['providers', 'models', 'defaultModelId', 'modelParams', 'image'],
   permissions: ['permissions', 'approvalMode'],
-  language: ['general.uiLanguage', 'general.language', 'general.responseStyle'],
-  appearance: ['appearance.theme', 'appearance.accent', 'appearance.background', 'appearance.fontFamily', 'appearance.fontSize', 'appearance.codeFontSize', 'appearance.density', 'appearance.reduceMotion', 'chat.showUsage', 'chat.expandTools', 'chat.autoScroll', 'chat.notifyOnDone', 'general.confirmDelete'],
   worktree: ['agent.commandTimeoutSec', 'agent.shell', 'agent.verifyChanges'],
   rules: ['agent.maxSteps', 'agent.planFirst', 'agent.autoTodo'],
   shortcuts: ['chat.sendKey'],
   plugins: ['plugins'],
-  image: ['image'],
   mcp: ['mcp'],
   skills: ['skills'],
   github: ['github'],
   automation: ['automations'],
   work: ['work'],
   browser: ['browser'],
-  sound: ['sound'],
 }
 
 const intervalPresets: { value: number; label: string }[] = [
@@ -829,12 +822,23 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
   const activeProjects = projects.filter((item) => !item.archived)
 
   const rows: Row[] = [
-    { key: 'uiLanguage', section: 'language', label: tr('界面语言'), hint: tr('应用界面显示使用的语言'), keywords: 'language ui interface 界面 中文 英文', render: () => <Choice label={tr('界面语言')} value={general.uiLanguage} options={uiLanguages} labels={uiLanguageLabels} onChange={(uiLanguage) => patch('general', { uiLanguage })} /> },
-    { key: 'language', section: 'language', label: tr('回复语言'), hint: tr('助手回复与说明使用的语言'), keywords: 'language 中文 英文', render: () => <Choice label={tr('回复语言')} value={general.language} options={languages} labels={languageLabels} onChange={(language) => patch('general', { language })} /> },
-    { key: 'responseStyle', section: 'language', label: tr('回复风格'), hint: tr('控制解释的详细程度'), keywords: 'style 简洁 详细', render: () => <Choice label={tr('回复风格')} value={general.responseStyle} options={responseStyles} labels={styleLabels} onChange={(responseStyle) => patch('general', { responseStyle })} /> },
+    { key: 'uiLanguage', section: 'general', label: tr('界面语言'), hint: tr('应用界面显示使用的语言'), keywords: 'language ui interface 界面 中文 英文', render: () => <Choice label={tr('界面语言')} value={general.uiLanguage} options={uiLanguages} labels={uiLanguageLabels} onChange={(uiLanguage) => patch('general', { uiLanguage })} /> },
+    { key: 'language', section: 'general', label: tr('回复语言'), hint: tr('助手回复与说明使用的语言'), keywords: 'language 中文 英文', render: () => <Choice label={tr('回复语言')} value={general.language} options={languages} labels={languageLabels} onChange={(language) => patch('general', { language })} /> },
+    { key: 'responseStyle', section: 'general', label: tr('回复风格'), hint: tr('控制解释的详细程度'), keywords: 'style 简洁 详细', render: () => <Choice label={tr('回复风格')} value={general.responseStyle} options={responseStyles} labels={styleLabels} onChange={(responseStyle) => patch('general', { responseStyle })} /> },
 
-    { key: 'theme', section: 'appearance', label: tr('主题'), keywords: 'theme dark light 深色 浅色', render: () => <Choice label={tr('主题')} value={appearance.theme} options={themes} labels={themeLabels} onChange={(theme) => patch('appearance', { theme })} /> },
-    { key: 'accent', section: 'appearance', label: tr('配色方案'), hint: tr('强调色与语义色'), keywords: 'accent color 配色 强调色 主题色', wide: true, render: () => (
+    { key: 'soundEnabled', section: 'general', label: tr('启用提示音'), hint: tr('任务状态变化时播放轻提示音（使用系统音频，无需额外文件）'), keywords: 'sound audio 提示音 声音', render: () => <Toggle label={tr('启用提示音')} checked={sound.enabled} onChange={(enabled) => patch('sound', { enabled })} /> },
+    { key: 'soundOnDone', section: 'general', label: tr('完成时提示音'), hint: tr('回复完成时播放'), keywords: 'sound done 完成 提示音', render: () => <Toggle label={tr('完成时提示音')} checked={sound.onDone} onChange={(onDone) => patch('sound', { onDone })} /> },
+    { key: 'soundOnApproval', section: 'general', label: tr('等待审批提示音'), hint: tr('需要你确认命令或改动时播放'), keywords: 'sound approval 审批 提示音', render: () => <Toggle label={tr('等待审批提示音')} checked={sound.onApproval} onChange={(onApproval) => patch('sound', { onApproval })} /> },
+    { key: 'soundOnQuestion', section: 'general', label: tr('等待输入提示音'), hint: tr('模型向你提问、等待回复时播放'), keywords: 'sound question 输入 提问 提示音', render: () => <Toggle label={tr('等待输入提示音')} checked={sound.onQuestion} onChange={(onQuestion) => patch('sound', { onQuestion })} /> },
+    { key: 'soundVolume', section: 'general', label: tr('提示音音量'), hint: '0–100%', keywords: 'sound volume 音量', render: () => (
+      <div className="volume-row">
+        <input type="range" aria-label={tr('提示音音量')} min={0} max={100} step={5} value={Math.round(sound.volume * 100)} onChange={(event) => patch('sound', { volume: Number(event.target.value) / 100 })} />
+        <span className="unit">{Math.round(sound.volume * 100)}%</span>
+      </div>
+    ) },
+
+    { key: 'theme', section: 'general', label: tr('主题'), keywords: 'theme dark light 深色 浅色', render: () => <Choice label={tr('主题')} value={appearance.theme} options={themes} labels={themeLabels} onChange={(theme) => patch('appearance', { theme })} /> },
+    { key: 'accent', section: 'general', label: tr('配色方案'), hint: tr('强调色与语义色'), keywords: 'accent color 配色 强调色 主题色', wide: true, render: () => (
       <div className="accent-grid" role="radiogroup" aria-label={tr('配色方案')}>
         {accents.map((value) => (
           <button key={value} type="button" role="radio" aria-checked={appearance.accent === value} className={`accent-swatch accent-${value}${appearance.accent === value ? ' selected' : ''}`} title={tr(accentLabels[value])} onClick={() => patch('appearance', { accent: value })}>
@@ -843,7 +847,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
         ))}
       </div>
     ) },
-    { key: 'background', section: 'appearance', label: tr('自定义背景'), hint: tr('选择本地图片作为背景，并调节透明度让文字保持清晰'), keywords: 'background 背景 图片 wallpaper 壁纸 透明度', wide: true, render: () => (
+    { key: 'background', section: 'general', label: tr('自定义背景'), hint: tr('选择本地图片作为背景，并调节透明度让文字保持清晰'), keywords: 'background 背景 图片 wallpaper 壁纸 透明度', wide: true, render: () => (
       <div className="background-setting">
         <div className="background-actions">
           <button type="button" className="ghost-button" onClick={pickBackground}>{appearance.background.image ? tr('更换图片') : tr('选择图片')}</button>
@@ -889,6 +893,31 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       <ParamsForm label={tr('全局')} value={modelParams} errorPrefix="modelParams" errors={errors} onChange={(value) => patch('modelParams', value)} />
     ) },
 
+    { key: 'imageProvider', section: 'providers', label: tr('图片生成 · 提供商'), hint: tr('用上方已配置的提供商调用其 OpenAI 兼容 /images/generations 接口；密钥复用提供商设置'), keywords: 'image provider 生图 图片 提供商 dall-e flux', wide: true, paths: ['image.providerId'], render: () => (
+      <div className="image-provider">
+        <Select className="field-select" label={tr('生图提供商')} value={image.providerId}
+          options={draft.providers.length === 0
+            ? [{ value: '', label: tr('请先在上方添加提供商') }]
+            : [{ value: '', label: tr('未选择') }, ...draft.providers.map((item) => ({ value: item.id, label: item.name }))]}
+          onChange={(providerId) => patch('image', { providerId })} />
+        {draft.providers.length === 0 && <p className="field-hint">{tr('还没有提供商。先在「提供商与模型」里添加提供商并保存 API Key。')}</p>}
+      </div>
+    ) },
+    { key: 'imageModel', section: 'providers', label: tr('生图模型 ID'), hint: tr('生图模型名称，如 dall-e-3、flux-schnell 或 provider 的其它图像模型'), keywords: 'image model 生图 模型 id', paths: ['image.modelId'], render: () => (
+      <input aria-label={tr('生图模型 ID')} value={image.modelId} placeholder="dall-e-3" spellCheck={false} onChange={(event) => patch('image', { modelId: event.target.value })} />
+    ) },
+    { key: 'imageSize', section: 'providers', label: tr('生图默认尺寸'), hint: tr('generate_image 未显式指定 size 时使用；auto 表示交给模型决定'), keywords: 'image size 生图 尺寸 分辨率', paths: ['image.size'], render: () => (
+      <Select className="field-select" label={tr('默认尺寸')} value={image.size}
+        options={imageSizes.map((size) => ({ value: size, label: size === 'auto' ? tr('自动（模型决定）') : `${size} px` }))}
+        onChange={(size) => patch('image', { size })} />
+    ) },
+    { key: 'imageHint', section: 'providers', label: tr('图片生成说明'), keywords: 'image generate 生图 说明 工具', wide: true, render: () => (
+      <div className="about-block">
+        <p>{tr('配置后模型会获得 generate_image 工具：传入提示词即可生成图片，结果自动保存到项目 .cubex/images 并直接显示在对话里。')}</p>
+        <p>{tr('接口为 OpenAI 兼容的 POST /images/generations，支持返回 b64_json 或 url 两种格式；可在「插件」分区关闭该功能。')}</p>
+      </div>
+    ) },
+
     { key: 'plugins', section: 'plugins', label: tr('已安装插件'), hint: tr('内置浏览器与电脑控制插件，以及插件目录中你自己编写的插件；启用后其工具会提供给模型'), keywords: 'plugin browser computer 浏览器 电脑 控制 插件 扩展', wide: true, render: () => renderPlugins() },
     { key: 'pluginDev', section: 'plugins', label: tr('编写插件'), hint: tr('在插件目录中新建文件夹，放入 plugin.json 与入口脚本即可'), keywords: 'plugin develop 开发 编写 接口 manifest', wide: true, render: () => (
       <div className="about-block">
@@ -896,31 +925,6 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
         <p>{tr('调用时在插件文件夹中执行 command：参数以 JSON 通过标准输入和环境变量 ')}<code>CUBEX_ARGS</code>{tr(' 传入，')}<code>CUBEX_TOOL</code>{tr(' 为工具名，')}<code>CUBEX_PROJECT_ROOT</code>{tr(' 为当前项目根目录；标准输出即返回给模型的结果，单次最长 120 秒。')}</p>
         <p>{tr('插件目录为空时会生成示例插件 hello 供参考。插件调用需要审批（完全自动模式除外），修改插件后点击“刷新”重新加载。')}</p>
         <p>{tr('完整的接口列表、Work 模式模块扩展与 MCP 说明见项目根目录的 plugins.md 开发文档。')}</p>
-      </div>
-    ) },
-
-    { key: 'imageProvider', section: 'image', label: tr('提供商'), hint: tr('使用「模型」分区中已配置的提供商调用其 OpenAI 兼容 /images/generations 接口；密钥复用提供商设置'), keywords: 'image provider 生图 图片 提供商 dall-e flux', wide: true, paths: ['image.providerId'], render: () => (
-      <div className="image-provider">
-        <Select className="field-select" label={tr('生图提供商')} value={image.providerId}
-          options={draft.providers.length === 0
-            ? [{ value: '', label: tr('请先在「模型」中添加提供商') }]
-            : [{ value: '', label: tr('未选择') }, ...draft.providers.map((item) => ({ value: item.id, label: item.name }))]}
-          onChange={(providerId) => patch('image', { providerId })} />
-        {draft.providers.length === 0 && <p className="field-hint">{tr('还没有提供商。先到「模型」分区添加提供商并保存 API Key。')}</p>}
-      </div>
-    ) },
-    { key: 'imageModel', section: 'image', label: tr('模型 ID'), hint: tr('生图模型名称，如 dall-e-3、flux-schnell 或 provider 的其它图像模型'), keywords: 'image model 生图 模型 id', paths: ['image.modelId'], render: () => (
-      <input aria-label={tr('生图模型 ID')} value={image.modelId} placeholder="dall-e-3" spellCheck={false} onChange={(event) => patch('image', { modelId: event.target.value })} />
-    ) },
-    { key: 'imageSize', section: 'image', label: tr('默认尺寸'), hint: tr('generate_image 未显式指定 size 时使用；auto 表示交给模型决定'), keywords: 'image size 生图 尺寸 分辨率', paths: ['image.size'], render: () => (
-      <Select className="field-select" label={tr('默认尺寸')} value={image.size}
-        options={imageSizes.map((size) => ({ value: size, label: size === 'auto' ? tr('自动（模型决定）') : `${size} px` }))}
-        onChange={(size) => patch('image', { size })} />
-    ) },
-    { key: 'imageHint', section: 'image', label: tr('使用说明'), keywords: 'image generate 生图 说明 工具', wide: true, render: () => (
-      <div className="about-block">
-        <p>{tr('配置后模型会获得 generate_image 工具：传入提示词即可生成图片，结果自动保存到项目 .cubex/images 并直接显示在对话里。')}</p>
-        <p>{tr('接口为 OpenAI 兼容的 POST /images/generations，支持返回 b64_json 或 url 两种格式；可在「插件」分区关闭该功能。')}</p>
       </div>
     ) },
 
@@ -986,17 +990,6 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       <input aria-label={tr('自定义 User-Agent')} value={browser.userAgent} placeholder={tr('留空使用默认')} spellCheck={false} onChange={(event) => patch('browser', { userAgent: event.target.value })} />
     ) },
 
-    { key: 'soundEnabled', section: 'sound', label: tr('启用提示音'), hint: tr('任务状态变化时播放轻提示音（使用系统音频，无需额外文件）'), keywords: 'sound audio 提示音 声音', render: () => <Toggle label={tr('启用提示音')} checked={sound.enabled} onChange={(enabled) => patch('sound', { enabled })} /> },
-    { key: 'soundOnDone', section: 'sound', label: tr('完成时提示音'), hint: tr('回复完成时播放'), keywords: 'sound done 完成 提示音', render: () => <Toggle label={tr('完成时提示音')} checked={sound.onDone} onChange={(onDone) => patch('sound', { onDone })} /> },
-    { key: 'soundOnApproval', section: 'sound', label: tr('等待审批提示音'), hint: tr('需要你确认命令或改动时播放'), keywords: 'sound approval 审批 提示音', render: () => <Toggle label={tr('等待审批提示音')} checked={sound.onApproval} onChange={(onApproval) => patch('sound', { onApproval })} /> },
-    { key: 'soundOnQuestion', section: 'sound', label: tr('等待输入提示音'), hint: tr('模型向你提问、等待回复时播放'), keywords: 'sound question 输入 提问 提示音', render: () => <Toggle label={tr('等待输入提示音')} checked={sound.onQuestion} onChange={(onQuestion) => patch('sound', { onQuestion })} /> },
-    { key: 'soundVolume', section: 'sound', label: tr('提示音音量'), hint: '0–100%', keywords: 'sound volume 音量', render: () => (
-      <div className="volume-row">
-        <input type="range" aria-label={tr('提示音音量')} min={0} max={100} step={5} value={Math.round(sound.volume * 100)} onChange={(event) => patch('sound', { volume: Number(event.target.value) / 100 })} />
-        <span className="unit">{Math.round(sound.volume * 100)}%</span>
-      </div>
-    ) },
-
     { key: 'shell', section: 'worktree', label: tr('命令 Shell'), hint: tr('执行命令使用的终端'), keywords: 'shell powershell bash cmd 终端', render: () => <Choice label={tr('命令 Shell')} value={agent.shell} options={shells} labels={shellLabels} onChange={(shell) => patch('agent', { shell })} /> },
     { key: 'commandTimeoutSec', section: 'worktree', label: tr('命令超时'), hint: tr('单条命令最长执行时间，5–1800 秒'), keywords: 'command timeout 命令', paths: ['agent.commandTimeoutSec'], render: () => <NumberField label={tr('命令超时')} value={agent.commandTimeoutSec} min={5} max={1800} unit={tr('秒')} onChange={(value) => patch('agent', { commandTimeoutSec: value ?? Number.NaN })} /> },
     { key: 'verifyChanges', section: 'worktree', label: tr('改动后自动验证'), hint: tr('修改代码后运行测试、类型检查或构建'), keywords: 'verify test 测试 验证', render: () => <Toggle label={tr('改动后自动验证')} checked={agent.verifyChanges} onChange={(verifyChanges) => patch('agent', { verifyChanges })} /> },
@@ -1016,15 +1009,15 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       </div>
     ) },
 
-    { key: 'fontFamily', section: 'appearance', label: tr('界面字体'), hint: tr('整体界面字体风格'), keywords: 'font family 字体 黑体 宋体', render: () => <Choice label={tr('界面字体')} value={appearance.fontFamily} options={fontFamilies} labels={fontFamilyLabels} onChange={(fontFamily) => patch('appearance', { fontFamily })} /> },
-    { key: 'fontSize', section: 'appearance', label: tr('界面字号'), hint: '12–18', keywords: 'font 字体', paths: ['appearance.fontSize'], render: () => <NumberField label={tr('界面字号')} value={appearance.fontSize} min={12} max={18} unit="px" onChange={(value) => patch('appearance', { fontSize: value ?? Number.NaN })} /> },
-    { key: 'codeFontSize', section: 'appearance', label: tr('代码字号'), hint: tr('工具输出与差异的字号，11–18'), keywords: 'code font mono 等宽', paths: ['appearance.codeFontSize'], render: () => <NumberField label={tr('代码字号')} value={appearance.codeFontSize} min={11} max={18} unit="px" onChange={(value) => patch('appearance', { codeFontSize: value ?? Number.NaN })} /> },
-    { key: 'density', section: 'appearance', label: tr('界面密度'), keywords: 'density 紧凑', render: () => <Choice label={tr('界面密度')} value={appearance.density} options={densities} labels={densityLabels} onChange={(density) => patch('appearance', { density })} /> },
-    { key: 'reduceMotion', section: 'appearance', label: tr('减少动效'), hint: tr('关闭过渡与动画'), keywords: 'motion animation 动画', render: () => <Toggle label={tr('减少动效')} checked={appearance.reduceMotion} onChange={(reduceMotion) => patch('appearance', { reduceMotion })} /> },
-    { key: 'showUsage', section: 'appearance', label: tr('显示 Token 用量'), hint: tr('在每条回复下方显示输入 / 输出 Token 数'), keywords: 'usage token 用量', render: () => <Toggle label={tr('显示 Token 用量')} checked={chat.showUsage} onChange={(showUsage) => patch('chat', { showUsage })} /> },
-    { key: 'expandTools', section: 'appearance', label: tr('默认展开工具输出'), keywords: 'tool output 工具', render: () => <Toggle label={tr('默认展开工具输出')} checked={chat.expandTools} onChange={(expandTools) => patch('chat', { expandTools })} /> },
-    { key: 'autoScroll', section: 'appearance', label: tr('自动滚动到最新消息'), keywords: 'scroll 滚动', render: () => <Toggle label={tr('自动滚动到最新消息')} checked={chat.autoScroll} onChange={(autoScroll) => patch('chat', { autoScroll })} /> },
-    { key: 'notifyOnDone', section: 'appearance', label: tr('完成时系统通知'), hint: tr('窗口不在前台时，回复完成或等待审批会发送通知'), keywords: 'notify notification 通知', render: () => <Toggle label={tr('完成时系统通知')} checked={chat.notifyOnDone} onChange={(notifyOnDone) => patch('chat', { notifyOnDone })} /> },
+    { key: 'fontFamily', section: 'general', label: tr('界面字体'), hint: tr('整体界面字体风格'), keywords: 'font family 字体 黑体 宋体', render: () => <Choice label={tr('界面字体')} value={appearance.fontFamily} options={fontFamilies} labels={fontFamilyLabels} onChange={(fontFamily) => patch('appearance', { fontFamily })} /> },
+    { key: 'fontSize', section: 'general', label: tr('界面字号'), hint: '12–18', keywords: 'font 字体', paths: ['appearance.fontSize'], render: () => <NumberField label={tr('界面字号')} value={appearance.fontSize} min={12} max={18} unit="px" onChange={(value) => patch('appearance', { fontSize: value ?? Number.NaN })} /> },
+    { key: 'codeFontSize', section: 'general', label: tr('代码字号'), hint: tr('工具输出与差异的字号，11–18'), keywords: 'code font mono 等宽', paths: ['appearance.codeFontSize'], render: () => <NumberField label={tr('代码字号')} value={appearance.codeFontSize} min={11} max={18} unit="px" onChange={(value) => patch('appearance', { codeFontSize: value ?? Number.NaN })} /> },
+    { key: 'density', section: 'general', label: tr('界面密度'), keywords: 'density 紧凑', render: () => <Choice label={tr('界面密度')} value={appearance.density} options={densities} labels={densityLabels} onChange={(density) => patch('appearance', { density })} /> },
+    { key: 'reduceMotion', section: 'general', label: tr('减少动效'), hint: tr('关闭过渡与动画'), keywords: 'motion animation 动画', render: () => <Toggle label={tr('减少动效')} checked={appearance.reduceMotion} onChange={(reduceMotion) => patch('appearance', { reduceMotion })} /> },
+    { key: 'showUsage', section: 'general', label: tr('显示 Token 用量'), hint: tr('在每条回复下方显示输入 / 输出 Token 数'), keywords: 'usage token 用量', render: () => <Toggle label={tr('显示 Token 用量')} checked={chat.showUsage} onChange={(showUsage) => patch('chat', { showUsage })} /> },
+    { key: 'expandTools', section: 'general', label: tr('默认展开工具输出'), keywords: 'tool output 工具', render: () => <Toggle label={tr('默认展开工具输出')} checked={chat.expandTools} onChange={(expandTools) => patch('chat', { expandTools })} /> },
+    { key: 'autoScroll', section: 'general', label: tr('自动滚动到最新消息'), keywords: 'scroll 滚动', render: () => <Toggle label={tr('自动滚动到最新消息')} checked={chat.autoScroll} onChange={(autoScroll) => patch('chat', { autoScroll })} /> },
+    { key: 'notifyOnDone', section: 'general', label: tr('完成时系统通知'), hint: tr('窗口不在前台时，回复完成或等待审批会发送通知'), keywords: 'notify notification 通知', render: () => <Toggle label={tr('完成时系统通知')} checked={chat.notifyOnDone} onChange={(notifyOnDone) => patch('chat', { notifyOnDone })} /> },
 
 
     { key: 'sendKey', section: 'shortcuts', label: tr('发送方式'), keywords: 'send enter ctrl 快捷键', render: () => <Choice label={tr('发送方式')} value={chat.sendKey} options={sendKeys} labels={sendKeyLabels} onChange={(sendKey) => patch('chat', { sendKey })} /> },
@@ -1032,13 +1025,6 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
       <ul className="shortcut-list">
         {shortcutList.map((item) => <li key={item.keys}><kbd>{item.keys}</kbd><span>{tr(item.action)}</span></li>)}
       </ul>
-    ) },
-
-    { key: 'about', section: 'about', label: 'CubexDesktop', hint: tr('编程优先的本地智能体桌面应用'), keywords: 'version about 版本 数据', wide: true, render: () => (
-      <div className="about-block">
-        <p>{tr('系统提示词由应用内置，会根据语言、风格、审批、权限与工作树设置自动组合，无需手动维护。')}</p>
-        <p>{tr('API Key 通过系统加密保存在本机，不会写入配置文件；会话与设置保存在本机用户数据目录。')}</p>
-      </div>
     ) },
   ]
 
@@ -1182,7 +1168,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
           </ul>
         )}
         {draft.plugins.computer && <p className="field-hint">{tr('电脑控制可以截屏、输入和点击，每一步都会请求你批准。')}</p>}
-        {draft.plugins.image && <p className="field-hint">{tr('图片生成使用「图片生成」分区中配置的生图模型，生成结果会保存到项目 .cubex/images。')}</p>}
+        {draft.plugins.image && <p className="field-hint">{tr('图片生成使用「模型」分区中配置的生图模型，生成结果会保存到项目 .cubex/images。')}</p>}
       </div>
     )
   }
@@ -1587,7 +1573,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
           <input type="search" aria-label={tr('搜索设置')} placeholder={tr('搜索设置')} value={query} onChange={(event) => setQuery(event.target.value)} />
         </label>
         <nav>
-          {sections.map((meta) => {
+          {sections.filter((meta) => !meta.hidden || section === meta.id).map((meta) => {
             const Icon = meta.icon
             const count = sectionErrors(meta.id)
             return (
