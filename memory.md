@@ -1,6 +1,6 @@
 # 记忆
 
-> 最后更新时间：2026-10-04 ｜ 更新者：AI Agent（资料报告 + 引用溯源）
+> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（体积/启动优化 + 分支合并回填）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
@@ -99,6 +99,21 @@
 - `src/renderer/src/styles.css` —— `.md-cite`（上标角标）/`.md-cite-plain`（灰色降级）/`.md-sources`（来源卡片）/`.panel-action`（分组头按钮）。
 - `tests/citations.test.ts`（新建）—— 8 例：takeJsonObject 截断、collectSources 去重/失败忽略、parseSourceLine 三种写法、extractSources 节边界、sourcesToMarkdown 编号、两段提示词断言。
 
+## 安装包体积与启动（0.1.2-dev 后续优化）
+
+- **构成真相**：优化前 `app.asar` 185.4 MB 里 6299/6328 条目是 `node_modules`（177.5 MB），而真正运行的 `out/` 只有 1.89 MB。原因是 `files: ["out/**/*","package.json"]` 并不能阻止 electron-builder 打包生产依赖。
+- **`electron-vite` 5 默认外部化依赖**：main/preload 会自动追加 `externalizeDepsPlugin()`（见 `node_modules/electron-vite/dist/chunks/lib-q6ns0vZr.js` 的 `config.build?.externalizeDeps ?? true`），于是 `out/main/index.js` 保留 `import 'zod'`。**必须写 `build.externalizeDeps: false`** 才会把依赖打进产物。
+- **最危险的假象**：打包版在开发机上「正常启动」，是因为 ESM 解析从 `resources/app.asar/out/main/` 一路向上**命中了工程根的 `node_modules`**；装到 `Program Files` 必然 `ERR_MODULE_NOT_FOUND`。**验证打包产物必须复制到上级链无 `node_modules` 的隔离目录再跑**（本轮在 `C:\Windows\Temp\opencode\pkg-test` 实跑 `[cubex] smoke-ready` 通过）。
+- **`electronLanguages` 要写 `en-US`**：写 `en` 匹配不到 `locales\en.pak`，会只留 zh-CN。
+- **体积成果**：NSIS 安装包 144.53 → **106.22 MB**（−26.5%）；解包 545.5 → 322.4 MB；`app.asar` 176.8 → 2.0 MB；`locales` 50.6 → 0.6 MB。剩余体积大头是 Electron 自带 `Cubex.exe` 234.8 MB（≈ `node_modules\electron\dist\electron.exe`，非我们可控）。
+- **启动测量方法论（踩过两次坑）**：
+  - `WaitForInputIdle` **不是**窗口显示时间（会得到 3813 ms 的假象），要看 `ready-to-show` 或轮询 `MainWindowTitle`。
+  - **单次测量不可信**：同一二进制首跑 1056 ms、后 4 次 351–409 ms，必须多采样区分冷热。
+  - `asar` 大小（185 MB vs 1.9 MB）**对启动时间几乎无影响**（热启动 244 vs 276 ms），我曾据 `WaitForInputIdle` 错判为「3.5 秒全在 asar」，已推翻。
+- **阶段拆解**（热）：`module evaluated 3ms → whenReady 57ms → createWindow 110ms → dom-ready 157ms → did-finish-load 158ms → ready-to-show 238ms`；冷启动多出的 ~752 ms 全在 `did-finish-load` 之后的**首帧光栅化**（React 在 `dom-ready` 前已渲染完），故 HTML 骨架方案收益不确定、未采用。
+- **`& electron ... | Out-String` 会永久挂起**：Electron 的 GPU/renderer 子进程继承 stdout 句柄，管道不 EOF。测启动一律用 `Start-Process -RedirectStandardOutput` + 轮询日志。
+- **首屏已充分代码分割**：`SettingsPanel`/`RightPanel`/`WorkflowCanvas`/`BrowserWorkspace` 均 lazy，`speech.worker`（812 KB，最大单文件）按需 `new Worker`；首屏同步资源为主包 292 KB + react 222 KB + css 100 KB，无低风险可再优化项。
+
 ## 已知问题与坑
 
 - **asar 锁定**：`npm run dist` 打包时 `release\win-unpacked\resources\app.asar` 可能被杀软/索引器锁定（非 Cubex/node 进程），导致 `Remove-Item release` 失败。绕过：结束进程 + 删 `release`/`out` 后重试；仍失败用 `npx electron-builder --win nsis "-c.directories.output=dist-out"`（`-c` 参数在 PowerShell 必须加引号）。本轮清理进程与产物后 `npm run dist` 一次成功。
@@ -124,8 +139,8 @@
 
 - `npm run typecheck` → exit 0。
 - `npm run lint` → exit 0（9 warning，0 error）。
-- `npm test` / `npx vitest run` → 94 passed，2 skipped（新增 citations.test.ts 8 例；此前基线 86/2）。
-- `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe`（已签名 + blockmap，x64）。
+- `npm test` / `npx vitest run` → 115 passed，4 skipped（合并分支后新增沙箱 7 + 平台 4 + 工作流 12；此前基线 94/2，更早 86/2）。
+- `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe` = **106,219,152 bytes（101.30 MB）**，已签名 + blockmap，x64；优化前同名产物为 144,532,022 bytes。
 - git：`git add -A` → `git commit`（commit `80c4e4d`，30 文件 +3572/−244）→ 走 7890 代理 `git push origin main` 成功（`ac8be26`→`80c4e4d`，远端 ls-remote 核对一致）。
 
 ## 未解决问题 / 待确认

@@ -1,12 +1,12 @@
 # 计划
 
-> 最后更新时间：2026-10-04 ｜ 更新者：AI Agent（资料报告 + 引用溯源）
+> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（体积/启动优化 + 分支合并回填）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
 
-0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；本轮 **资料报告 + 引用溯源完成**：typecheck 0 / lint 0 error / test 94 passed + 2 skipped。
+0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；资料报告 + 引用溯源完成；**zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG）完成**；本轮 **安装包体积优化完成**：typecheck 0 / lint 0 error / test 115 passed + 4 skipped。
 
 ## 步骤清单（近期已完成）
 
@@ -159,12 +159,33 @@
 - `npm run typecheck`=0；`npm run lint`=0 error（9 条既有 warning）；`npm test`=94 passed + 2 skipped（新增 citations 测试）。
 - 同步刷新 agents/goal/plan/memory 四份文档。
 
+### 步骤 H：zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG + components 迁移） —— [x]
+
+- 来源：用户提供的 `CubexDesktop-2026-10-02-9766db7.zip`（自带 `.git`、同 remote，自 `ac8be26` 分叉，对方 9 提交 / 我方 5 提交），解压至 `C:\Windows\Temp\opencode\cubex-9766db7\CubexDesktop`。
+- 取舍：经选择题确认「三块全并入、冲突一律以我方为主」且 `rules/` `specs/` 6 个 md 一并并入；实操为「以我方为底 + 补入对方独有符号」——单纯全取我方编译不过（25+ TS 错误）。
+- 关键决策：`agent.ts` 以我方 `finish()` 为骨架补入 `run.outcome` 追踪，**`run.settle()` 必须排在 `finish()` 之后**，否则工作流会在上一线程未置 idle 时启动下一节点并抛「会话正在执行中」；`index.ts` 窗口最大化取我方实现，剔除对方已失效的 `screen`/`Rectangle`/`MessageCard`/`Workflow` 导入，保留 `BrowserState`/`safeStorage`/`workflowControlInputSchema`。
+- 产出：12 处冲突手工解决，真 merge commit `b62a3cd`（双父 `4e534a3` + `9766db7`），工作区干净。
+- 验证：typecheck 0 / lint 0 error（9 warning）/ test **115 passed + 4 skipped**（基线 94，新增沙箱 7 + 平台 4 + 工作流 12）；我方特性保真核对通过（browser_crawl 17 处、引用溯源/导出 6 处、通用分区 22 字段、侧栏自动化入口、无 `about`）；沙箱修复本体核对通过（`sandbox/env.ts` 已删 `env.no_proxy = '*'`，黑洞代理保留）。
+- 结论：完成，**沙箱禁网与工作流 DAG 尚未在真实会话实测**（仅单测覆盖）。
+
+### 步骤 I：安装包体积与启动/加载速度优化 —— [x]
+
+- 目标：优化加载速度、文件大小、启动速度，完成后推送到远端仓库。方法为**先测量后动手**。
+- 诊断：`app.asar` 185.4 MB 中 **6299/6328 条目是 `node_modules`（177.5 MB 纯死重量）**，真正运行的 `out/` 仅 1.89 MB；`locales/` 另占 50.6 MB（55 个语言包）。
+- **关键坑（隔离测试才暴露）**：`electron-vite` 5 默认自动追加 `externalizeDepsPlugin()`，`out/main` 因此保留 ESM `import 'zod'`。打包版之所以「能跑」，是从 `app.asar` 向上遍历目录时**碰巧命中工程根的 `node_modules`**，装到任意路径必然 `ERR_MODULE_NOT_FOUND`。修复：`electron.vite.config.ts` 的 main/preload 加 `externalizeDeps: false`，zod 打进 main（295 KB → 482 KB），外部依赖只剩 `electron` + `node:*`。
+- 配置：`package.json` `build.files` 增 `"!node_modules"`、新增 `"electronLanguages": ["zh-CN","en-US"]`（原 `en` 匹配不到，须写 `en-US`）。
+- 交付：NSIS 安装包 **144.53 MB → 106.22 MB（−36.5 MB / −26.5%）**；解包 545.5 → 322.4 MB（−223.1）；`app.asar` 176.8 → 2.0 MB；`locales` 50.6 → 0.6 MB（zh-CN + en-US 两个 pak）。
+- 启动实测（多采样，避免单次假象）：窗口标题出现 **首跑 1056 ms、后 4 次均 368 ms**；阶段拆解 `module evaluated 3ms → whenReady 57ms → createWindow 110ms → did-finish-load 158ms → ready-to-show 238ms`。
+- 交付验证：`asar list` 确认 26 条目、0 个 node_modules；把打包产物复制到**上级链无任何 `node_modules`** 的隔离目录实跑，`[cubex] smoke-ready` 通过、无 `MODULE/ENOENT`。
+- 结论：体积收益确定；**启动/加载速度无低风险可优化瓶颈**——热启动已 ~368 ms，冷启动多出的 ~752 ms 全在首帧光栅化（React 在 `dom-ready` 前已渲染完），而 HTML 骨架可乘窗口仅几毫秒、收益不确定，故不改。
+
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- 步骤 F（全网爬取）与步骤 G（资料报告 + 引用溯源）均已完成并通过全量校验（typecheck/lint/test）。
-- **已提交推送**：commit `80c4e4d`（30 文件 +3572/−244，含此前未推的 `2be069d`/`ac8be26`）已 `git push origin main` 成功，远端 main = `80c4e4d`。**坑：本机直连 github:443 不通，需走本地代理 `git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin main`（7890 端口在监听）**。
-- **待办**：两项功能均未在真实会话中跑通。
-- **下一步第一件事**：在 Browser 模式发一条「帮我查一下……（多来源调研类）」任务，实测 `browser_crawl` 抓取 + 回答末尾「参考来源」小节 + 正文 `[n]` 角标点击跳转 + 右栏「资料报告」导出；随后验证设置页爬取两项选项。
+- 步骤 H（分支合并 `b62a3cd`）与步骤 I（体积/启动优化）均已完成并通过全量校验。
+- **校验基线更新**：typecheck 0 / lint 0 error（9 既有 warning）/ `npm test` = **115 passed + 4 skipped**（原 94 + 2）。
+- **本地 `main` 领先 `origin/main`（`4e534a3`）10 个提交（含合并 `b62a3cd` 与本轮体积优化），按用户指示推送后需用 `git status -sb` + `git ls-remote` 核对**。
+- **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版与侧栏自动化入口未实测。
+- **下一步第一件事**：启动窗口实测上述 ①②③——先在 Browser 模式发一条多来源调研任务，验证 `browser_crawl` 抓取 + 末尾「参考来源」+ 正文 `[n]` 角标点击 + 右栏「资料报告」导出；再验证沙箱确已禁网与工作流进度条推进。
 
 ## 已知风险 / 阻塞项及应对
 

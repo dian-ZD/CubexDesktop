@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 export default defineConfig({
   main: {
     build: {
+      externalizeDeps: false,
       rollupOptions: {
         input: { index: resolve('src/main/index.ts') },
         output: { entryFileNames: '[name].js' },
@@ -12,7 +13,7 @@ export default defineConfig({
     },
   },
   preload: {
-    build: { rollupOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } } },
+    build: { externalizeDeps: false, rollupOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } } },
   },
   renderer: {
     plugins: [react()],
