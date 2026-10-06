@@ -183,7 +183,7 @@
 
 - 步骤 H（分支合并 `b62a3cd`）与步骤 I（体积/启动优化）均已完成并通过全量校验。
 - **校验基线更新**：typecheck 0 / lint 0 error（9 既有 warning）/ `npm test` = **115 passed + 4 skipped**（原 94 + 2）。
-- **本地 `main` 领先 `origin/main`（`4e534a3`）10 个提交（含合并 `b62a3cd` 与本轮体积优化），按用户指示推送后需用 `git status -sb` + `git ls-remote` 核对**。
+- **已提交并推送**：本轮 commit `da9b013`（连同合并 `b62a3cd` 共 11 个提交）经 7890 代理 `push origin main` 成功，`git ls-remote origin main` = `da9b013` 核对一致。**坑补充：`git ls-remote` 也必须同样带上 `-c http.proxy=... -c https.proxy=...`，否则报 `Connection was reset`；PowerShell 下 push 的 stderr 仍会显示 `NativeCommandError`，以 `git status -sb`（无 ahead）为准。**
 - **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版与侧栏自动化入口未实测。
 - **下一步第一件事**：启动窗口实测上述 ①②③——先在 Browser 模式发一条多来源调研任务，验证 `browser_crawl` 抓取 + 末尾「参考来源」+ 正文 `[n]` 角标点击 + 右栏「资料报告」导出；再验证沙箱确已禁网与工作流进度条推进。
 
