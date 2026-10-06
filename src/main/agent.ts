@@ -5,6 +5,7 @@ import { fitContext } from './context'
 import { describeError } from './errors'
 import { isContextOverflowError, streamChat, type ToolSpec } from './llm'
 import { buildSystemPrompt } from './prompt'
+import { nextNoToolStep, resolveLoopPolicy } from './loopPolicy'
 import { ensureProjectFiles, PROJECT_FILES, readProjectFiles, renderProjectContext } from './projectFiles'
 import type { SecretStore } from './secrets'
 import type { StateStore } from './store'
@@ -454,10 +455,14 @@ export class AgentRunner {
   private async loop(threadId: string, run: Run): Promise<void> {
     const { signal } = run.controller
     const maxSteps = this.store.get().settings.agent.maxSteps
+    const loopOptimized = this.store.get().settings.beta.agentLoop
+    const policy = resolveLoopPolicy(loopOptimized)
     const MAX_CONTINUATIONS = 5
     let continuations = 0
     let recoveries = 0
     let autoCompactions = 0
+    let noToolCount = 0
+    let pendingNudge = ''
     const callCounts = new Map<string, number>()
     let blockedStreak = 0
     for (let step = 0; step < maxSteps && !signal.aborted; step++) {
@@ -476,7 +481,7 @@ export class AgentRunner {
 
       // 接近上下文上限时先做摘要压缩，避免下一步请求直接超限
       const window = model.contextWindow
-      if (window && autoCompactions < 3 && historyTokens(thread.messages) > window * 0.9) {
+      if (window && autoCompactions < 3 && historyTokens(thread.messages) > window * policy.compactRatio) {
         const { removed } = await this.compactMessages(threadId).catch(() => ({ removed: 0 }))
         if (removed > 0) {
           autoCompactions++
@@ -497,7 +502,8 @@ export class AgentRunner {
       ].filter(Boolean)
       const system = extraParts.length ? `${baseSystem}\n\n${extraParts.join('\n\n')}` : baseSystem
       const reserve = estimateTokens(system) + (modelParams.maxTokens || 16_000) + 1_500
-      const { messages: history } = fitContext(thread.messages, { contextWindow: model.contextWindow, reserve, limit: modelParams.historyLimit })
+      const { messages: fitted } = fitContext(thread.messages, { contextWindow: model.contextWindow, reserve, limit: modelParams.historyLimit })
+      const history = pendingNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: pendingNudge }] : fitted
       const placeholder: AssistantMessage = { id: messageId, role: 'assistant', time: new Date().toISOString(), content: '', toolCalls: [], modelId: model.id }
       await this.store.update((draft) => {
         const target = draft.threads.find((item) => item.id === threadId)!
@@ -520,6 +526,7 @@ export class AgentRunner {
             this.emitDelta({ threadId, messageId, delta })
           },
         })
+        pendingNudge = ''
       } catch (error) {
         await this.dropEmpty(threadId, messageId)
         if (signal.aborted) return
@@ -557,9 +564,22 @@ export class AgentRunner {
         }
         const steeringPending = this.store.get().threads.find((item) => item.id === threadId)?.messages
           .filter((item) => item.role === 'user' && item.steering && !steeringSeen.has(item.id)) ?? []
-        if (steeringPending.length > 0 && !signal.aborted && step + 1 < maxSteps) continue
-        return
+        if (steeringPending.length > 0 && !signal.aborted && step + 1 < maxSteps) {
+          noToolCount = 0
+          continue
+        }
+        if (!loopOptimized) return
+        // 补问若干轮，而不是立刻结束：loop.js 的停机语义
+        noToolCount += 1
+        const nextStep = nextNoToolStep(noToolCount, policy.noToolRounds)
+        if (nextStep.done) {
+          await this.system(threadId, 'info', `连续 ${policy.noToolRounds} 轮模型都没有调用工具，已结束本轮；发送消息可继续。`)
+          return
+        }
+        if (nextStep.nudge) pendingNudge = policy.noToolPrompt
+        continue
       }
+      noToolCount = 0
       if (signal.aborted) return
 
       const results: ToolResult[] = []
@@ -749,12 +769,17 @@ export class AgentRunner {
     const system = `${baseSystem}\n\n## 你的身份\n你是一个名为「${task.name}」的子智能体，正在与其它子智能体协作完成一个更大的任务。请只专注于分配给你的子任务，完成后用简洁的中文总结你做了什么、改动了哪些文件、以及需要主智能体知道的关键结论。你不能再委派子任务，也不能向用户提问。`
     const messages: Message[] = [{ id: randomUUID(), role: 'user', time: new Date().toISOString(), content: task.instruction }]
     const subTools = toolSpecs.filter((spec) => spec.name !== 'delegate' && spec.name !== 'ask_user')
+    const loopOptimized = settings.beta.agentLoop
+    const policy = resolveLoopPolicy(loopOptimized)
+    let subNoToolCount = 0
+    let subNudge = ''
     let finalText = ''
     try {
       for (let i = 0; i < subSteps && !signal.aborted; i++) {
         this.activity(threadId, 'delegating', `「${task.name}」执行中…`, { step: ctx.step, detail: `第 ${i + 1} 步`, agents: [task.name] })
         const reserve = estimateTokens(system) + (modelParams.maxTokens || 8_000) + 1_500
-        const { messages: history } = fitContext(messages, { contextWindow: ctx.model.contextWindow, reserve, limit: modelParams.historyLimit })
+        const { messages: fitted } = fitContext(messages, { contextWindow: ctx.model.contextWindow, reserve, limit: modelParams.historyLimit })
+        const history = subNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: subNudge }] : fitted
         const turn = await streamChat({
           provider: ctx.provider, apiKey: ctx.apiKey, model: ctx.model, tools: subTools, signal,
           system, messages: history,
@@ -764,10 +789,19 @@ export class AgentRunner {
           retries: modelParams.retries,
           onText: () => undefined,
         })
+        subNudge = ''
         if (turn.usage) void this.onUsage({ input: turn.usage.input, output: turn.usage.output, modelId: ctx.model.id }).catch(() => undefined)
         finalText = turn.content || finalText
         messages.push({ id: randomUUID(), role: 'assistant', time: new Date().toISOString(), content: turn.content, toolCalls: turn.toolCalls, modelId: ctx.model.id })
-        if (turn.toolCalls.length === 0) break
+        if (turn.toolCalls.length === 0) {
+          if (!loopOptimized) break
+          subNoToolCount += 1
+          const nextStep = nextNoToolStep(subNoToolCount, policy.noToolRounds)
+          if (nextStep.done) break
+          if (nextStep.nudge) subNudge = policy.noToolPrompt
+          continue
+        }
+        subNoToolCount = 0
         const results: ToolResult[] = []
         for (const sub of turn.toolCalls) {
           if (signal.aborted) break

@@ -1,0 +1,40 @@
+AOCI-CODE v0.1.0-rc18 Notice
+
+Product: AOCI-CODE
+Canonical repository: https://github.com/aoci-spec/aoci-code
+License: Functional Source License, Version 1.1, MIT Future License
+License identifier: FSL-1.1-MIT
+
+Copyright holder: Liu JinShi
+Copyright year: 2026
+First public availability date for v0.1.0-rc1: 2026-08-08
+First public availability date for v0.1.0-rc2: 2026-08-10
+First public availability date for v0.1.0-rc3: 2026-08-10
+First public availability date for v0.1.0-rc4: 2026-08-15
+First public availability date for v0.1.0-rc5: 2026-08-17
+First public availability date for v0.1.0-rc6: 2026-08-30
+First public availability date for v0.1.0-rc7: 2026-08-31
+First public availability date for v0.1.0-rc8: 2026-09-03
+First public availability date for v0.1.0-rc9: 2026-09-08
+First public availability date for v0.1.0-rc10: 2026-09-08
+First public availability date for v0.1.0-rc11: 2026-09-13
+First public availability date for v0.1.0-rc12: 2026-09-15
+First public availability date for v0.1.0-rc13: 2026-09-17
+First public availability date for v0.1.0-rc14: 2026-09-19
+First public availability date for v0.1.0-rc15: 2026-09-25
+First public availability date for v0.1.0-rc16: 2026-09-28
+First public availability date for v0.1.0-rc17: 2026-09-29
+First public availability date for v0.1.0-rc18: 2026-10-05
+
+The source is made available as Fair Source/source-available software. The
+LICENSE file contains the controlling code license. The future MIT license for
+each version becomes effective according to the version-specific availability
+rule in that license; the version-specific public availability dates are
+recorded above.
+
+The PATENTS and TRADEMARKS files provide non-conflicting boundary notices only.
+Third-party components remain governed by their own license terms as recorded
+in THIRD-PARTY-NOTICES and the release SBOM.
+
+A distributable release must not contain unresolved legal metadata
+placeholders.

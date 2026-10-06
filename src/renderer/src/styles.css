@@ -1466,7 +1466,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px 12px;
+  padding: 4px 6px 8px;
   font-weight: 650;
   font-size: 14.5px;
   letter-spacing: -0.01em;
@@ -1497,6 +1497,23 @@ kbd {
 
 .sidebar-toggle {
   margin-left: auto;
+}
+
+.sidebar-mode {
+  margin-bottom: 10px;
+}
+
+.sidebar-mode .mode-switch {
+  width: 100%;
+}
+
+.sidebar-mode .mode-switch button {
+  flex: 1;
+  min-width: 0;
+  justify-content: center;
+  height: 26px;
+  padding: 0 6px;
+  white-space: nowrap;
 }
 
 .nav-action {
@@ -4193,6 +4210,17 @@ pre.diff .hunk {
   flex: 1;
   width: 100%;
   padding: 20px 32px 32px;
+}
+
+.settings-toolbar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 14px 32px 0;
+}
+
+.settings-toolbar + .settings-inner {
+  padding-top: 14px;
 }
 
 .settings-group-head {

@@ -2,8 +2,9 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeIm
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type Result, type StreamDelta, type Thread } from '../shared/schema'
+import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type McpServer, type Result, type StreamDelta, type Thread } from '../shared/schema'
 import { browserEngine } from './browser'
+import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, runShellCommand } from './tools'
@@ -27,6 +28,33 @@ let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 
 let appIcon: Electron.NativeImage | null = null
+
+function aociProjectPath(threadId?: string): string | undefined {
+  const state = store.get()
+  const thread = threadId
+    ? state.threads.find((item) => item.id === threadId)
+    : [...state.threads].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]
+  const project = thread ? state.projects.find((item) => item.id === thread.projectId) : state.projects[0]
+  return project?.path
+}
+
+/**
+ * 维护 beta.tokenSaving 对应的 aoci MCP 服务器条目，返回应同步的服务器列表。
+ * 开关关闭、二进制缺失或尚无项目时该条目会被移除。
+ */
+async function syncAoci(threadId?: string): Promise<McpServer[]> {
+  const settings = store.get().settings
+  const plan: AociPlan = planAociServers(settings.mcp.servers, {
+    enabled: settings.beta.tokenSaving,
+    binary: resolveAociBinary(aociBinaryDirs(process.resourcesPath, app.getAppPath())),
+    projectPath: aociProjectPath(threadId),
+  })
+  if (!plan.changed) return plan.servers
+  await store.update((state) => {
+    state.settings.mcp.servers = plan.servers
+  })
+  return plan.servers
+}
 
 async function buildAppIcon(): Promise<Electron.NativeImage | undefined> {
   if (appIcon && !appIcon.isEmpty()) return appIcon
@@ -392,11 +420,13 @@ function registerIpc() {
 
   handle(channels.sendMessage, async (_event, payload) => {
     const input = sendMessageInputSchema.parse(payload)
+    mcp.sync(await syncAoci(input.threadId))
     await agent.send(input.threadId, input.content, input.modelId, input.card, input.images)
   })
 
   handle(channels.regenerateMessage, async (_event, payload) => {
     const input = regenerateMessageInputSchema.parse(payload)
+    mcp.sync(await syncAoci(input.threadId))
     await agent.regenerateMessage(input.threadId, input.messageId, input.modelId)
   })
 
@@ -553,7 +583,7 @@ function registerIpc() {
       state.settings = settings
     })
     await secrets.prune(new Set([...settings.providers.map((provider) => provider.id), GITHUB_SECRET]))
-    mcp.sync(settings.mcp.servers)
+    mcp.sync(await syncAoci())
     browserEngine.setOptions({ allowDownloads: settings.browser.allowDownloads, allowNewWindows: settings.browser.allowNewWindows, userAgent: settings.browser.userAgent, homepage: settings.browser.homepage })
     publish()
   })
@@ -766,7 +796,7 @@ app.whenReady().then(async () => {
   void extensions.load().catch((error: unknown) => console.error('[cubex] 插件加载失败', error))
   if (process.env.CUBEX_SMOKE !== '1') {
     setTimeout(() => {
-      mcp.sync(store.get().settings.mcp.servers)
+      void syncAoci().then((servers) => mcp.sync(servers))
       startAutomationScheduler()
     }, 1200)
   }

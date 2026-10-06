@@ -968,6 +968,15 @@ const workflowPhrases: Record<string, string> = {
   '工作流操作失败，请重试。': 'Workflow action failed, please try again.',
 }
 
+const betaPhrases: Record<string, string> = {
+  'Beta 功能': 'Beta features',
+  '实验性功能：token 节省与大型项目优化、agent 循环优化': 'Experimental features: token saving & large-project optimization, agent loop optimization',
+  'token节省与大型项目优化': 'Token saving & large-project optimization',
+  '为项目建立 AOCI 认知索引：开启后自动为当前项目注册本地 aoci MCP 服务器，模型按需读取索引条目，避免每次任务重新通读整个仓库，从而节省 token 并支撑数十万行的大型项目。关闭即移除该服务器。': 'Builds an AOCI cognition index for the project: when enabled, a local aoci MCP server is registered for the current project so the model reads index entries on demand instead of re-reading the whole repository on every task — saving token and supporting projects of hundreds of thousands of lines. Disabling removes the server.',
+  'agent循环优化': 'Agent loop optimization',
+  '模型没调用工具时不再立即结束本轮，而是自动补问若干轮（默认 3 轮），补问后仍无工具调用才判定结束；期间一旦拿到工具调用就重新计数。停机语义移植自 agent-core。': 'When the model calls no tools the turn no longer ends immediately: it re-prompts for a few rounds (3 by default) and only finishes if those re-prompts still call no tools; a single tool call resets the counter. Stop semantics ported from agent-core.',
+}
+
 registerPhrases(phrases)
 registerPhrases(settingsPhrases)
 registerPhrases(appPhrases)
@@ -975,5 +984,6 @@ registerPhrases(morePhrases)
 registerPhrases(settingsPhrases2)
 registerPhrases(skillPhrases)
 registerPhrases(workflowPhrases)
+registerPhrases(betaPhrases)
 
 export {}

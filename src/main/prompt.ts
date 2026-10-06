@@ -113,12 +113,13 @@ const BROWSER_MODE = `# 浏览器模式（当前会话的唯一工作方式，�
 - 完成后用简洁中文说明：做了什么、看到什么、结论是什么；若因登录/验证码/站点限制未能完成，如实说明卡在哪一步、需要用户做什么。
 - 只操作 http/https 页面，不访问与任务无关的地址。`
 
+const AOCI_RULE = '本项目已启用 AOCI 项目认知索引（MCP 服务器 aoci，工具以 aoci_ 开头：aoci_overview、aoci_search、aoci_get_entries、aoci_header、aoci_rules、aoci_report、aoci_maintain、aoci_update_entry、aoci_remove_entry）。接手任务或进入不熟悉的模块时，先用 aoci_overview 拿总览、用 aoci_search / aoci_get_entries 取条目，按条目里的 F（职责）/ R（需一起读的文件）/ A（调用方依赖）/ S（不能从代码推断的约束）来理解，不要为了搞清结构而通读整个仓库。如果这些工具返回「未初始化」一类的错误，说明索引还没建：先执行 aoci --repo "<项目根目录>" init，再执行 aoci --repo "<项目根目录>" scan 和 aoci --repo "<项目根目录>" index build；首次建索引要逐个文件读取，耗时较长属正常。每完成一轮改动，用 aoci_update_entry 更新受影响的条目，让索引与代码保持一致。'
+
 export interface PromptExtras {
   projectContext?: string
   now?: Date
   mode?: 'code' | 'work' | 'browser'
 }
-
 export function buildSystemPrompt(settings: Settings, project: Project, extras: PromptExtras | Date = {}): string {
   const options: PromptExtras = extras instanceof Date ? { now: extras } : extras
   const now = options.now ?? new Date()
@@ -136,6 +137,7 @@ export function buildSystemPrompt(settings: Settings, project: Project, extras: 
   if (settings.plugins?.computer) rules.push('computer_use 可操控用户电脑，每次都需要用户批准；仅在任务确实需要操作桌面应用时使用。')
   if (settings.plugins?.image) rules.push(`generate_image 可调用用户配置的生图模型画图：需要插画、示意图、图标、封面等任何图片产出时，把一段具体完整的提示词（主体、风格、构图、光影）传给它；图片会保存到项目 .cubex/images 并展示给用户。不要用它画图表或精确的技术示意图。`)
   if (settings.mcp?.servers.some((server) => server.enabled)) rules.push('已接入 MCP 服务器：当其提供的工具更适合完成任务（如访问外部服务、数据库、专用 API）时，通过 mcp_call 调用，server 与 tool 取自 mcp_call 的工具目录。')
+  if (settings.beta?.tokenSaving) rules.push(AOCI_RULE)
   const shell = shellName(settings.agent.shell)
   const environment = [
     `项目名称：${project.name}`,

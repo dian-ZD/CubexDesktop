@@ -212,6 +212,11 @@ export const automationSchema = z.object({
   if (!value.workflowId && !value.prompt.trim()) ctx.addIssue({ code: 'custom', path: ['prompt'], message: '指令不能为空（或改为选择工作流）' })
 })
 
+export const betaSchema = z.object({
+  tokenSaving: z.boolean(),
+  agentLoop: z.boolean(),
+})
+
 export const settingsSchema = z.object({
   providers: z.array(providerSchema).max(20),
   models: z.array(modelSchema).max(60),
@@ -230,6 +235,7 @@ export const settingsSchema = z.object({
   browser: browserSettingsSchema,
   sound: soundSchema,
   image: imageSettingsSchema,
+  beta: betaSchema,
   automations: z.array(automationSchema).max(30),
 }).superRefine((value, ctx) => {
   if (new Set(value.providers.map((item) => item.id)).size !== value.providers.length) {
@@ -616,6 +622,7 @@ export function defaultSettings(): Settings {
     browser: { homepage: '', stepApproval: true, leaseMinutes: 30, allowDownloads: false, allowNewWindows: false, userAgent: '', searchEngine: 'bing', searchTemplate: '', crawlMode: 'background', crawlPages: 8 },
     sound: { enabled: true, onDone: true, onApproval: true, onQuestion: true, volume: 0.5 },
     image: { providerId: '', modelId: '', size: '1024x1024' },
+    beta: { tokenSaving: false, agentLoop: false },
     automations: [],
   }
 }
@@ -657,6 +664,7 @@ export function migrateState(raw: unknown): unknown {
     browser: mergeGroup(browserSettingsSchema, defaults.browser, legacy.browser),
     sound: mergeGroup(soundSchema, defaults.sound, legacy.sound),
     image: mergeGroup(imageSettingsSchema, defaults.image, legacy.image),
+    beta: mergeGroup(betaSchema, defaults.beta, legacy.beta),
     automations: Array.isArray(legacy.automations)
       ? legacy.automations.flatMap((item) => {
           const parsed = automationSchema.safeParse(item)

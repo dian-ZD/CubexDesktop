@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
+import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FlaskConical, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, Languages, LoaderCircle, MonitorCog, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
 import {
   accents, approvalLabels, approvalModes, densities, fontFamilies, imageSizes, languages, providerKinds, providerLabels, responseStyles, searchEngines, sendKeys, settingsSchema, shells, themes, uiLanguages,
   type Automation, type ConnectionTest, type CrawlMode, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type SearchEngine, type Settings, type SkillMeta, type Workflow as WorkflowType,
@@ -115,7 +115,7 @@ const densityLabels: Record<(typeof densities)[number], string> = { comfortable:
 const shellLabels: Record<(typeof shells)[number], string> = { auto: '自动（Windows 用 PowerShell）', powershell: 'Windows PowerShell', pwsh: 'PowerShell 7 (pwsh)', cmd: '命令提示符 (cmd)', bash: 'Bash', sh: 'sh' }
 const sendKeyLabels: Record<(typeof sendKeys)[number], string> = { enter: 'Enter 发送，Shift+Enter 换行', 'ctrl-enter': 'Ctrl+Enter 发送，Enter 换行' }
 
-export type SectionId = 'general' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'browser' | 'worktree' | 'rules' | 'shortcuts' | 'archived'
+export type SectionId = 'general' | 'permissions' | 'mcp' | 'skills' | 'providers' | 'plugins' | 'github' | 'automation' | 'work' | 'browser' | 'worktree' | 'rules' | 'beta' | 'shortcuts' | 'archived'
 
 const sections: { id: SectionId; title: string; hint: string; icon: typeof Settings2; hidden?: boolean }[] = [
   { id: 'general', title: '通用', hint: '界面语言、回复语言与风格、提示音、外观与对话显示', icon: Languages },
@@ -130,9 +130,12 @@ const sections: { id: SectionId; title: string; hint: string; icon: typeof Setti
   { id: 'browser', title: 'Browser 模式', hint: '起始页、逐步审批、会话时长与下载/新窗口策略', icon: Globe },
   { id: 'worktree', title: '工作树', hint: '命令执行环境与改动验证', icon: GitBranch },
   { id: 'rules', title: '规则与记忆', hint: '项目上下文文件、计划方式与跨应用交接', icon: BookOpen },
+  { id: 'beta', title: 'Beta 功能', hint: '实验性功能：token 节省与大型项目优化、agent 循环优化', icon: FlaskConical },
   { id: 'shortcuts', title: '键盘快捷键', hint: '发送方式与常用快捷键', icon: Keyboard },
   { id: 'archived', title: '已归档项目', hint: '查看并恢复已归档的项目', icon: Archive },
 ]
+
+const hiddenSections = new Set<SectionId>(sections.filter((item) => item.hidden).map((item) => item.id))
 
 const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   general: ['general.uiLanguage', 'general.language', 'general.responseStyle', 'general.confirmDelete', 'appearance', 'chat.showUsage', 'chat.expandTools', 'chat.autoScroll', 'chat.notifyOnDone', 'sound'],
@@ -140,6 +143,7 @@ const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   permissions: ['permissions', 'approvalMode'],
   worktree: ['agent.commandTimeoutSec', 'agent.shell', 'agent.verifyChanges'],
   rules: ['agent.maxSteps', 'agent.planFirst', 'agent.autoTodo'],
+  beta: ['beta'],
   shortcuts: ['chat.sendKey'],
   plugins: ['plugins'],
   mcp: ['mcp'],
@@ -323,10 +327,11 @@ function ParamsForm({ label, value, fallback, errorPrefix, errors, onChange }: {
   )
 }
 
-export function SettingsPanel({ settings, projects = [], workflows = [], onError, onClose, initialSection }: { settings: Settings; projects?: Project[]; workflows?: WorkflowType[]; onError: (message: string | null) => void; onClose: () => void; initialSection?: SectionId }) {
+export function SettingsPanel({ settings, projects = [], workflows = [], onError, onClose, initialSection, page }: { settings: Settings; projects?: Project[]; workflows?: WorkflowType[]; onError: (message: string | null) => void; onClose: () => void; initialSection?: SectionId; page?: SectionId }) {
   const { tr } = useI18n()
   const [draft, setDraft] = useState<Settings>(settings)
-  const [section, setSection] = useState<SectionId>(initialSection ?? 'providers')
+  const [section, setSection] = useState<SectionId>(page ?? initialSection ?? 'providers')
+  const activeSection: SectionId = page ?? (sections.some((item) => item.id === section && item.hidden) ? 'providers' : section)
   const [query, setQuery] = useState('')
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -597,7 +602,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     setDraft(updater)
   }
 
-  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'browser' | 'sound' | 'image'>(group: K, value: Partial<Settings[K]>) =>
+  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'browser' | 'sound' | 'image' | 'beta'>(group: K, value: Partial<Settings[K]>) =>
     edit((current) => ({ ...current, [group]: { ...current[group], ...value } }))
 
   const pickBackground = () => {
@@ -863,6 +868,13 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
           </>
         )}
       </div>
+    ) },
+
+    { key: 'betaTokenSaving', section: 'beta', label: tr('token节省与大型项目优化'), hint: tr('为项目建立 AOCI 认知索引：开启后自动为当前项目注册本地 aoci MCP 服务器，模型按需读取索引条目，避免每次任务重新通读整个仓库，从而节省 token 并支撑数十万行的大型项目。关闭即移除该服务器。'), keywords: 'beta aoci index 索引 token 节省 大型项目 认知 mcp', wide: true, render: () => (
+      <Toggle label={tr('token节省与大型项目优化')} checked={draft.beta.tokenSaving} onChange={(tokenSaving) => patch('beta', { tokenSaving })} />
+    ) },
+    { key: 'betaAgentLoop', section: 'beta', label: tr('agent循环优化'), hint: tr('模型没调用工具时不再立即结束本轮，而是自动补问若干轮（默认 3 轮），补问后仍无工具调用才判定结束；期间一旦拿到工具调用就重新计数。停机语义移植自 agent-core。'), keywords: 'beta agent loop 循环 noTool 补问 停机 步数 maxSteps', wide: true, render: () => (
+      <Toggle label={tr('agent循环优化')} checked={draft.beta.agentLoop} onChange={(agentLoop) => patch('beta', { agentLoop })} />
     ) },
 
     { key: 'archived', section: 'archived', label: tr('已归档项目'), hint: tr('归档的项目不会出现在左侧列表，恢复后即可继续使用'), keywords: 'archive restore 归档 恢复 项目', wide: true, render: () => renderArchived() },
@@ -1555,37 +1567,44 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
   }
 
   const needle = query.trim().toLowerCase()
+  const pool = page ? rows.filter((row) => row.section === page) : rows.filter((row) => !hiddenSections.has(row.section))
   const visible = needle
-    ? rows.filter((row) => {
+    ? pool.filter((row) => {
       const meta = sections.find((item) => item.id === row.section)!
       return [row.label, row.hint ?? '', row.keywords ?? '', meta.title].join(' ').toLowerCase().includes(needle)
     })
-    : rows.filter((row) => row.section === section)
+    : pool.filter((row) => row.section === activeSection)
   const grouped = sections.map((meta) => ({ meta, rows: visible.filter((row) => row.section === meta.id) })).filter((group) => group.rows.length > 0)
   const totalErrors = errors.size
 
   return (
     <div className="settings-page">
-      <aside className="settings-nav" aria-label={tr('设置分类')}>
-        <button className="nav-action settings-back" onClick={onClose}><ArrowLeft size={16} /><span>{tr('返回会话')}</span><kbd>Esc</kbd></button>
-        <label className="settings-search">
-          <Search size={14} />
-          <input type="search" aria-label={tr('搜索设置')} placeholder={tr('搜索设置')} value={query} onChange={(event) => setQuery(event.target.value)} />
-        </label>
-        <nav>
-          {sections.filter((meta) => !meta.hidden || section === meta.id).map((meta) => {
-            const Icon = meta.icon
-            const count = sectionErrors(meta.id)
-            return (
-              <button key={meta.id} className="nav-row" aria-current={!needle && section === meta.id ? 'page' : undefined} onClick={() => { setQuery(''); setSection(meta.id) }}>
-                <Icon size={15} /><span className="truncate">{tr(meta.title)}</span>{count > 0 && <span className="nav-badge">{count}</span>}
-              </button>
-            )
-          })}
-        </nav>
-      </aside>
-
+      {!page && (
+        <aside className="settings-nav" aria-label={tr('设置分类')}>
+          <button className="nav-action settings-back" onClick={onClose}><ArrowLeft size={16} /><span>{tr('返回会话')}</span><kbd>Esc</kbd></button>
+          <label className="settings-search">
+            <Search size={14} />
+            <input type="search" aria-label={tr('搜索设置')} placeholder={tr('搜索设置')} value={query} onChange={(event) => setQuery(event.target.value)} />
+          </label>
+          <nav>
+            {sections.filter((meta) => !meta.hidden).map((meta) => {
+              const Icon = meta.icon
+              const count = sectionErrors(meta.id)
+              return (
+                <button key={meta.id} className="nav-row" aria-current={!needle && section === meta.id ? 'page' : undefined} onClick={() => { setQuery(''); setSection(meta.id) }}>
+                  <Icon size={15} /><span className="truncate">{tr(meta.title)}</span>{count > 0 && <span className="nav-badge">{count}</span>}
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
+      )}
       <main className="settings">
+        {page && (
+          <div className="settings-toolbar">
+            <button className="nav-action settings-back" onClick={onClose}><ArrowLeft size={16} /><span>{tr('返回会话')}</span><kbd>Esc</kbd></button>
+          </div>
+        )}
         <div className="settings-inner">
           {grouped.length === 0 && <div className="settings-empty">{tr('没有找到与“{query}”相关的设置', { query })}</div>}
           {grouped.map(({ meta, rows: items }) => (

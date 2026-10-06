@@ -1,5 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, CodeXml, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
@@ -140,7 +140,7 @@ function playCue(kind: 'done' | 'approval' | 'question', volume: number) {
 export function App() {
   const [state, setState] = useState<AppState>(() => createInitialState())
   const [loaded, setLoaded] = useState(false)
-  const [view, setView] = useState<'chat' | 'settings' | 'work' | 'browser'>('chat')
+  const [view, setView] = useState<'chat' | 'settings' | 'work' | 'browser' | 'automation'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>()
   const [projectId, setProjectId] = useState<string | null>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -523,7 +523,7 @@ export function App() {
   }, [thread?.mode, state.threads, project?.id])
 
   // 记录离开前的视图，退出设置时原样返回（此前一律回到 Code 模式）
-  const returnView = useRef<'chat' | 'work' | 'browser'>('chat')
+  const returnView = useRef<'chat' | 'work' | 'browser' | 'automation'>('chat')
   useEffect(() => {
     if (view !== 'settings') returnView.current = view
   }, [view])
@@ -901,6 +901,11 @@ export function App() {
         setView(returnView.current)
         return
       }
+      if (event.key === 'Escape' && view === 'automation' && !event.defaultPrevented) {
+        event.preventDefault()
+        setView(returnView.current === 'automation' ? 'chat' : returnView.current)
+        return
+      }
       if (!(event.ctrlKey || event.metaKey)) return
       if (event.key.toLowerCase() === 'o') {
         event.preventDefault()
@@ -953,6 +958,14 @@ export function App() {
     )
   }
 
+  const modeSwitch = (
+    <div className="mode-switch" role="radiogroup" aria-label={tr('工作模式')}>
+      <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'active' : ''} title={tr('Code：对话式编码')} onClick={() => selectMode('chat')}>Code</button>
+      <button role="radio" aria-checked={view === 'work'} className={view === 'work' ? 'active' : ''} title={tr('Work：画布工作流')} onClick={() => selectMode('work')}>Work</button>
+      <button role="radio" aria-checked={view === 'browser'} className={view === 'browser' ? 'active' : ''} title={tr('Browser：浏览器操控')} onClick={() => selectMode('browser')}>Browser</button>
+    </div>
+  )
+
   return (
     <LanguageContext.Provider value={uiLang}>
     <OpenTargetContext.Provider value={requestOpen}>
@@ -964,10 +977,11 @@ export function App() {
             <span>Cubex<span className="brand-suffix">Desktop</span></span>
             <button className="icon-button sidebar-toggle" aria-label={tr('收起侧栏')} title={tr('收起侧栏')} onClick={() => setSidebarOpen(false)}><PanelLeft size={17} /></button>
           </div>
+          <div className="sidebar-mode">{modeSwitch}</div>
           <button className="nav-action new-task" onClick={newThread} aria-current={view === 'chat' && !thread ? 'page' : undefined}>
             <SquarePen size={17} /><span>{t('nav.newTask')}</span><kbd>Ctrl N</kbd>
           </button>
-          <button className="nav-action" onClick={() => { setSettingsSection('automation'); setView('settings') }}>
+          <button className="nav-action" onClick={() => setView('automation')} aria-current={view === 'automation' ? 'page' : undefined}>
             <Timer size={17} /><span>{tr('自动化')}</span>
           </button>
           <nav className="sidebar-scroll" aria-label={tr('项目与任务')}>
@@ -1021,17 +1035,11 @@ export function App() {
         <header className="titlebar" onDoubleClick={(event) => { if (event.target === event.currentTarget) windowAction('maximize') }}>
           <div className="titlebar-context">
             {!sidebarOpen && view !== 'settings' && <button className="icon-button" aria-label={tr('展开侧栏')} title={tr('展开侧栏')} onClick={() => setSidebarOpen(true)}><PanelLeft size={18} /></button>}
-            <span className="view-label truncate">{view === 'settings' ? tr('设置') : view === 'work' ? tr('工作流') : view === 'browser' ? (thread ? thread.title : tr('浏览器工作台')) : thread ? thread.title : tr('新建任务')}</span>
-            {project && view !== 'settings' && <><ChevronRight size={13} /><span className="context-project truncate" title={project.path}>{project.name}</span></>}
+            <span className="view-label truncate">{view === 'settings' ? tr('设置') : view === 'automation' ? tr('自动化') : view === 'work' ? tr('工作流') : view === 'browser' ? (thread ? thread.title : tr('浏览器工作台')) : thread ? thread.title : tr('新建任务')}</span>
+            {project && view !== 'settings' && view !== 'automation' && <><ChevronRight size={13} /><span className="context-project truncate" title={project.path}>{project.name}</span></>}
           </div>
           <div className="titlebar-actions">
-            {view !== 'settings' && (
-              <div className="mode-switch" role="radiogroup" aria-label={tr('工作模式')}>
-                <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'active' : ''} title={tr('Code：对话式编码')} onClick={() => selectMode('chat')}><CodeXml size={14} />Code</button>
-                <button role="radio" aria-checked={view === 'work'} className={view === 'work' ? 'active' : ''} title={tr('Work：画布工作流')} onClick={() => selectMode('work')}><Workflow size={14} />Work</button>
-                <button role="radio" aria-checked={view === 'browser'} className={view === 'browser' ? 'active' : ''} title={tr('Browser：浏览器操控')} onClick={() => selectMode('browser')}><Globe size={14} />Browser</button>
-              </div>
-            )}
+            {!sidebarOpen && view !== 'settings' && modeSwitch}
             {!isDesktop && <span className="preview-badge" title={state.notice}>{tr('浏览器预览')}</span>}
             <button className="icon-button" aria-label={resolvedTheme === 'dark' ? tr('切换到浅色') : tr('切换到深色')} title={resolvedTheme === 'dark' ? tr('切换到浅色') : tr('切换到深色')} onClick={() => void toggleTheme()}>{resolvedTheme === 'dark' ? <Sun size={17} /> : <Moon size={16} />}</button>
             {thread && panelMode && <button className="icon-button" aria-label={tr('任务操作')} title={tr('任务操作')} onClick={(event) => ui.openMenu(event.currentTarget, threadMenu(thread))}><Ellipsis size={16} /></button>}
@@ -1060,6 +1068,7 @@ export function App() {
 
         <div className={`workspace${view === 'browser' ? ' is-browser' : ''}${view === 'browser' && !rightPanelOpen ? ' right-collapsed' : ''}`}>
           {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView(returnView.current); reloadSkills() }} /></Suspense>
+            : view === 'automation' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} page="automation" onClose={() => setView(returnView.current === 'automation' ? 'chat' : returnView.current)} /></Suspense>
             : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} settings={state.settings} panelOpen={rightPanelOpen && !panelDetached} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
             <main className={`center${thread ? ' has-task' : ' is-home'}`}>
               {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div> : (

@@ -47,6 +47,10 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "vendor/aoci",
+        "to": "aoci"
       }
     ],
     "asar": true,
