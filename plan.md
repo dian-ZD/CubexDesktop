@@ -1,12 +1,12 @@
 # 计划
 
-> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（体积/启动优化 + 分支合并回填）
+> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（Beta 功能栏目 + aoci/agent-core 两个外部仓库接入）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
 
-0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；资料报告 + 引用溯源完成；**zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG）完成**；本轮 **安装包体积优化完成**：typecheck 0 / lint 0 error / test 115 passed + 4 skipped。
+0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；资料报告 + 引用溯源完成；**zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG）完成**；**安装包体积优化完成**；**自动化改为独立页面（不再藏在设置里）完成**；**Code/Work/Browser 模式选择器从标题栏移入侧栏完成**；**设置新增「Beta 功能」栏目并接入 aoci-code + agent-core 完成**：typecheck 0 / lint 0 error / test 130 passed + 4 skipped。
 
 ## 步骤清单（近期已完成）
 
@@ -179,13 +179,55 @@
 - 交付验证：`asar list` 确认 26 条目、0 个 node_modules；把打包产物复制到**上级链无任何 `node_modules`** 的隔离目录实跑，`[cubex] smoke-ready` 通过、无 `MODULE/ENOENT`。
 - 结论：体积收益确定；**启动/加载速度无低风险可优化瓶颈**——热启动已 ~368 ms，冷启动多出的 ~752 ms 全在首帧光栅化（React 在 `dom-ready` 前已渲染完），而 HTML 骨架可乘窗口仅几毫秒、收益不确定，故不改。
 
+### 步骤 J：自动化从设置里拆出为独立页面 —— [x]
+
+- 需求：删除设置里的「自动化」；点侧栏「自动化」后**收起右栏、让中间栏 + 右栏整片变成自动化页面**，而不是跳转设置页。
+- 做法（选的是**复用 `SettingsPanel` 加 `page` 模式**，而非新建组件）：新增 `page?: SectionId` prop，`page` 存在时隐藏 `.settings-nav`（设置分类栏）、只渲染该分区的行、顶部多一条 `.settings-toolbar`（「返回会话 Esc」）；自动保存/校验/「立即运行」/计数全部沿用现成逻辑，零重复实现、风险最低。
+- `App.tsx`：`view` 联合类型加 `'automation'`；侧栏按钮 `onClick={() => setView('automation')}`（不再 `setSettingsSection('automation')`）；`returnView` ref 类型加 `'automation'`（从设置关闭能回到自动化页），自动化页自己的返回则兜底到 `'chat'`；标题栏标题 = 「自动化」、隐藏项目面包屑与 Code/Work/Browser 模式切换器；`showRightPanel` 本就要求 `view === 'chat'`，右栏与右侧分界线自动不渲染 → 页面独占中间 + 右侧区域。
+- 从设置里**彻底**摘除：`hiddenSections`（`Set`）让 `pool` 在设置模式下直接排除隐藏分区的行，**设置搜索也搜不到**；侧栏 nav 的 `|| section === meta.id` 补丁一并去掉（该分支已无意义）。
+- 校验：typecheck 0 / lint 0 error（9 既有 warning）/ test 115 passed + 4 skipped。
+- 实测（dev 窗口 + 整屏抓图）：① 设置分类栏无「自动化」；② 点侧栏「自动化」→ 标题栏「自动化」、设置分类栏消失、右栏收起、页面铺满、底部「改动会自动保存并立即生效」、侧栏保留且「自动化」高亮。
+- **坑**：对 Electron 窗口 `PrintWindow(hwnd, hdc, 2)` 抓到的是**陈旧帧**（点了按钮仍显示旧视图），验证 UI 必须用 `CopyFromScreen` 整屏抓图；另 DPI 环境下脚本须先 `SetProcessDPIAware()`，否则 `GetWindowRect` 返回虚拟化坐标（1440x840 而非 1800x1050），点击会整体偏移。
+
+### 步骤 K：Code/Work/Browser 模式选择器移入侧栏 —— [x]
+
+- 需求：把模式选择器从标题栏移到**标题下方、新建任务上方**，并整理排版。
+- 做法：把三按钮 JSX 抽成组件内常量 `modeSwitch`（非组件，直接 `{modeSwitch}` 复用），侧栏插在 `.sidebar-brand` 与 `.new-task` 之间（包一层 `.sidebar-mode`）；标题栏原位改为 `{!sidebarOpen && view !== 'settings' && modeSwitch}`——**条件与既有的「展开侧栏」按钮完全一致**，故侧栏收起时仍能在标题栏切模式，不会因为「移动」而丢失入口。
+- **去掉图标只留文字**（`CodeXml`/`Workflow`/`Globe` → 纯文本）：`--side-col` 最小 208 px，扣掉侧栏 padding 与胶囊 padding 后每段只剩 ~60 px，而「Browser」带 14px 图标 + 5px 间隙需 ~61 px，窄侧栏下必然裁字；纯文本约 46 px 全宽度区间都装得下，零边界情况。`CodeXml` 因此从 import 里移除（`Workflow`/`Globe` 仍被 onboarding、消息卡片、工具图标使用）。
+- 排版整理：`.sidebar-brand` 底部 padding 12 → 8；新增 `.sidebar-mode { margin-bottom:10px }`、`.sidebar-mode .mode-switch { width:100% }`、`button { flex:1; min-width:0; justify-content:center; height:26px; padding:0 6px; white-space:nowrap }`。三段等分、居中、撑满侧栏，与上下 `nav-action` 行高视觉对齐（26+4+2 = 32 vs 34）。
+- **已知取舍**：自动化页侧栏现在也会显示模式选择器（原先标题栏在 automation 视图下是隐藏它的），当前无任何模式被选中，点一下即可回 Code/Work/Browser——视为改进而非回归。
+- 校验：typecheck 0 / lint 0 error（9 既有 warning）/ test 115 passed + 4 skipped；整屏截图确认「标题栏只剩标题 + 右侧图标组，侧栏品牌行下方是 Code|Work|Browser 胶囊、其下是新建任务」。
+- **截图注意事项（本轮踩到）**：验证时为绕开遮挡曾 `SetWindowPos(HWND_TOPMOST)` 把窗口提到最顶层，其中一个脚本设了没还原，导致主窗口持续置顶被用户察觉。**已清除**（`GetWindowLong(GWL_EXSTYLE)` = 0x0、`topmost=False`），临时脚本全部删除；今后截图不再使用置顶。
+
+### 步骤 L：接入 aoci-code + agent-core，设置新增「Beta 功能」栏目 —— [x]
+
+- 需求：把 https://github.com/aoci-spec/aoci-code 与 https://github.com/kernel4632/agent-core 「搞进去」，并在设置里加「Beta 功能」栏目，含两个开关：**「token节省与大型项目优化」**与 **「agent循环优化」**。
+- 两仓库定位：aoci-code = Go 实现的**持久化代码库认知索引** + 本地 stdio MCP 服务器（9 个工具），让 agent「读一次就懂整个系统」而非每次重读仓库 → 对应 token 节省/大型项目；agent-core = TS 写的**极简 agent 循环**（LLM + 工具 + 自动循环，核心是停机语义）→ 对应 agent 循环优化。
+- 经选择题确认的两条接法：
+  - **agent 循环 → 移植逻辑、不装依赖**。理由：agent-core 深度绑定 Bun 运行时（`features/llm.js` 的 `Bun.hash`、`tool.js` 的 `new Bun.Glob().scan()`、`tool-process.js` 的 `Bun.spawn`/`Bun.file`，`scripts/build.js` 还写着 `target:'bun'`//「只在 Bun 上跑」），**跑不进 Electron**；真引入要么打 shim 要么捆 ~90MB Bun 运行时，会把刚做完的 106 MB 体积优化报废。用户的条件是「效果一样就选移植」——**循环停机部分逐条等价**，因此选移植；agent-core 另外的能力（Gemini/Responses 协议、纯文本工具协议 text-tools、结构化输出、目录扫描式工具发现）**不在「循环优化」范围内**，那些必须真依赖且要 Bun，本轮不做。
+  - **aoci → 二进制打进安装包**（用户明确选择，而非按需下载或用户自装）。
+- 产出：
+  - **schema**（`src/shared/schema.ts`）：新增 `betaSchema { tokenSaving, agentLoop }`，`settingsSchema` 加 `beta`，`defaultSettings` 默认 `false`，`migrateState` 走 `mergeGroup` 自动给老 state 补齐。
+  - **设置 UI**（`SettingsPanel.tsx`）：`SectionId` 加 `'beta'`；`sections` 插在「规则与记忆」与「键盘快捷键」之间（`FlaskConical` 图标）；`sectionPrefixes` 加 `beta: ['beta']`；`patch` 泛型加 `'beta'`；rows 加两条 `Toggle` 行（label 即用户给的两个中文名）。i18n 走 `tr()` + `phrases.ts` 新增 `betaPhrases` 并注册。
+  - **agent 循环**（新建 `src/main/loopPolicy.ts` + `agent.ts`）：`DEFAULT_LOOP_POLICY`（1 轮不补问 / 0.9 压缩比，**与改动前行为逐字一致**）与 `OPTIMIZED_LOOP_POLICY`（3 轮 / 0.8 / 补问提示）；`nextNoToolStep(count, rounds)` 逐行对应 `features/loop.js` 的 `noToolCount += 1` / `=== noToolRounds - 1` 则 `temporaryPrompt = noToolPrompt` / `>= noToolRounds` 则返回 `no-tool`。主循环：无工具调用时若开关关着仍直接 `return`；开着则计数 → 补问（临时 user 消息**只随本次请求发送、不写历史**，`streamChat` 成功后清空）→ 用尽才结束并写一条 system 说明。**引导（steering）到达时把计数清零**（agent-core 无此概念，属本地补充）。同一套语义也套进 `delegate` 子智能体循环。压缩触发比 `window * 0.9` 改为 `window * policy.compactRatio`。
+  - **AOCI 接入**（新建 `src/main/aoci.ts` + `index.ts` + `prompt.ts`）：`resolveAociBinary` 按打包（`resources/aoci`）/dev（仓库 `vendor/aoci`）两个目录找 `aoci.exe`；`planAociServers` 在开关打开且二进制、项目路径齐备时维护唯一一条 id `cubex-aoci` 的 MCP 条目（`command` = 二进制，`args` = `['--repo', <项目根>, 'mcp']`），换项目**就地替换**、开关关/二进制缺失/无项目则移除，用户自建的其它服务器一律不动。挂钩三处：`saveSettings`、启动 1200 ms 定时器、`sendMessage`/`regenerateMessage`（用线程的 projectId 精确定位），统一经 `syncAoci()` 写回 settings 再 `mcp.sync`（`McpManager.sync` 以 `configKey` 比对，args 变了会自动重启）。`prompt.ts` 在 `settings.beta.tokenSaving` 时追加 `AOCI_RULE`：先用 `aoci_overview`/`aoci_search` 取条目理解、别通读仓库；未初始化时按 `aoci --repo <root> init → scan → index build` 建索引；改动后 `aoci_update_entry` 维护。
+  - **安装包**：`package.json` `extraResources` 加 `{"from":"vendor/aoci","to":"aoci"}`；`vendor/aoci/` 放入 `aoci.exe`（24,729,600 B，SHA256 `ee7ee51f…`，来自 `v0.1.0-rc18` 官方 `SHA256SUMS` 校验通过）+ `LICENSE`/`NOTICE`/`PATENTS`/`THIRD-PARTY-NOTICES`/`TRADEMARKS`。
+  - **测试**：新增 `tests/loopPolicy.test.ts`（6 例）与 `tests/aoci.test.ts`（9 例）。
+- **实测（关键，先于 UI）**：用 stdio 直连 `aoci --repo <临时目录> mcp` —— **服务端回显了客户端请求的 `protocolVersion: 2024-11-05`**（Cubex 的 `mcp.ts` 用 2024-11-05，aoci 自述 2025-11-25，但按 MCP 规范回显即支持），`tools/list` 返回全部 9 个工具，`aoci_overview` 返回带下一步提示的 `[not_initialized]`（正好是 `AOCI_RULE` 里教 agent 去跑 init 的场景）。
+- **UI 实测（已通过，走 CDP 而非整屏抓图）**：锁屏导致 `CopyFromScreen` 只能拍到锁屏画面，改用 `electron --remote-debugging-port=9333` + Node `WebSocket` 走 CDP（`Runtime.evaluate` + `Page.captureScreenshot`，离屏渲染不受锁屏影响）。结果：① 设置分类栏出现「Beta 功能」，位置在「规则与记忆」与「键盘快捷键」之间，`FlaskConical` 图标；② 分区渲染标题 + 说明 + 两个开关 + 底栏「改动会自动保存并立即生效」；③ 点开「token节省与大型项目优化」后 2.5 s 内 `settings.beta.tokenSaving=true` 落盘 `state.json`，且 `mcp.servers` 自动长出 `{"id":"cubex-aoci","name":"aoci","command":"…\\vendor\\aoci\\aoci.exe","args":["--repo","C:\\projectsfile\\cubex 协作","mcp"]}`；④ MCP 分区显示 `aoci … --repo … · 9 个工具` 且状态 **「已连接」**（真实子进程握手成功）；⑤ 再点回关，`servers` 自动清空、`beta.tokenSaving=false`，测试状态已还原为默认。
+- 校验：typecheck 0 / lint 0 error（9 既有 warning）/ test **130 passed + 4 skipped**（基线 115，新增 15）。
+- **用户三项拍板（2026-10-06）**：① `vendor/aoci/aoci.exe` 24.7 MB 二进制 **→ 提交进 git**（换可复现打包，仓库变重）；② aoci 许可证 FSL-1.1 **→ 确认可以捆绑分发**，相关许可文件随二进制进包；③ `npm run dist` **→ 跑**。已写入 memory.md，**commit 仍等用户明确指示**。
+- **打包实测（已通过）**：`npm run dist` 成功，`release\Cubex Setup 0.1.2-dev.exe` = 112,735,101 B = **107.51 MB**（旧 106.22 MB，**+6.21 MB / +6.13%**，Go 二进制压缩率高，远低于最初 ~116 MB 的预估）；`release\win-unpacked\resources\aoci\` 六个文件齐全（`aoci.exe` 24,729,600 B，sha256 `ee7ee51f…` 与源文件一致；LICENSE/NOTICE/PATENTS/THIRD-PARTY-NOTICES/TRADEMARKS）；`Cubex Setup 0.1.1.exe`（137.83 MB 旧包）未被覆盖。
+- **打包版端到端（已通过）**：直接跑 `release\win-unpacked\Cubex.exe --remote-debugging-port=9334`，开「token节省与大型项目优化」后 `mcp.servers` 长出的 `command` 正是 `…\release\win-unpacked\resources\aoci\aoci.exe`（即 `process.resourcesPath` 落点，非 dev 回落分支），MCP 分区显示 **「9 个工具 · 已连接」**；关掉后条目自动移除，测试状态已还原为默认 `false`。
+- 结论：代码、测试、dev 窗口 UI 实测、安装包体积与**打包版端到端**全部完成；仅剩 commit 等用户指示。
+
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- 步骤 H（分支合并 `b62a3cd`）与步骤 I（体积/启动优化）均已完成并通过全量校验。
-- **校验基线更新**：typecheck 0 / lint 0 error（9 既有 warning）/ `npm test` = **115 passed + 4 skipped**（原 94 + 2）。
-- **已提交并推送**：本轮 commit `da9b013`（连同合并 `b62a3cd` 共 11 个提交）经 7890 代理 `push origin main` 成功，`git ls-remote origin main` = `da9b013` 核对一致。**坑补充：`git ls-remote` 也必须同样带上 `-c http.proxy=... -c https.proxy=...`，否则报 `Connection was reset`；PowerShell 下 push 的 stderr 仍会显示 `NativeCommandError`，以 `git status -sb`（无 ahead）为准。**
-- **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版与侧栏自动化入口未实测。
-- **下一步第一件事**：启动窗口实测上述 ①②③——先在 Browser 模式发一条多来源调研任务，验证 `browser_crawl` 抓取 + 末尾「参考来源」+ 正文 `[n]` 角标点击 + 右栏「资料报告」导出；再验证沙箱确已禁网与工作流进度条推进。
+- 步骤 H（分支合并 `b62a3cd`）、步骤 I（体积/启动优化）、步骤 J（自动化独立页面）、步骤 K（模式选择器移入侧栏）、**步骤 L（Beta 功能栏目 + aoci/agent-core 接入）**均已完成并通过全量校验；**步骤 J + K + L 尚未 commit**（等用户明确指示）。
+- **校验基线**：typecheck 0 / lint 0 error（9 既有 warning）/ `npm test` = **130 passed + 4 skipped**（原 115 + 4，新增 15 条）。
+- **已提交并推送**：`da9b013`（体积优化）+ `26be755`（docs 回填，当前 `HEAD` = `origin/main`），连同合并 `b62a3cd` 共 11+ 个提交经 7890 代理 `push origin main` 成功，`git ls-remote origin main` 核对一致。**坑：`ls-remote` 也必须带 `-c http.proxy=... -c https.proxy=...`；PowerShell 下 push 的 stderr 仍可能显示 `NativeCommandError`，以 `git status -sb`（无 ahead）为准。**
+- **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版未实测（侧栏自动化入口、模式选择器位置与 **Beta 功能分区均已实测通过**）；④ `release\Cubex Setup 0.1.1.exe`（137.83 MB 旧包）待用户确认后删。
+- **下一步第一件事**：等用户明确指示后，把步骤 J + K + L 一起 commit/push（**用户已确认 `vendor/aoci/` 一并提交进 git**；带 7890 代理并核对 `ls-remote`），再收集 ①②③ 的实测反馈。用户已确认**分离任务面板的永久置顶保留**，该项无需改动。
 
 ## 已知风险 / 阻塞项及应对
 

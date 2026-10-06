@@ -1,6 +1,6 @@
 # 记忆
 
-> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（体积/启动优化 + 分支合并回填）
+> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（Beta 功能栏目 + aoci-code / agent-core 接入）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
@@ -106,6 +106,7 @@
 - **最危险的假象**：打包版在开发机上「正常启动」，是因为 ESM 解析从 `resources/app.asar/out/main/` 一路向上**命中了工程根的 `node_modules`**；装到 `Program Files` 必然 `ERR_MODULE_NOT_FOUND`。**验证打包产物必须复制到上级链无 `node_modules` 的隔离目录再跑**（本轮在 `C:\Windows\Temp\opencode\pkg-test` 实跑 `[cubex] smoke-ready` 通过）。
 - **`electronLanguages` 要写 `en-US`**：写 `en` 匹配不到 `locales\en.pak`，会只留 zh-CN。
 - **体积成果**：NSIS 安装包 144.53 → **106.22 MB**（−26.5%）；解包 545.5 → 322.4 MB；`app.asar` 176.8 → 2.0 MB；`locales` 50.6 → 0.6 MB。剩余体积大头是 Electron 自带 `Cubex.exe` 234.8 MB（≈ `node_modules\electron\dist\electron.exe`，非我们可控）。
+- **aoci 二进制的体积代价**：`extraResources` 加 `vendor/aoci → aoci` 后重打，安装包 106.22 → **107.51 MB**（112,735,101 B，**+6.21 MB / +6.13%**）。`aoci.exe` 裸文件 24.7 MB，但 NSIS/7z 对 Go 静态二进制压缩率高，**实际只涨 6 MB**——比「24.7 MB 直接相加」的直觉低得多，别拿裸文件大小估算安装包涨幅。electron-builder 会先 `signing with signtool.exe path=release\win-unpacked\resources\aoci\aoci.exe`（哈希未变说明本机无证书时是空操作）。
 - **启动测量方法论（踩过两次坑）**：
   - `WaitForInputIdle` **不是**窗口显示时间（会得到 3813 ms 的假象），要看 `ready-to-show` 或轮询 `MainWindowTitle`。
   - **单次测量不可信**：同一二进制首跑 1056 ms、后 4 次 351–409 ms，必须多采样区分冷热。
@@ -113,6 +114,37 @@
 - **阶段拆解**（热）：`module evaluated 3ms → whenReady 57ms → createWindow 110ms → dom-ready 157ms → did-finish-load 158ms → ready-to-show 238ms`；冷启动多出的 ~752 ms 全在 `did-finish-load` 之后的**首帧光栅化**（React 在 `dom-ready` 前已渲染完），故 HTML 骨架方案收益不确定、未采用。
 - **`& electron ... | Out-String` 会永久挂起**：Electron 的 GPU/renderer 子进程继承 stdout 句柄，管道不 EOF。测启动一律用 `Start-Process -RedirectStandardOutput` + 轮询日志。
 - **首屏已充分代码分割**：`SettingsPanel`/`RightPanel`/`WorkflowCanvas`/`BrowserWorkspace` 均 lazy，`speech.worker`（812 KB，最大单文件）按需 `new Worker`；首屏同步资源为主包 292 KB + react 222 KB + css 100 KB，无低风险可再优化项。
+
+## 自动化独立页面（0.1.2-dev 后续交互）
+
+- **需求**：删除设置里的「自动化」；点侧栏「自动化」收起右栏、让中间栏 + 右栏整片变成自动化页面，而不是跳转设置页。
+- **方案选型：复用 `SettingsPanel` 加 `page` 模式，不新建组件**。理由：`renderAutomations` 128 行依赖 `draft`/`settings`/`errors`/`errorFor`/`open`/`addAutomation`/`runAutomationNow`/`autoBusy`/`activeProjects`/`workflows` 及 `FieldError`/`NumberField`/`Select`/`Toggle` 等一堆内部件，且设置本身是**600 ms 防抖自动保存**（`autoSave` + `settingsSchema.safeParse` 全量校验）；搬出去意味着重抄整套草稿/校验/保存，风险高、代码重复。
+- **`page?: SectionId` 的三处作用**：① 不渲染 `.settings-nav`（设置分类栏与搜索框）；② `pool` 改为 `rows.filter(row => row.section === page)`，只渲染该分区；③ `.settings` 顶部插一条 `.settings-toolbar`（「返回会话 Esc」按钮，样式 `.settings-toolbar` + 相邻 `.settings-inner` 收紧上边距）。
+- **设置里彻底摘除**：模块级 `hiddenSections = new Set(sections.filter(s => s.hidden).map(s => s.id))`，设置模式下 `pool` 直接排除隐藏分区 → **nav、内容、搜索三处都搜不到**（原实现 nav 有 `|| section === meta.id` 补丁、搜索则完全不过滤 `hidden`，故此前搜「自动化」能搜出来）。`activeSection` 对隐藏分区兜底回 `'providers'`，防止 `initialSection` 传入隐藏 id。
+- **`App.tsx` 接线**：`view` 联合类型加 `'automation'`；侧栏按钮只 `setView('automation')`（删掉 `setSettingsSection('automation')`）；`returnView` ref 类型加 `'automation'`（否则 `if (view !== 'settings') returnView.current = view` 会编译错），**设置页关闭时能回到自动化页**；自动化页自己的返回/Esc 用 `returnView.current === 'automation' ? 'chat' : returnView.current` 兜底，否则会自指死循环。
+- **右栏「收起」无需写代码**：`showRightPanel = rightPanelOpen && view === 'chat' && !panelDetached`、右侧分界线由它网关、`panelMode`（任务操作/右栏切换按钮）也排除 automation → 页面自然独占中间 + 右侧区域，`rightPanelOpen` 状态保留，回到 chat/browser 时右栏原样恢复。
+- **标题栏**：标题 `自动化`；项目面包屑与 Code/Work/Browser 模式切换器在 automation 视图下隐藏；`showSidebar = sidebarOpen && view !== 'settings'` 未动 → **侧栏保留**（用户只说收起右栏），侧栏「自动化」按钮加 `aria-current="page"`。
+- **已知耦合（未改，属既有行为）**：自动化的草稿仍属 `settings.automations`，任一分区 schema 校验失败会让**两个页面的自动保存同时暂停**（`if (!parsed.success) return`），`totalErrors = errors.size` 也是全局计数——今天在「通用」分区看到「有 N 处设置需要修正」而四处找不到错误，是同一现象，非本次引入。
+- **校验**：typecheck 0 / lint 0 error（9 warning）/ test 115 passed + 4 skipped。**未 commit**（等用户指示）。
+
+## 模式选择器移入侧栏（0.1.2-dev 后续交互）
+
+- 需求：`Code/Work/Browser` 从标题栏移到**标题下方、新建任务上方**，并整理排版。
+- 抽成组件内常量 `modeSwitch`（普通 JSX 常量，两处 `{modeSwitch}` 复用），侧栏用 `.sidebar-mode` 包一层，标题栏原位改成 `{!sidebarOpen && view !== 'settings' && modeSwitch}`——**与既有「展开侧栏」按钮的条件一字不差**，所以侧栏收起时仍能切模式，避免「移动 = 丢失入口」。
+- **为什么删掉图标只留文字**：`--side-col: clamp(208px, 18vw, 288px)` 最小 208 px，扣侧栏 `padding 10×2` + 胶囊 `padding/border 6` + `gap 2×2` 后每段只剩 ~60 px；而「Browser」带 14px 图标 + 5px gap + 约 46px 文本 = ~61 px，**窄侧栏下必然裁字**。纯文本只需 ~46 px，全宽度区间都装得下。副作用：`CodeXml` 只有这一处用，必须从 import 移除（`Workflow`/`Globe` 另有 onboarding、消息卡片、工具图标在用，保留）。
+- 新增样式：`.sidebar-mode{margin-bottom:10px}`、`.sidebar-mode .mode-switch{width:100%}`、`button{flex:1;min-width:0;justify-content:center;height:26px;padding:0 6px;white-space:nowrap}`；`.sidebar-brand` 底部 padding 12 → 8。特异性 `.sidebar-mode .mode-switch button` (0,2,1) > `.mode-switch button` (0,1,1)，**不受 5450 行那批规则顺序影响**。
+- **取舍**：automation 视图侧栏现在也会显示选择器（原标题栏在该视图是隐藏它的），此时无任何项 `aria-checked`，点一下即可回 Code/Work/Browser——算改进不是回归。
+
+## Beta 功能栏目与 aoci-code / agent-core 接入（0.1.2-dev 后续）
+
+- **两个仓库是什么**：`aoci-code`（Go）= 持久化代码库认知索引 + 本地 stdio MCP 服务器（9 个工具），agent 读一次索引就懂系统、不必每次重读仓库；`agent-core`（TS/Bun）= 极简 agent 循环框架，卖点是停机语义。两者分别对应开关「token节省与大型项目优化」与「agent循环优化」。
+- **为什么 agent-core 只移植不引入**：它绑定 Bun 运行时——`features/llm.js` 的 `Bun.hash`、`tool.js` 的 `new Bun.Glob().scan()`、`tool-process.js` 的 `Bun.spawn`/`Bun.file`，`scripts/build.js` 明写 `target:'bun'`//「只在 Bun 上跑」。Electron/Node 里跑不起来，真引入要么打 shim 要么捆 ~90MB Bun 运行时（体积优化直接报废）。经选择题用户拍板「效果一样就选移植」。**移植边界**：循环停机语义逐条等价；Gemini/Responses 协议、text-tools 纯文本工具协议、结构化输出、目录扫描工具发现**不在本次范围**（那些必须真依赖 + Bun）。
+- **移植落点** `src/main/loopPolicy.ts`：`nextNoToolStep(count, rounds)` 逐行对应 `features/loop.js` 的 `noToolCount += 1` / `=== noToolRounds - 1` 置 `temporaryPrompt` / `>= noToolRounds` 返回 `no-tool`。`DEFAULT_LOOP_POLICY` = 1 轮不补问 + 0.9 压缩比（**与改动前行为逐字一致**，保证开关关着时零回归），`OPTIMIZED_LOOP_POLICY` = 3 轮 + 0.8 + 补问提示。
+- **补问提示不进历史**：在 `fitContext` 之后临时拼一条 `role:'user'` 消息进请求体，`streamChat` 成功后清空；历史里看不到，避免污染对话。**steering 到达时把计数清零**（agent-core 无 steering 概念，属本地补充）。
+- **AOCI 的 `--repo` 是可选的**（`aoci --help` 写 `overrides automatic discovery`），但显式给更稳，因为 `McpClient.spawn` 不设 `cwd`。`planAociServers` 用固定 id `cubex-aoci` 就地替换条目，`McpManager.sync` 以 `configKey`（含 command/args）比对 → 换项目会自动重启该 server。
+- **MCP 协议版本兼容（已实测）**：Cubex `mcp.ts` 发 `protocolVersion: '2024-11-05'`，aoci 自述 `2025-11-25`；实测 stdio 直连**服务端回显 2024-11-05**（按 MCP 规范回显即支持），`tools/list` 9 个工具齐全，未初始化仓库返回带下一步提示的 `[not_initialized]`。
+- **aoci 二进制**：v0.1.0-rc18 windows_amd64 zip 9,487,255 B，SHA256 与官方 `SHA256SUMS` 一致；解出 `aoci.exe` 24,729,600 B（sha256 `ee7ee51f…`）放 `vendor/aoci/`，另附 LICENSE/NOTICE/PATENTS/THIRD-PARTY-NOTICES/TRADEMARKS；`package.json` `extraResources` 加 `{"from":"vendor/aoci","to":"aoci"}` → 打包后在 `resources/aoci`，dev 下回落到仓库 `vendor/aoci`。
+- **挂钩位置**：`syncAoci()` 在 `saveSettings`、启动 1200ms 定时器、`sendMessage`/`regenerateMessage` 三处调用（后两处传 threadId 精确取项目），统一写回 settings 后再 `mcp.sync`。
 
 ## 已知问题与坑
 
@@ -125,6 +157,14 @@
 - **探测函数的副作用/耗时**：`probeContextWindow` 一次点击会发多轮（约 5–18 次）真实请求，默认上界 100 万 tokens；对超大模型首轮可能较慢，属预期。`low`/`high` 可调。
 - **摘要压缩依赖模型可用**：无 API Key / 模型被删时 `summarize` 直接返回移除标记（非摘要），不会报错也不阻塞。
 - **`step--` 重来**：主循环自动压缩后 `step--; continue`，保证压缩本身不占用步数（注意 `step` 是 `let`）。
+- **`PrintWindow(hwnd, hdc, 2)` 对 Electron 抓到的是陈旧帧**：本轮点完按钮 `PrintWindow` 仍返回点击前的视图（返回 false 也可能是合成器用 D3D 交换链），据此误判成「点击没生效」。**验证 Electron UI 必须用 `Graphics.CopyFromScreen` 整屏抓图**，或走 CDP（需 `--remote-debugging-port` 启动）。
+- **DPI 下的坐标虚拟化**：PowerShell 默认 DPI 感知，`GetWindowRect`/`Screen.Bounds` 返回虚拟化坐标（1920x1080@125% 变成 1536x864），算出的点击位置整体偏移 20%。**脚本开头必须 `SetProcessDPIAware()`**，之后 `GetWindowRect` 才给物理坐标（本轮 1440x840 → 1800x1050，窗口 `(48,24)` → `(60,30)`）。
+- **`SetForegroundWindow` 可能静默失败**（Windows 前台锁定），点击会落到被遮挡的窗口上。可靠做法：`AttachThreadInput(当前线程, 前台线程, true)` → `BringWindowToTop` → `SetForegroundWindow` → 解绑，并用 `GetForegroundWindow()` 校验后再点。
+- **最小化窗口的 `MainWindowHandle`**：`IsIconic=true` 时 `PrintWindow` 只得到 159x29 的残帧，先 `ShowWindow(h, 9)`（SW_RESTORE）再取 rect。
+- **截图不要用 `HWND_TOPMOST`**：为绕开其它窗口遮挡曾 `SetWindowPos(h, HWND_TOPMOST, ...)` 提顶，其中一个脚本设了没还原，导致主窗口持续置顶、被用户当场发现（「不要让cubex永远置顶啊」）。**已清**：`SetWindowPos(h, HWND_NOTOPMOST, ...)` 后 `GetWindowLong(hwnd, GWL_EXSTYLE)` 必须为 0x0、`topmost=False`。正确做法是改窗口位置/尺寸避开遮挡，或直接问用户，不要动 z 序。
+- **`SetWindowPos` 的 flag 别写反**：`SWP_NOSIZE=0x0001`、`SWP_NOMOVE=0x0002`。想「只移动不改尺寸」要传 `0x0001`（保留尺寸），传 `0x0003` 是**位置和尺寸都不动**，写了等于没写；传 0 且 `cx/cy=0` 会把窗口缩成 0。
+- **dev 下 `src/main` 改了不一定重建**：本轮改了 `index.ts`/`agent.ts`/`prompt.ts` 后 `out/main/index.js` 的 mtime 仍是 dev 启动时刻、内容里查不到新符号，而 Electron 进程还是启动时那个 pid——**主进程 watcher 没触发，renderer HMR 日志也不会报**。后果是「renderer 新代码 + main 旧代码」混跑：旧 main 的 `settingsSchema.parse` 会把 `beta` 当未知键剥掉，新 renderer 读 `draft.beta.tokenSaving` 直接崩。**验证主进程改动前必须先核对 `Get-Item out\main\index.js` 的 mtime 是否晚于源文件**，不是就重启 `npm run dev`（kill `electron-vite`/`electron` 后重开）。
+- **electron-vite dev 日志里只有 renderer 的 HMR 行**，主进程重建成功那几行只在**启动**时打印（`electron main process built successfully`）；运行中改 main 不一定会打印，所以别拿日志判断主进程是否是新的。
 
 ## 用户明确偏好与禁忌（尽量原样）
 
@@ -133,13 +173,15 @@
 - 「编译0.1.2-dev」——版本号用 0.1.2-dev。
 - 「传到github上」——推送 GitHub（已完成）。
 - 「添加与code work并列的第三个模式，Browser模式，参考tabbit，先给我一个plan」——**要求先出 plan 再动手**；后端用 Electron 内置 BrowserWindow、混合形态、完整版（经选择题确认）。
+- 「code work browser模式选择器放移动标题下方，新建任务上方，然后整理一下排版」——模式选择器从标题栏移入侧栏（已完成，步骤 K）。
+- 「不要让cubex永远置顶啊」——**主窗口与普通窗口一律不置顶**（我截图验证时临时置顶被当场发现，已清，今后不再用该手段）；**分离任务面板浮窗例外，经选择题确认「保留置顶」**，`setAlwaysOnTop(true, 'floating')` 不动。
 - 历史偏好：圆角只加指定位置、i18n 彻底覆盖、需求不明先用选择题确认、全程中文回复。
 
 ## 已运行的关键命令及结果摘要
 
 - `npm run typecheck` → exit 0。
 - `npm run lint` → exit 0（9 warning，0 error）。
-- `npm test` / `npx vitest run` → 115 passed，4 skipped（合并分支后新增沙箱 7 + 平台 4 + 工作流 12；此前基线 94/2，更早 86/2）。
+- `npm test` / `npx vitest run` → **130 passed，4 skipped**（新增 `tests/loopPolicy.test.ts` 6 + `tests/aoci.test.ts` 9；此前 115/4，再往前 94/2、86/2）。
 - `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe` = **106,219,152 bytes（101.30 MB）**，已签名 + blockmap，x64；优化前同名产物为 144,532,022 bytes。
 - git：`git add -A` → `git commit` → 走 7890 代理 `git push origin main` 成功（`4e534a3`→`da9b013`，11 个提交含分支合并，`ls-remote` 带代理核对一致）。
 
@@ -148,8 +190,11 @@
 - `browser_crawl` 尚未在真实会话中跑通（需真实网络与已配模型）；后台离屏抓取在国内站点/搜索引擎反爬下的成功率待实测。
 - 引用溯源未实测：回答里的 `[n]` 角标点击跳转、右栏「资料报告」导出 `.md`（`exportText` IPC 走保存对话框）需在真实会话验证。
 - Browser 模式实时画面：MVP 用 `capturePage` 截图流还是完整版直接 `WebContentsView` 内嵌？（已在 plan 中向用户提出，倾向先截图流）
-- 是否需要清掉 `C:\Program Files\Cubex` 空壳？（历史遗留，待确认）
+- ~~是否需要清掉 `C:\Program Files\Cubex` 空壳？~~ 历史遗留，仍待确认。
 - `author` 字段缺失导致 electron-builder 警告（不影响安装包），是否补上后重打？
+- **aoci 二进制的处理（2026-10-06 用户已拍板，三项）**：① **`vendor/aoci/aoci.exe`（24.7 MB）提交进 git**——仓库会永久变重，换来「clone 即可打包」的可复现性；② **aoci 许可证 FSL-1.1 确认可以捆绑分发**，LICENSE/NOTICE/THIRD-PARTY-NOTICES/PATENTS/TRADEMARKS 随二进制放进 `vendor/aoci/` 一并打包；③ **同意跑 `npm run dist` 覆盖 `release\Cubex Setup 0.1.2-dev.exe`**（已执行并验证，`0.1.1.exe` 旧包保留）。决定已记录，但**尚未执行 commit**（按规则等用户明确指示提交，届时 `vendor/` 一并纳入）。
+- **Beta 功能 + aoci 已端到端实测通过**（dev 版与**打包版**各测一遍，CDP 手法见下）：分区渲染、开关切换、`state.json` 落盘、MCP 列表自动长出 `aoci` 条目并显示「已连接 · 9 个工具」、关掉开关自动移除，全部验证。**打包版**额外确认 `command` 指向 `release\win-unpacked\resources\aoci\aoci.exe`（`process.resourcesPath` 落点，不是 dev 的 `vendor/aoci` 回落分支）。安装包 106.22 → **107.51 MB（+6.21 MB）**。测试时打开的开关均已还原为默认 `false`。
+- **锁屏时怎么验 Electron UI**：屏幕锁了（前台是 `LockApp`）→ `CopyFromScreen` 只能拍到锁屏画面，`SetForegroundWindow` 也会失败（`SetForegroundWindow=False`）。**改用 CDP**：用 `Start-Process electron.exe -ArgumentList '--remote-debugging-port=9333','.' -RedirectStandardOutput/-RedirectStandardError` 启动（**别用 `& electron ... | Out-String`，会永久挂起**），Node 22 有全局 `WebSocket`，连 `GET http://127.0.0.1:9333/json/list` 里的 `webSocketDebuggerUrl`，用 `Runtime.evaluate`（`returnByValue:true` + 需要异步时 `awaitPromise:true`）点按钮读 DOM，用 `Page.captureScreenshot` 截图——**离屏渲染，与锁屏无关**。注意 `window.cubex.getState()` 返回的是 `{ok, data}` 包装，取 `s.data.settings`；直接把大对象塞进 `returnByValue` 会拿到 `undefined`，在页面里先 `JSON.stringify` 成字符串更稳。
 
 ## 临时性上下文
 
