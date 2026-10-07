@@ -21,11 +21,19 @@ describe('schema', () => {
     expect(stateSchema.safeParse(createInitialState()).success).toBe(true)
   })
 
-  it('提供商端点必须是 HTTPS 或本地 HTTP，且不含凭据', () => {
+  it('提供商端点支持 HTTPS 和本机、局域网及远程 HTTP', () => {
     expect(providerSchema.safeParse({ ...provider, baseUrl: 'https://api.example.com' }).success).toBe(true)
     expect(providerSchema.safeParse({ ...provider, baseUrl: 'http://localhost:11434' }).success).toBe(true)
-    expect(providerSchema.safeParse({ ...provider, baseUrl: 'http://api.example.com' }).success).toBe(false)
+    expect(providerSchema.safeParse({ ...provider, baseUrl: 'http://api.example.com/v1' }).success).toBe(true)
+    expect(providerSchema.safeParse({ ...provider, baseUrl: 'http://192.168.1.100:8000/v1' }).success).toBe(true)
+    expect(providerSchema.safeParse({ ...provider, baseUrl: 'http://[::1]:11434' }).success).toBe(true)
+  })
+
+  it('提供商端点仍拒绝非 HTTP 协议、凭据、查询参数和片段', () => {
     expect(providerSchema.safeParse({ ...provider, baseUrl: 'https://user:pw@api.example.com' }).success).toBe(false)
+    for (const baseUrl of ['http://user:pw@api.example.com', 'http://api.example.com/v1?key=test', 'http://api.example.com/v1#section', 'ftp://api.example.com', 'file:///tmp/model', 'not-a-url']) {
+      expect(providerSchema.safeParse({ ...provider, baseUrl }).success).toBe(false)
+    }
   })
 
   it('模型必须引用存在的提供商', () => {

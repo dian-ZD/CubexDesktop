@@ -1,13 +1,38 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { BrowserWindow } from 'electron'
+import { BrowserEngine } from '../src/main/browser'
 import { buildSystemPrompt } from '../src/main/prompt'
 import { browserTools, extensionToolNames, sensitiveExtensionTools, summarizeCall } from '../src/main/tools'
 import { browserBoundsInputSchema, browserNavigateInputSchema, browserStateSchema, browserTabInputSchema, createThreadInputSchema, defaultSettings, migrateState, settingsSchema, stateSchema, threadSchema, type ToolCall } from '../src/shared/schema'
 
-vi.mock('electron', () => ({
-  BrowserWindow: class {},
-  WebContentsView: class {},
-  shell: { openExternal: () => undefined },
-}))
+vi.mock('electron', async () => {
+  const { EventEmitter } = await import('node:events')
+  class MockContents extends EventEmitter {
+    url = ''
+    destroyed = false
+    session = { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), on: vi.fn() }
+    navigationHistory = { canGoBack: () => false, canGoForward: () => false }
+    setWindowOpenHandler = vi.fn()
+    setUserAgent = vi.fn()
+    isDestroyed = () => this.destroyed
+    isLoading = () => false
+    getTitle = () => '测试网页'
+    getURL = () => this.url
+    loadURL = vi.fn(async (url: string) => { this.url = url; this.emit('did-finish-load') })
+    executeJavaScript = vi.fn(async () => ({ title: '测试网页', url: this.url, text: '页面内容' }))
+    capturePage = vi.fn(async () => ({ isEmpty: () => true }))
+    close = () => { this.destroyed = true }
+  }
+  return {
+    BrowserWindow: class {},
+    WebContentsView: class {
+      webContents = new MockContents()
+      setBackgroundColor = vi.fn()
+      setBounds = vi.fn()
+    },
+    shell: { openExternal: () => undefined },
+  }
+})
 
 const project = { id: 'p1', name: 'demo', path: 'C:\\demo' }
 const call = (name: ToolCall['name'], args: Record<string, unknown>): ToolCall => ({ id: `c-${name}`, name, args })
@@ -99,5 +124,91 @@ describe('浏览器引擎选项', () => {
     expect(() => browserEngine.setWindow(null)).not.toThrow()
     expect(browserEngine.state('missing')).toEqual({ threadId: 'missing', url: '', title: '', loading: false, canGoBack: false, canGoForward: false, tabs: [], activeTabId: null })
     expect(browserEngine.hasSession('missing')).toBe(false)
+  })
+})
+
+describe('浏览器页面显示范围', () => {
+  let engine: BrowserEngine
+  let attached: Set<unknown>
+  const bounds = { x: 220, y: 100, width: 700, height: 500 }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    attached = new Set()
+    engine = new BrowserEngine()
+    engine.setWindow({
+      isDestroyed: () => false,
+      getContentSize: () => [1400, 900],
+      contentView: {
+        addChildView: (view: unknown) => { attached.add(view) },
+        removeChildView: (view: unknown) => { attached.delete(view) },
+      },
+    } as unknown as BrowserWindow)
+  })
+
+  afterEach(() => {
+    engine.closeAll()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('后台工具可以读取网页，但只有可见工作台上报尺寸后才显示', async () => {
+    const result = await engine.run('a', { kind: 'extract' }, new AbortController().signal)
+    expect(result.snippet).toBe('页面内容')
+    expect(attached.size).toBe(0)
+    engine.setBounds('a', bounds)
+    expect(attached.size).toBe(1)
+    engine.hide('a')
+    await engine.run('a', { kind: 'extract' }, new AbortController().signal)
+    expect(attached.size).toBe(0)
+    engine.setBounds('a', bounds)
+    expect(attached.size).toBe(1)
+  })
+
+  it('切换会话后旧会话的工具和标签操作不会盖住当前页面', async () => {
+    engine.setBounds('a', bounds)
+    engine.newTab('a')
+    engine.setBounds('b', bounds)
+    engine.newTab('b')
+    const visible = [...attached][0]
+    await engine.run('a', { kind: 'extract' }, new AbortController().signal)
+    engine.newTab('a', 'https://example.test/background')
+    const tabs = engine.state('a').tabs
+    engine.tab({ threadId: 'a', action: 'activate', tabId: tabs[0].id })
+    engine.tab({ threadId: 'a', action: 'close', tabId: tabs[1].id })
+    expect([...attached]).toEqual([visible])
+  })
+
+  it('导航加载期间隐藏后，加载完成和后续导航不会重新挂载', async () => {
+    engine.setBounds('a', bounds)
+    engine.newTab('a')
+    const view = [...attached][0] as { webContents: { loadURL: ReturnType<typeof vi.fn> } }
+    let finish = (): void => undefined
+    view.webContents.loadURL.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve }))
+    const navigation = engine.manualNavigate('a', 'https://example.test/slow')
+    engine.hide('a')
+    expect(attached.size).toBe(0)
+    finish()
+    await navigation
+    await engine.manualNavigate('a', 'https://example.test/next')
+    engine.newTab('a', 'https://example.test/popup')
+    expect(attached.size).toBe(0)
+    engine.setBounds('a', bounds)
+    expect(attached.size).toBe(1)
+  })
+
+  it('零尺寸和隐藏状态清除显示区域，旧 attach 不能恢复画面', () => {
+    engine.setBounds('a', bounds)
+    engine.newTab('a')
+    expect(attached.size).toBe(1)
+    engine.setBounds('a', { ...bounds, width: 0 })
+    engine.attach('a')
+    engine.newTab('a')
+    expect(attached.size).toBe(0)
+    engine.setBounds('a', bounds)
+    expect(attached.size).toBe(1)
+    engine.hide('a')
+    engine.attach('a')
+    expect(attached.size).toBe(0)
   })
 })

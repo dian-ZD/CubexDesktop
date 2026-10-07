@@ -1,10 +1,47 @@
 # 记忆
 
-> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（Beta 功能栏目 + aoci-code / agent-core 接入）
+> 最后更新时间：2026-10-07 ｜ 更新者：AI Agent（HTTP 端点与 0.2.2-dev 安装包）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
 ## 技术栈与约定
+
+### 2026-10-07 HTTP 端点与 0.2.2-dev 安装包
+
+- providerSchema 已允许任意 HTTP/HTTPS 模型端点，仍拒绝 URL 凭据、查询参数、片段和其它协议；设置占位与中英文校验提示同步更新。
+- package.json 与 package-lock.json 的项目版本均为 0.2.2-dev；build.copyright 为 Copyright © 2026 HIGHLIGHT STUDIO。
+- typecheck 通过，lint 0 error / 9 既有 warning，全量 158 passed / 4 skipped；npm run dist 成功。安装包 release\Cubex Setup 0.2.2-dev.exe 为 112,742,496 B，SHA256 为 DCCF8066ACCB87B029F92ABB297E3F9F407711F74D94A7A05E2A9900908708AA。
+- 安装包和 win-unpacked\Cubex.exe 的版权字段均包含 HIGHLIGHT STUDIO 与 ©；Authenticode 状态均为 NotSigned，不能把 builder 的 signing 日志当作已有数字签名。安装包 ProductVersion 为 0.2.2-dev，应用 EXE ProductVersion 为 Windows 数值版本 0.2.2.0，FileVersion 为 0.2.2-dev。
+- asar 内 package.json 版本正确，19 个 out 构建文件逐字节核对通过；打包版 CUBEX_SMOKE=1 使用隔离 userData，输出 smoke-ready 并以 0 退出。此验证未执行安装向导或覆盖用户安装。
+- Windows 上 asar.listPackage 返回反斜杠路径，extractFile 使用已发现的归档路径去掉首个反斜杠；使用 API 返回字节，不使用会覆盖当前 package.json 的 extract-file CLI。
+- 0.2.2-dev 包含此前所有未发布增强与 Browser 修复。旧安装包保留，未 commit/push；真实模型服务端超时仍未进行真实端点复测。
+
+### 2026-10-07 Browser 页面显示范围修复
+
+- 覆盖其他页面的原因：BrowserEngine.run/manualNavigate 原先无条件 attach，能把已隐藏的原生 WebContentsView 重新挂到主窗口。现在只有可见工作台上报有效 bounds 才取得显示资格，工具和导航仅同步当前可见会话；hide 清除 bounds，零尺寸也隐藏。
+- BrowserWorkspace 的尺寸回调检查当前可见性、会话和卸载状态，避免异步标签操作完成后重新挂载已离开的页面。网页后台加载和抽取仍可继续。
+- 新增 4 项引擎回归；全量 157 passed / 4 skipped，typecheck、lint（0 error / 9 既有 warning）、build、test:desktop 通过。C:\Windows\Temp\opencode\cubex-browser-visibility-main.cjs 使用隔离 userData、本地 HTTP 页面和真实 WebContentsView，验证加载中隐藏、后台动作不抢占、切回恢复、零尺寸隐藏；测试窗口不置顶且无额外浮窗。
+- 本轮回归/冒烟匹配进程为 0，识别 CRLF 的 diff 检查通过。源码和 out 已更新；release 安装包未重打，未 commit/push。
+
+### 2026-10-07 文件编辑、请求处理与推荐选项
+
+- 文件保存通过 saveProjectFile IPC，校验项目内路径、UTF-8 文本、长度及 expectedContent，拒绝用旧内容覆盖已变化的文件；同路径手动保存串行。此校验不是跨进程文件锁，不能保证与外部程序同时写入时的原子性。
+- 文件预览与变更使用同一个 FileEditor，支持编辑、保存、Ctrl/Cmd+S、重新加载；截断预览禁止保存。草稿保存在当前渲染进程内存，跨面板切换保留，不跨应用退出或独立窗口共享。重新加载会确认放弃脏草稿；保存失败保留草稿。
+- context deadline exceeded / Client.Timeout 出现在响应体时属于服务端或中转上游报错，不能通过调大本地时限解决。streamChat 统一限制总重试次数：仅尚未发出文本的暂时性故障自动重试；已有文本时不自动重放，AgentRunner 保留部分文本。未使用真实端点复测，仍需实际使用反馈。
+- 错误提示条的“继续”向对应会话发送原文“继续”，不清空输入草稿；忙碌或非末尾错误不可用，点击锁防重复。
+- ask_user 保留字符串 options，新增 recommended（必须匹配一个选项）；标题右侧显示高亮点。agent.autoSelectRecommended 默认 false，设置入口在「规则与记忆」，沿用设置页自动保存机制；有效推荐直接返回工具选择结果，并记录自动选择来源，不伪装成人工回答；无效推荐仍等待用户，不绕过工具审批。
+- useI18n 的 t/tr 通过 useCallback 保持同语言下引用稳定，避免文件面板依赖 tr 的加载 effect 反复运行。文件读取加请求序号，忽略过期返回。
+- 校验：typecheck 通过，lint 0 error / 9 既有 warning，153 passed / 4 skipped；build、test:desktop 通过。隔离 UI 脚本 C:\Windows\Temp\opencode\cubex-editor-regression-main.cjs 验证编辑保存与冲突、推荐标记及自动保存、“继续”防重、1400/900px 模型布局。模拟桥接不调用真实模型服务。
+- 源码与 out 已更新，release 安装包未重打，未 commit/push。
+
+### 2026-10-07 本轮结果
+
+- 消息滚动原先在内容增高后判断距底距离，大段更新可能失去跟随。现在单独记录跟随意图，监听内容尺寸变化；消息初始与增量批次均为 8 条，历史定位不再展开目标之后的全部消息。所有消息类型均有 data-message-id，用于保留加载锚点。
+- delegate 每批最多 32 项，并发设置范围 1–16、默认 8；配置保存在 agent.subagentProfiles，运行记录保存在 thread.subagentRuns（最多 64 条）。研究/审查角色强制只读，工具执行时检查允许列表；其它角色仍沿用项目权限与审批。
+- 多子任务审批通过每轮队列串行处理，审批调用 ID 加子任务 ID 前缀，避免覆盖同一个审批槽位；停止会释放等待。程序重启时未完成的子任务标记 cancelled。右栏摘要显示最近一批任务，默认 8 张卡片，可继续加载和展开结果。
+- 本轮校验：typecheck 通过；lint 0 error / 9 既有 warning；137 passed / 4 skipped；npm run build 与 test:desktop 成功。新增 7 条单元测试覆盖子智能体权限、模型、并发排队、审批隔离、取消、部分失败及配置迁移。
+- 隔离 Electron UI 回归使用 C:\Windows\Temp\opencode\cubex-scroll-regression-main.cjs 及配套 preload/schema，加载当前 out/renderer 和模拟桥接，不读取真实用户状态或调用模型。已验证初始分页、大段内容和流式贴底、上翻期间新消息、历史定位、返回最新、逐批加载锚点、进度详情与配置表单。隐藏窗口的 requestAnimationFrame 不稳定，showInactive 后验证正常；测试实例自行退出。
+- 本轮只更新源码及 out 构建，尚未重打 release 安装包，亦未提交/推送。此前安装包不能用于验证本轮新增功能。
 
 - Electron 44.4.3 + React 19.3 + TypeScript 5.9 + electron-vite 5 + Vite 7.3 + electron-builder 26（NSIS，x64）。
 - 依赖：`zod` 4、`lucide-react`、`@xenova/transformers`（本地 whisper ASR）。
@@ -18,7 +55,7 @@
 - 圆角图标合成方式：用纯 `nativeImage` BGRA 像素处理（`scripts/make-icon.mjs` 的 `roundedIcon`/`roundedAlpha`/`buildIco`），不引入 `sharp`。原因：避免新增原生依赖。时间：图标任务期间。
 - 应用内圆角范围：仅「助手消息头像 + 标题栏小图标」，由用户经选择题确认；侧栏/欢迎页/引导页不加。
 - 删除主题分区但保留 schema 字段：`appearance.theme/accent/background` 仍是合法设置，只是入口从「主题」页迁到「外观」页。原因：不破坏已有用户数据结构。
-- 版本策略：现为 `0.1.2-dev`（用户明确要求编译 0.1.2-dev）。
+- 版本策略：现为 **`0.2.1`**（2026-10-06 用户指示「编译 0.2.1」，`package.json` 从 `0.1.2-dev` 改为 `0.2.1`；此前 `0.1.2-dev` 也是用户明确指定的）。版本号全项目只在 `package.json` 一处，`src/` 无硬编码引用——NSIS 产物名 `Cubex Setup <version>.exe` 直接反映它。
 - 截断根因判定：输出被截断有三个独立根因——① Anthropic `max_tokens` 兜底 8192 过小；② `safeArgs` 静默吞掉截断/畸形 JSON → 空参静默写入；③ OpenAI 兼容路径不发 `max_tokens` 导致网关套用自身小默认值。统一由 `resolveMaxTokens` 收口，并用 `truncated` 标志 + 自动续写兜底。
 - 模式架构哲学（延续）：Code/Work/Browser **共用同一 agent 与全量工具集**，差异只靠「注入不同 system prompt 段 + prompt 引导」实现，不为某模式裁剪工具集。Browser 模式因此需要把 `mode` 下沉到 `thread`（schema），让 agent 能感知并注入浏览器提示段。
 - Browser 模式后端选型：用 **Electron 内置 BrowserWindow**（复用现有离屏窗口安全加固，升级为可见+可交互），**不引入 Playwright/Puppeteer**；交互形态为「可对话 + 可编排」混合；本轮交付完整版。用户经选择题确认。
@@ -106,7 +143,7 @@
 - **最危险的假象**：打包版在开发机上「正常启动」，是因为 ESM 解析从 `resources/app.asar/out/main/` 一路向上**命中了工程根的 `node_modules`**；装到 `Program Files` 必然 `ERR_MODULE_NOT_FOUND`。**验证打包产物必须复制到上级链无 `node_modules` 的隔离目录再跑**（本轮在 `C:\Windows\Temp\opencode\pkg-test` 实跑 `[cubex] smoke-ready` 通过）。
 - **`electronLanguages` 要写 `en-US`**：写 `en` 匹配不到 `locales\en.pak`，会只留 zh-CN。
 - **体积成果**：NSIS 安装包 144.53 → **106.22 MB**（−26.5%）；解包 545.5 → 322.4 MB；`app.asar` 176.8 → 2.0 MB；`locales` 50.6 → 0.6 MB。剩余体积大头是 Electron 自带 `Cubex.exe` 234.8 MB（≈ `node_modules\electron\dist\electron.exe`，非我们可控）。
-- **aoci 二进制的体积代价**：`extraResources` 加 `vendor/aoci → aoci` 后重打，安装包 106.22 → **107.51 MB**（112,735,101 B，**+6.21 MB / +6.13%**）。`aoci.exe` 裸文件 24.7 MB，但 NSIS/7z 对 Go 静态二进制压缩率高，**实际只涨 6 MB**——比「24.7 MB 直接相加」的直觉低得多，别拿裸文件大小估算安装包涨幅。electron-builder 会先 `signing with signtool.exe path=release\win-unpacked\resources\aoci\aoci.exe`（哈希未变说明本机无证书时是空操作）。
+- **aoci 二进制的体积代价**：`extraResources` 加 `vendor/aoci → aoci` 后重打，安装包 106,219,152 → 112,735,101 B，即 **106.22 → 112.74 MB（+6.52 MB / +6.13%，十进制）**。`aoci.exe` 裸文件 24.7 MB，但 NSIS/7z 对 Go 静态二进制压缩率高，**实际只涨 6.5 MB**——比「24.7 MB 直接相加」的直觉低得多，别拿裸文件大小估算安装包涨幅。electron-builder 会先 `signing with signtool.exe path=release\win-unpacked\resources\aoci\aoci.exe`（哈希未变说明本机无证书时是空操作）。
 - **启动测量方法论（踩过两次坑）**：
   - `WaitForInputIdle` **不是**窗口显示时间（会得到 3813 ms 的假象），要看 `ready-to-show` 或轮询 `MainWindowTitle`。
   - **单次测量不可信**：同一二进制首跑 1056 ms、后 4 次 351–409 ms，必须多采样区分冷热。
@@ -151,7 +188,7 @@
 - **asar 锁定**：`npm run dist` 打包时 `release\win-unpacked\resources\app.asar` 可能被杀软/索引器锁定（非 Cubex/node 进程），导致 `Remove-Item release` 失败。绕过：结束进程 + 删 `release`/`out` 后重试；仍失败用 `npx electron-builder --win nsis "-c.directories.output=dist-out"`（`-c` 参数在 PowerShell 必须加引号）。本轮清理进程与产物后 `npm run dist` 一次成功。
 - **Program Files 权限**：删除 `C:\Program Files\Cubex` 需管理员，`-Verb RunAs` 提权可能被用户取消；当前该空文件夹壳残留，不影响重装。
 - **本目录现为 git 仓库**（此前记录的「非 git 仓库」已过时）：remote `origin` = https://github.com/dian-ZD/CubexDesktop.git，默认分支 `main`，最新 commit `da9b013`（2026-10-06 推送成功，含分支合并与体积优化）。`.gitignore` 已忽略 `node_modules/`、`out/`、`release/`。仍遵循「未获用户明确指令不擅自提交/推送」。
-- **push 需走本地代理**：本机直连 `github.com:443` 返回 `Connection was reset`（`Test-NetConnection github.com -Port 443` = False），但本地 7890 端口有代理（Clash 类）。成功命令：`git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin main`。未写入 git 全局配置（避免影响其它仓库）。
+- **push 先测通再选路径（2026-10-06 更新，旧结论已部分失效）**：**曾经**直连 `github.com:443` 返回 `Connection was reset`，需走本地 7890 代理：`git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin main`（未写入 git 全局配置，避免影响其它仓库）。**但 2026-10-06 实测该代理已不可用**——`127.0.0.1:7890` 无 LISTEN（FlClash 核心只开着 1053 DNS，`ProxyEnable=0`），带代理直接 `Failed to connect to github.com:443 over proxy`；而**直连反而通了**（`git ls-remote origin main` 成功，直推 `26be755..9ea6de1` 成功）。**正确做法：先 `git ls-remote origin main`（不带参数）试一下，失败再补代理参数**——两个方向的网络状况都会随翻墙工具开合而变，别按记忆硬套。
 - **PowerShell 下 git push 的 stderr 会被当作错误**：push 实际成功时仍显示 `NativeCommandError`，必须以 `git status -sb`（无 ahead）或 `git ls-remote origin main` 核对，不要只看退出码。
 - **lint 既有告警**：`npm run lint` 现有 9 个 `react-hooks/exhaustive-deps` warning（App.tsx，多为 `tr`/`thread` 依赖），为既有告警、非本轮引入，0 error。
 - **探测函数的副作用/耗时**：`probeContextWindow` 一次点击会发多轮（约 5–18 次）真实请求，默认上界 100 万 tokens；对超大模型首轮可能较慢，属预期。`low`/`high` 可调。
@@ -164,13 +201,15 @@
 - **截图不要用 `HWND_TOPMOST`**：为绕开其它窗口遮挡曾 `SetWindowPos(h, HWND_TOPMOST, ...)` 提顶，其中一个脚本设了没还原，导致主窗口持续置顶、被用户当场发现（「不要让cubex永远置顶啊」）。**已清**：`SetWindowPos(h, HWND_NOTOPMOST, ...)` 后 `GetWindowLong(hwnd, GWL_EXSTYLE)` 必须为 0x0、`topmost=False`。正确做法是改窗口位置/尺寸避开遮挡，或直接问用户，不要动 z 序。
 - **`SetWindowPos` 的 flag 别写反**：`SWP_NOSIZE=0x0001`、`SWP_NOMOVE=0x0002`。想「只移动不改尺寸」要传 `0x0001`（保留尺寸），传 `0x0003` 是**位置和尺寸都不动**，写了等于没写；传 0 且 `cx/cy=0` 会把窗口缩成 0。
 - **dev 下 `src/main` 改了不一定重建**：本轮改了 `index.ts`/`agent.ts`/`prompt.ts` 后 `out/main/index.js` 的 mtime 仍是 dev 启动时刻、内容里查不到新符号，而 Electron 进程还是启动时那个 pid——**主进程 watcher 没触发，renderer HMR 日志也不会报**。后果是「renderer 新代码 + main 旧代码」混跑：旧 main 的 `settingsSchema.parse` 会把 `beta` 当未知键剥掉，新 renderer 读 `draft.beta.tokenSaving` 直接崩。**验证主进程改动前必须先核对 `Get-Item out\main\index.js` 的 mtime 是否晚于源文件**，不是就重启 `npm run dev`（kill `electron-vite`/`electron` 后重开）。
+- **`npx @electron/asar extract-file <asar> package.json` 会覆盖当前目录的 `package.json`**：它的第 2 个参数是**输出文件名**（不是「要提取的文件名」），且**写本地文件、不吐 stdout**。本轮因此把打包版的 package.json 写进了项目根，`scripts`/`build`/`devDependencies` 全没，`npm run typecheck/lint/test` 一律报 `Missing script`。**读 asar 内容必须先 `cd` 到临时目录再执行**，或用 `> 重定向`（也一样写本地，不可靠）。发现后 `git checkout -- package.json` 恢复、再重打版本号即可；**顺带记下 electron-builder 的行为：打进 app.asar 的 package.json 会被剥成 19 行（只留 name/version/private/description/author/type/main/engines/dependencies，去掉 scripts/build/devDependencies），这是正常现象，不是文件损坏**——判断产物版本直接在 asar 里搜 `"version": "0.2.1"`。
 - **electron-vite dev 日志里只有 renderer 的 HMR 行**，主进程重建成功那几行只在**启动**时打印（`electron main process built successfully`）；运行中改 main 不一定会打印，所以别拿日志判断主进程是否是新的。
 
 ## 用户明确偏好与禁忌（尽量原样）
 
 - 「白底logo的图标里面的内容能不能大点」——logo 内部图标要更大（已 0.72→0.88）。
 - 「有时候会莫名其妙截断消息输出」——彻底根治输出截断。
-- 「编译0.1.2-dev」——版本号用 0.1.2-dev。
+- 「编译0.1.2-dev」→ 后被 **「编译0.2.1」** 取代（2026-10-06）——版本号以最新指示为准，当前 `0.2.1`。
+- 「删掉吧，然后编译0.2.1」——旧安装包 `release\Cubex Setup 0.1.1.exe` 直接删（已删 137.83 MB + blockmap 0.14 MB，删除前确认无进程占用）。
 - 「传到github上」——推送 GitHub（已完成）。
 - 「添加与code work并列的第三个模式，Browser模式，参考tabbit，先给我一个plan」——**要求先出 plan 再动手**；后端用 Electron 内置 BrowserWindow、混合形态、完整版（经选择题确认）。
 - 「code work browser模式选择器放移动标题下方，新建任务上方，然后整理一下排版」——模式选择器从标题栏移入侧栏（已完成，步骤 K）。
@@ -182,8 +221,9 @@
 - `npm run typecheck` → exit 0。
 - `npm run lint` → exit 0（9 warning，0 error）。
 - `npm test` / `npx vitest run` → **130 passed，4 skipped**（新增 `tests/loopPolicy.test.ts` 6 + `tests/aoci.test.ts` 9；此前 115/4，再往前 94/2、86/2）。
-- `npm run dist`（0.1.2-dev）→ 成功，产物 `release\Cubex Setup 0.1.2-dev.exe` = **106,219,152 bytes（101.30 MB）**，已签名 + blockmap，x64；优化前同名产物为 144,532,022 bytes。
-- git：`git add -A` → `git commit` → 走 7890 代理 `git push origin main` 成功（`4e534a3`→`da9b013`，11 个提交含分支合并，`ls-remote` 带代理核对一致）。
+- `npm run dist` → 三轮产物（**统一十进制 MB = bytes/10⁶**；PowerShell 的 `$_.Length/1MB` 得到的是 MiB，别混用）：① 体积优化版 `Cubex Setup 0.1.2-dev.exe` = 106,219,152 B（106.22 MB，此前记为「101.30 MB」实为 MiB）；② 打入 aoci 后同名重打 = 112,735,101 B（**112.74 MB**，+6.52 MB / +6.13%）；③ 升版后 `Cubex Setup 0.2.1.exe` = 112,735,082 B（**112.74 MB**）。优化前的 0.1.1 包为 144,527,112 B（144.53 MB）。
+- **`release\latest.yml` 是死文件**：内容停在 `version: 0.1.1`、`releaseDate: 2026-09-30`，每次 `electron-builder` 构建**都不会重写**它——因为 `package.json` 的 `build` 下没有 `publish` 字段，NSIS 只在有发布渠道时才生成/更新更新清单。目前项目不用自动更新，所以无害；**若以后要上 electron-updater，必须先补 `publish` 配置，否则会去拉一个 0.1.1 的旧版本。**
+- git：`git add` → `git commit -F` → push 成功（`4e534a3`→`da9b013` 走 7890 代理，11 个提交含分支合并）。**2026-10-06**：`a07116f`（feat，19 files/+2353−50）+ `9ea6de1`（docs）**直连**推成功，`26be755..9ea6de1  main -> main`，`ls-remote` 返回 `9ea6de1a668…` 与本地 HEAD 一致，`git status -sb` 无 ahead。
 
 ## 未解决问题 / 待确认
 
@@ -193,7 +233,8 @@
 - ~~是否需要清掉 `C:\Program Files\Cubex` 空壳？~~ 历史遗留，仍待确认。
 - `author` 字段缺失导致 electron-builder 警告（不影响安装包），是否补上后重打？
 - **aoci 二进制的处理（2026-10-06 用户已拍板，三项）**：① **`vendor/aoci/aoci.exe`（24.7 MB）提交进 git**——仓库会永久变重，换来「clone 即可打包」的可复现性；② **aoci 许可证 FSL-1.1 确认可以捆绑分发**，LICENSE/NOTICE/THIRD-PARTY-NOTICES/PATENTS/TRADEMARKS 随二进制放进 `vendor/aoci/` 一并打包；③ **同意跑 `npm run dist` 覆盖 `release\Cubex Setup 0.1.2-dev.exe`**（已执行并验证，`0.1.1.exe` 旧包保留）。决定已记录，但**尚未执行 commit**（按规则等用户明确指示提交，届时 `vendor/` 一并纳入）。
-- **Beta 功能 + aoci 已端到端实测通过**（dev 版与**打包版**各测一遍，CDP 手法见下）：分区渲染、开关切换、`state.json` 落盘、MCP 列表自动长出 `aoci` 条目并显示「已连接 · 9 个工具」、关掉开关自动移除，全部验证。**打包版**额外确认 `command` 指向 `release\win-unpacked\resources\aoci\aoci.exe`（`process.resourcesPath` 落点，不是 dev 的 `vendor/aoci` 回落分支）。安装包 106.22 → **107.51 MB（+6.21 MB）**。测试时打开的开关均已还原为默认 `false`。
+- **Beta 功能 + aoci 已端到端实测通过**（dev 版与**打包版**各测一遍，CDP 手法见下）：分区渲染、开关切换、`state.json` 落盘、MCP 列表自动长出 `aoci` 条目并显示「已连接 · 9 个工具」、关掉开关自动移除，全部验证。**打包版**额外确认 `command` 指向 `release\win-unpacked\resources\aoci\aoci.exe`（`process.resourcesPath` 落点，不是 dev 的 `vendor/aoci` 回落分支）。安装包 106.22 → **112.74 MB（+6.52 MB）**。测试时打开的开关均已还原为默认 `false`。
+- **`release\` 里现在有两个安装包**：`Cubex Setup 0.2.1.exe`（当前版本，112,735,082 B）与被它取代的 `Cubex Setup 0.1.2-dev.exe`（112,735,101 B，内容除版本号外一致）。**要不要删 0.1.2-dev 包待用户确认**；`release\latest.yml` 是停在 0.1.1 的死文件（无 `publish` 配置），也待确认是否删。
 - **锁屏时怎么验 Electron UI**：屏幕锁了（前台是 `LockApp`）→ `CopyFromScreen` 只能拍到锁屏画面，`SetForegroundWindow` 也会失败（`SetForegroundWindow=False`）。**改用 CDP**：用 `Start-Process electron.exe -ArgumentList '--remote-debugging-port=9333','.' -RedirectStandardOutput/-RedirectStandardError` 启动（**别用 `& electron ... | Out-String`，会永久挂起**），Node 22 有全局 `WebSocket`，连 `GET http://127.0.0.1:9333/json/list` 里的 `webSocketDebuggerUrl`，用 `Runtime.evaluate`（`returnByValue:true` + 需要异步时 `awaitPromise:true`）点按钮读 DOM，用 `Page.captureScreenshot` 截图——**离屏渲染，与锁屏无关**。注意 `window.cubex.getState()` 返回的是 `{ok, data}` 包装，取 `s.data.settings`；直接把大对象塞进 `returnByValue` 会拿到 `undefined`，在页面里先 `JSON.stringify` 成字符串更稳。
 
 ## 临时性上下文

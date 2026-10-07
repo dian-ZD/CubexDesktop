@@ -261,6 +261,10 @@ export class BrowserEngine {
   // 未导航过的标签不挂载（保持空态，避免露出空白视图）。
   private syncAttached(lease: Lease): void {
     if (!this.window || this.window.isDestroyed()) return
+    if (!this.currentThreadId || this.leases.get(this.currentThreadId) !== lease || !lease.bounds || lease.bounds.width <= 0 || lease.bounds.height <= 0) {
+      this.detachLease(lease)
+      return
+    }
     const active = lease.tabs.find((tab) => tab.id === lease.activeTabId) ?? null
     const desired = active && active.navigated && !active.view.webContents.isDestroyed() ? active.view : null
     if (lease.attachedView !== desired) {
@@ -303,6 +307,10 @@ export class BrowserEngine {
 
   setBounds(threadId: string, bounds: Rectangle): void {
     const lease = this.ensureLease(threadId)
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      this.hide(threadId)
+      return
+    }
     lease.bounds = bounds
     // 再次上报 bounds 意味着浏览器工作台重新可见（切回 Browser 视图、窗口尺寸变化等），
     // 这里顺带重新挂载视图，避免已经导航过的页面在切回后只剩空白。
@@ -314,7 +322,10 @@ export class BrowserEngine {
 
   hide(threadId: string): void {
     const lease = this.leases.get(threadId)
-    if (lease) this.detachLease(lease)
+    if (lease) {
+      this.detachLease(lease)
+      lease.bounds = null
+    }
     if (this.currentThreadId === threadId) this.currentThreadId = null
   }
 
@@ -479,9 +490,8 @@ export class BrowserEngine {
     const lease = this.ensureLease(threadId)
     const tab = this.ensureTab(threadId, lease, tabId)
     tab.navigated = true
-    // 让被操作的标签成为前台活动标签，用户才能实时看到这一步动作。
     lease.activeTabId = tab.id
-    this.attach(threadId)
+    if (this.currentThreadId === threadId) this.syncAttached(lease)
     const wc = tab.view.webContents
     if (signal.aborted) throw new Error('已取消')
 
@@ -613,7 +623,7 @@ export class BrowserEngine {
     if (!isHttp(target)) throw new Error('仅支持 http/https 网址')
     tab.navigated = true
     lease.activeTabId = tab.id
-    this.attach(threadId)
+    if (this.currentThreadId === threadId) this.syncAttached(lease)
     try {
       await raceTimeout(this.safeLoad(wc, target), NAV_TIMEOUT)
     } catch {

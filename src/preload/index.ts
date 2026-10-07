@@ -27,6 +27,7 @@ const api: CubexAPI = {
   pickFiles: (input) => ipcRenderer.invoke(channels.pickFiles, { projectId: input.projectId }),
   listFiles: (input) => ipcRenderer.invoke(channels.listFiles, { projectId: input.projectId, path: input.path }),
   readProjectFile: (input) => ipcRenderer.invoke(channels.readProjectFile, { projectId: input.projectId, path: input.path }),
+  saveProjectFile: (input) => ipcRenderer.invoke(channels.saveProjectFile, { projectId: input.projectId, path: input.path, content: input.content, expectedContent: input.expectedContent }),
   runShell: (input) => ipcRenderer.invoke(channels.runShell, { projectId: input.projectId, command: input.command }),
   openPanelWindow: (input) => ipcRenderer.invoke(channels.openPanelWindow, { threadId: input.threadId }),
   closePanelWindow: () => ipcRenderer.invoke(channels.closePanelWindow),

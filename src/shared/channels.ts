@@ -28,6 +28,7 @@ export const channels = {
   pickFiles: 'cubex:pick-files',
   listFiles: 'cubex:list-files',
   readProjectFile: 'cubex:read-project-file',
+  saveProjectFile: 'cubex:save-project-file',
   runShell: 'cubex:run-shell',
   openPanelWindow: 'cubex:open-panel-window',
   closePanelWindow: 'cubex:close-panel-window',

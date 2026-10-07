@@ -142,7 +142,7 @@ const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   providers: ['providers', 'models', 'defaultModelId', 'modelParams', 'image'],
   permissions: ['permissions', 'approvalMode'],
   worktree: ['agent.commandTimeoutSec', 'agent.shell', 'agent.verifyChanges'],
-  rules: ['agent.maxSteps', 'agent.planFirst', 'agent.autoTodo'],
+  rules: ['agent.maxSteps', 'agent.planFirst', 'agent.autoTodo', 'agent.autoSelectRecommended', 'agent.maxConcurrentSubagents', 'agent.subagentProfiles'],
   beta: ['beta'],
   shortcuts: ['chat.sendKey'],
   plugins: ['plugins'],
@@ -312,11 +312,13 @@ function ParamsForm({ label, value, fallback, errorPrefix, errors, onChange }: {
         <span>{tr('请求超时（秒）')}</span>
         <NumberField label={tr('{label}请求超时', { label })} nullable={overriding} value={numeric('timeoutSec')} min={10} max={900} placeholder={ph('timeoutSec')} onChange={(next) => set('timeoutSec', next ?? undefined)} />
         <FieldError message={err('timeoutSec')} />
+        <span className="field-hint">{tr('等待响应或连续无数据的时限；持续收到数据会续期，不改变服务端超时。')}</span>
       </label>
       <label className="field">
         <span>{tr('失败重试次数')}</span>
         <NumberField label={tr('{label}失败重试次数', { label })} nullable={overriding} value={numeric('retries')} min={0} max={5} placeholder={ph('retries')} onChange={(next) => set('retries', next ?? undefined)} />
         <FieldError message={err('retries')} />
+        <span className="field-hint">{tr('尚未输出文本时自动重试暂时性错误；已有输出时保留内容，手动继续。')}</span>
       </label>
       <label className="field">
         <span>{tr('上下文消息条数')}</span>
@@ -1013,7 +1015,55 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     ) },
     { key: 'planFirst', section: 'rules', label: tr('复杂任务先给计划'), hint: tr('多步骤任务先列出简短计划再动手'), keywords: 'plan 计划', render: () => <Toggle label={tr('复杂任务先给计划')} checked={agent.planFirst} onChange={(planFirst) => patch('agent', { planFirst })} /> },
     { key: 'autoTodo', section: 'rules', label: tr('复杂任务自动生成待办'), hint: tr('除简单问答外，动手前先拆成待办清单并逐项完成，防止长任务中途丢失进度'), keywords: 'todo 待办 清单 任务 记忆 拆解 进度', render: () => <Toggle label={tr('复杂任务自动生成待办')} checked={agent.autoTodo} onChange={(autoTodo) => patch('agent', { autoTodo })} /> },
+    { key: 'autoSelectRecommended', section: 'rules', label: tr('自动选择推荐项'), hint: tr('开启后直接采用助手标记的推荐选项；没有有效推荐项时仍会询问。多选问题只采用被推荐的那一项。'), keywords: 'recommended 推荐 自动 询问 选项', paths: ['agent.autoSelectRecommended'], render: () => <Toggle label={tr('自动选择推荐项')} checked={agent.autoSelectRecommended} onChange={(autoSelectRecommended) => patch('agent', { autoSelectRecommended })} /> },
     { key: 'maxSteps', section: 'rules', label: tr('单轮最多步数'), hint: tr('模型连续调用工具的上限，1–200'), keywords: 'steps 步数 循环', paths: ['agent.maxSteps'], render: () => <NumberField label={tr('单轮最多步数')} value={agent.maxSteps} min={1} max={200} unit={tr('步')} onChange={(value) => patch('agent', { maxSteps: value ?? Number.NaN })} /> },
+    { key: 'subagentConcurrency', section: 'rules', label: tr('子智能体并发上限'), hint: tr('每批最多 32 个子任务，超出并发上限的任务自动排队。'), keywords: 'subagent delegate 并发 子智能体', paths: ['agent.maxConcurrentSubagents'], render: () => <NumberField label={tr('子智能体并发上限')} value={agent.maxConcurrentSubagents} min={1} max={16} onChange={(value) => patch('agent', { maxConcurrentSubagents: value ?? Number.NaN })} /> },
+    { key: 'subagentProfiles', section: 'rules', label: tr('子智能体配置'), hint: tr('分别设置角色、模型和指令，主智能体可按任务选择配置。研究和审查角色始终只读。'), keywords: 'subagent delegate 角色 模型 权限 子智能体', paths: ['agent.subagentProfiles'], wide: true, render: () => (
+      <div className="item-list">
+        {agent.subagentProfiles.map((profile, index) => {
+          const update = (value: Partial<Settings['agent']['subagentProfiles'][number]>) => edit((current) => ({ ...current, agent: { ...current.agent, subagentProfiles: current.agent.subagentProfiles.map((item) => item.id === profile.id ? { ...item, ...value } : item) } }))
+          const readOnlyRole = profile.role === 'researcher' || profile.role === 'reviewer'
+          return (
+            <div className="item-card" key={profile.id}>
+              <div className="item-body">
+                <div className="grid-form">
+                  <label className="field">
+                    <span>{tr('子智能体名称')}</span>
+                    <input value={profile.name} maxLength={40} onChange={(event) => update({ name: event.target.value })} />
+                    <FieldError message={errors.get(`agent.subagentProfiles.${index}.name`)} />
+                  </label>
+                  <label className="field">
+                    <span>{tr('子智能体角色')}</span>
+                    <Select<Settings['agent']['subagentProfiles'][number]['role']> className="field-select" label={tr('子智能体角色')} value={profile.role}
+                      options={[{ value: 'general', label: tr('通用子智能体') }, { value: 'researcher', label: tr('研究子智能体') }, { value: 'coder', label: tr('编码子智能体') }, { value: 'reviewer', label: tr('审查子智能体') }]}
+                      onChange={(role) => update({ role, ...(role === 'researcher' || role === 'reviewer' ? { toolAccess: 'read-only' as const } : {}) })} />
+                  </label>
+                  <label className="field">
+                    <span>{tr('子智能体模型')}</span>
+                    <Select className="field-select" label={tr('子智能体模型')} value={profile.modelId}
+                      options={[{ value: '', label: tr('沿用主智能体模型') }, ...(profile.modelId && !draft.models.some((model) => model.id === profile.modelId) ? [{ value: profile.modelId, label: tr('子智能体模型已删除，请重选') }] : []), ...draft.models.map((model) => ({ value: model.id, label: model.name }))]}
+                      onChange={(modelId) => update({ modelId })} />
+                  </label>
+                  <label className="field">
+                    <span>{tr('子智能体工具权限')}</span>
+                    <Select<Settings['agent']['subagentProfiles'][number]['toolAccess']> className="field-select" label={tr('子智能体工具权限')} value={readOnlyRole ? 'read-only' : profile.toolAccess}
+                      options={[{ value: 'read-only', label: tr('只读与检索') }, ...(!readOnlyRole ? [{ value: 'project' as const, label: tr('沿用项目权限与审批') }] : [])]}
+                      onChange={(toolAccess) => update({ toolAccess })} />
+                  </label>
+                  <label className="field">
+                    <span>{tr('子智能体专属指令')}</span>
+                    <textarea rows={3} maxLength={8000} value={profile.instruction} onChange={(event) => update({ instruction: event.target.value })} />
+                    <FieldError message={errors.get(`agent.subagentProfiles.${index}.instruction`)} />
+                  </label>
+                </div>
+                <button type="button" className="btn-secondary" onClick={() => edit((current) => ({ ...current, agent: { ...current.agent, subagentProfiles: current.agent.subagentProfiles.filter((item) => item.id !== profile.id) } }))}><Trash2 size={14} />{tr('移除子智能体配置')}</button>
+              </div>
+            </div>
+          )
+        })}
+        <button type="button" className="btn-secondary" disabled={agent.subagentProfiles.length >= 16} onClick={() => edit((current) => ({ ...current, agent: { ...current.agent, subagentProfiles: [...current.agent.subagentProfiles, { id: crypto.randomUUID(), name: tr('子智能体配置 {n}', { n: current.agent.subagentProfiles.length + 1 }), role: 'general', modelId: '', instruction: '', toolAccess: 'project' }] } }))}><Plus size={14} />{tr('添加子智能体配置')}</button>
+      </div>
+    ) },
     { key: 'handoff', section: 'rules', label: tr('从其他 app 中继续未完成的工作'), hint: tr('复制下方提示词，在原来的 AI 应用里发送，让它把项目交接资料写入四个上下文文件，然后在 CubexDesktop 中打开该项目即可续接'), keywords: 'handoff continue 继续 交接 迁移 复制 提示词', wide: true, render: () => (
       <div className="handoff-block">
         <button type="button" className="btn-primary" onClick={() => void copyHandoff()}>{copied ? <><Check size={14} />{tr('已复制')}</> : <><Copy size={14} />{tr('复制交接提示词')}</>}</button>
@@ -1389,7 +1439,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
                         </label>
                         <label className="field full">
                           <span>{tr('端点')}</span>
-                          <input value={provider.baseUrl} aria-invalid={!!errors.get(`providers.${index}.baseUrl`)} onChange={(e) => updateProvider(index, { baseUrl: e.target.value.trim() })} placeholder={tr('HTTPS 或本机 HTTP')} spellCheck={false} />
+                          <input value={provider.baseUrl} aria-invalid={!!errors.get(`providers.${index}.baseUrl`)} onChange={(e) => updateProvider(index, { baseUrl: e.target.value.trim() })} placeholder={tr('HTTP 或 HTTPS')} spellCheck={false} />
                           <FieldError message={errors.get(`providers.${index}.baseUrl`)} />
                           {!errors.get(`providers.${index}.baseUrl`) && provider.kind === 'openai-compatible' && <span className="field-hint">{tr('通常以 /v1 结尾，程序会自动拼接 /chat/completions')}</span>}
                         </label>

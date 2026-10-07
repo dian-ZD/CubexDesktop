@@ -1,12 +1,58 @@
 # 计划
 
-> 最后更新时间：2026-10-06 ｜ 更新者：AI Agent（Beta 功能栏目 + aoci/agent-core 两个外部仓库接入）
+> 最后更新时间：2026-10-07 ｜ 更新者：AI Agent（0.2.2-dev GitHub 推送）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
 
-0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；资料报告 + 引用溯源完成；**zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG）完成**；**安装包体积优化完成**；**自动化改为独立页面（不再藏在设置里）完成**；**Code/Work/Browser 模式选择器从标题栏移入侧栏完成**；**设置新增「Beta 功能」栏目并接入 aoci-code + agent-core 完成**：typecheck 0 / lint 0 error / test 130 passed + 4 skipped。
+### 当前任务：提交并推送到 GitHub
+
+- [~] 已核对本地 main、origin 地址和待提交文件，diff 检查通过；远端核对受阻：GitHub HTTPS 连接重置、超时及无法连接，尚未取得远端最新状态。
+- [ ] 提交已验证的 0.2.2-dev 和此前增强，推送到 dian-ZD/CubexDesktop 的 main 分支。
+- [ ] 核对远端提交哈希与本地一致，交付提交链接和工作区状态。
+
+下一步第一件事：先完成已授权的本地提交；恢复 GitHub 网络连接后获取远端状态，再正常推送并核对哈希，不强制推送。用户已明确授权本次 commit/push；release/ 按现有规则忽略，安装包不强制加入 Git。
+
+### 当前任务：开放 HTTP 端点并生成 0.2.2-dev 安装包
+
+- [x] 已开放普通 HTTP 模型端点，同步中英文提示与端点测试；package.json 和锁文件版本为 0.2.2-dev，版权为 Copyright © 2026 HIGHLIGHT STUDIO。typecheck、lint（0 error / 9 既有 warning）、158 passed / 4 skipped 验证通过。
+- [x] npm run dist 成功生成 release\Cubex Setup 0.2.2-dev.exe，大小 112,742,496 B；打包版隔离冒烟通过。
+- [x] 已核对安装包版本 0.2.2-dev、版权 Copyright © 2026 HIGHLIGHT STUDIO（含 © 字符）；签名状态为 NotSigned。asar 内版本正确，19 个构建文件与当前 out 逐字节一致。四份上下文文档已同步，最终 diff 检查返回 0，Cubex/electron 进程数为 0。
+
+本轮已完成，安装包位于 release\Cubex Setup 0.2.2-dev.exe。该包包含此前文件编辑、推荐选项、请求处理、消息滚动、多子智能体及 Browser 显示范围修复；未执行 commit/push。下一步第一件事：收到安装或实际使用反馈后定位具体问题；当前没有待执行的代码或打包步骤。
+
+### 当前任务：Browser 网页仅在自己的页面显示
+
+- [x] 已定位：BrowserEngine 的工具动作与手动导航无条件 attach，会重新挂载已隐藏的网页；异步标签操作回调还可能重新上报过期尺寸。
+- [x] 已限制导航和工具动作只更新当前可见工作台，隐藏时清除尺寸；渲染端拦截弹窗及卸载后的过期尺寸回调。13 项 browser 测试及真实 Electron 原生视图回归通过：隐藏后加载完成、后续动作和后台会话均不重新覆盖当前页面，切回工作台可恢复显示。
+- [x] 验证完成：typecheck 通过、lint 0 error / 9 既有 warning、全量 157 passed / 4 skipped；build、test:desktop 和原生视图回归通过，git diff --check（识别 CRLF）返回 0，本轮回归/冒烟匹配进程为 0。上下文文档已同步。
+
+下一步第一件事：在更新后的构建中使用 Browser，确认加载期间切换其他页面不再被网页遮挡；若用户要求发布，再重新打包。源码和 out 已更新，现有 release 安装包不包含本轮修复；未 commit/push。
+
+### 当前任务：文件编辑、模型请求与设置、推荐选项
+
+- [x] 已核对文件读写 IPC、预览/变更面板、请求计时与响应体解析、询问生命周期及设置布局；确认原有重试只覆盖建立响应阶段，响应体内服务端超时未被重试。
+- [x] 文件预览与变更面板可编辑、保存；相关测试和隔离 Electron UI 验证通过，覆盖跨面板草稿保留、CRLF 换行、外部修改冲突、截断文件禁止保存。
+- [x] 响应体内上游超时纳入有界重试；已有文本后不重放请求，持久保存部分输出供“继续”使用。测试覆盖两类协议、重试耗尽、取消及响应体释放。服务商实际超时尚未进行真实端点复测，客户端修改不能消除上游服务故障。
+- [x] 模型设置输入框、按钮和参数区支持收缩与换行；隔离 Electron 验证 1400px、900px 窗口下相关区域无横向溢出。
+- [x] 错误消息提示条右侧增加“继续”，仅当前会话末尾错误在空闲时可用；UI 验证连续点击只发送一次“继续”，且保留输入框草稿。
+- [x] 推荐项标题右侧显示高亮点；设置 → 规则与记忆增加“自动选择推荐项”，默认关闭。单元测试覆盖有效/无效推荐、手动替代选择、取消和配置迁移；UI 验证开关自动保存生效。
+- [x] 收尾完成：typecheck 通过、lint 0 error / 9 既有 warning、153 passed / 4 skipped，build、test:desktop、针对性隔离 Electron UI 回归均通过；四份上下文文档已更新，识别 CRLF 行尾的 git diff --check 返回 0。隔离回归/冒烟匹配进程为 0；另有 6 个 Cubex 进程仍运行，未终止，不能宣称所有应用进程均已退出。
+
+下一步第一件事：收到真实端点的使用反馈后，结合提供商、模型及错误发生阶段继续定位上游超时；如用户要求发布，再重新打包并核对产物。源码和 out 已更新；release 安装包仍为前序产物，本轮未 commit、push 或重新打安装包。真实模型端点超时是否缓解需实际使用反馈，不能把模拟测试通过等同于服务商恢复。
+
+### 本轮任务：消息滚动与多子智能体增强
+
+- [x] 修复消息自动跟随：贴底意图独立记录，ResizeObserver 处理内容增高；Electron 回归验证大段更新、流式输出贴底，以及上翻后新消息不挤走阅读位置。
+- [x] 消息区初始显示 8 条、每批加载 8 条；所有消息类型补齐定位 ID。Electron 回归验证历史加载锚点、导航只展开目标附近消息、返回最新消息。
+- [x] 增强 delegate：每批 1–32 项，并发可设 1–16（默认 8）；配置独立模型、角色和工具权限。设置入口位于「规则与记忆」，进度与结果位于右栏「摘要」；配置 UI、进度卡片及展开详情通过 Electron 回归。
+- [x] 审批串行排队并隔离子任务调用 ID；测试覆盖同 ID 不串审批、取消释放等待、单项模型缺失不阻塞其它任务及只读越权拦截。
+- [x] 收尾核对完成：typecheck 通过、lint 0 error / 9 既有 warning、137 passed / 4 skipped；build、桌面冒烟和隔离 Electron UI 回归通过。四份上下文文档已回填，git diff --check 通过，未发现本轮回归或冒烟测试遗留进程。
+
+本轮已完成并验证。源码与 out 构建已更新；release 下此前的 0.2.1 安装包尚未包含本轮改动。下一步：收到实际使用反馈后定位具体问题；若用户要求发布，重新打包并核对产物。保留询问框 72–180px 与版本 0.2.1 等未提交改动；未执行 commit、push 或重新生成安装包。
+
+0.1.2-dev 稳定性修复 + 自动检测模型/上下文 + Browser 模式 + 上下文压缩与 Agent 循环优化 **均已完成**；队列栏与引导交互优化完成；Browser 模式全网爬取完成；资料报告 + 引用溯源完成；**zip 分支合并（沙箱修复 + Linux 移植 + 工作流 DAG）完成**；**安装包体积优化完成**；**自动化改为独立页面（不再藏在设置里）完成**；**Code/Work/Browser 模式选择器从标题栏移入侧栏完成**；**设置新增「Beta 功能」栏目并接入 aoci-code + agent-core 完成**；**版本升到 0.2.1 并产出安装包**：typecheck 0 / lint 0 error / test 130 passed + 4 skipped。
 
 ## 步骤清单（近期已完成）
 
@@ -217,17 +263,18 @@
 - **UI 实测（已通过，走 CDP 而非整屏抓图）**：锁屏导致 `CopyFromScreen` 只能拍到锁屏画面，改用 `electron --remote-debugging-port=9333` + Node `WebSocket` 走 CDP（`Runtime.evaluate` + `Page.captureScreenshot`，离屏渲染不受锁屏影响）。结果：① 设置分类栏出现「Beta 功能」，位置在「规则与记忆」与「键盘快捷键」之间，`FlaskConical` 图标；② 分区渲染标题 + 说明 + 两个开关 + 底栏「改动会自动保存并立即生效」；③ 点开「token节省与大型项目优化」后 2.5 s 内 `settings.beta.tokenSaving=true` 落盘 `state.json`，且 `mcp.servers` 自动长出 `{"id":"cubex-aoci","name":"aoci","command":"…\\vendor\\aoci\\aoci.exe","args":["--repo","C:\\projectsfile\\cubex 协作","mcp"]}`；④ MCP 分区显示 `aoci … --repo … · 9 个工具` 且状态 **「已连接」**（真实子进程握手成功）；⑤ 再点回关，`servers` 自动清空、`beta.tokenSaving=false`，测试状态已还原为默认。
 - 校验：typecheck 0 / lint 0 error（9 既有 warning）/ test **130 passed + 4 skipped**（基线 115，新增 15）。
 - **用户三项拍板（2026-10-06）**：① `vendor/aoci/aoci.exe` 24.7 MB 二进制 **→ 提交进 git**（换可复现打包，仓库变重）；② aoci 许可证 FSL-1.1 **→ 确认可以捆绑分发**，相关许可文件随二进制进包；③ `npm run dist` **→ 跑**。已写入 memory.md，**commit 仍等用户明确指示**。
-- **打包实测（已通过）**：`npm run dist` 成功，`release\Cubex Setup 0.1.2-dev.exe` = 112,735,101 B = **107.51 MB**（旧 106.22 MB，**+6.21 MB / +6.13%**，Go 二进制压缩率高，远低于最初 ~116 MB 的预估）；`release\win-unpacked\resources\aoci\` 六个文件齐全（`aoci.exe` 24,729,600 B，sha256 `ee7ee51f…` 与源文件一致；LICENSE/NOTICE/PATENTS/THIRD-PARTY-NOTICES/TRADEMARKS）；`Cubex Setup 0.1.1.exe`（137.83 MB 旧包）未被覆盖。
+- **打包实测（已通过）**：`npm run dist` 成功，`release\Cubex Setup 0.1.2-dev.exe`（带 aoci 版）= 112,735,101 B = **112.74 MB**（优化后不含 aoci 时为 106,219,152 B = 106.22 MB，**+6,515,949 B / +6.52 MB / +6.13%**；Go 二进制压缩率高，远低于最初 ~116 MB 的预估；**注意文档统一用十进制 MB = bytes/10⁶，别和 PowerShell 的 `1MB`(MiB) 混用**）；`release\win-unpacked\resources\aoci\` 六个文件齐全（`aoci.exe` 24,729,600 B，sha256 `ee7ee51f…` 与源文件一致；LICENSE/NOTICE/PATENTS/THIRD-PARTY-NOTICES/TRADEMARKS）；`Cubex Setup 0.1.1.exe`（144,527,112 B = 144.53 MB 旧包）未被覆盖（后经用户指示已删除）。
 - **打包版端到端（已通过）**：直接跑 `release\win-unpacked\Cubex.exe --remote-debugging-port=9334`，开「token节省与大型项目优化」后 `mcp.servers` 长出的 `command` 正是 `…\release\win-unpacked\resources\aoci\aoci.exe`（即 `process.resourcesPath` 落点，非 dev 回落分支），MCP 分区显示 **「9 个工具 · 已连接」**；关掉后条目自动移除，测试状态已还原为默认 `false`。
+- **版本升到 0.2.1（2026-10-06 用户指示）**：`package.json` `"version"` `0.1.2-dev` → `0.2.1`（全项目唯一版本号来源），重跑 `npm run dist` → 产物 `release\Cubex Setup 0.2.1.exe` = **112,735,082 B = 112.74 MB** + blockmap 118,001 B；包内 `resources\aoci\` 六文件齐全、`aoci.exe` sha256 仍为 `ee7ee51f…`。安装包名即版本号，无需另查 asar。同轮删除 `Cubex Setup 0.1.1.exe`（137.83 MiB）与其 blockmap。**遗留：`release\latest.yml` 内容停在 `version: 0.1.1`（2026-09-30），因 `package.json` 无 `publish` 字段、electron-builder 每次都不会重写它——若以后要上自动更新需补 publish 配置。**
 - 结论：代码、测试、dev 窗口 UI 实测、安装包体积与**打包版端到端**全部完成；仅剩 commit 等用户指示。
 
 ## 当前进行到的精确位置 / 下一步第一件事
 
-- 步骤 H（分支合并 `b62a3cd`）、步骤 I（体积/启动优化）、步骤 J（自动化独立页面）、步骤 K（模式选择器移入侧栏）、**步骤 L（Beta 功能栏目 + aoci/agent-core 接入）**均已完成并通过全量校验；**步骤 J + K + L 尚未 commit**（等用户明确指示）。
+- 步骤 H（分支合并 `b62a3cd`）、步骤 I（体积/启动优化）、步骤 J（自动化独立页面）、步骤 K（模式选择器移入侧栏）、**步骤 L（Beta 功能栏目 + aoci/agent-core 接入）**均已完成并通过全量校验，**J + K + L 已 commit 并 push**。
 - **校验基线**：typecheck 0 / lint 0 error（9 既有 warning）/ `npm test` = **130 passed + 4 skipped**（原 115 + 4，新增 15 条）。
-- **已提交并推送**：`da9b013`（体积优化）+ `26be755`（docs 回填，当前 `HEAD` = `origin/main`），连同合并 `b62a3cd` 共 11+ 个提交经 7890 代理 `push origin main` 成功，`git ls-remote origin main` 核对一致。**坑：`ls-remote` 也必须带 `-c http.proxy=... -c https.proxy=...`；PowerShell 下 push 的 stderr 仍可能显示 `NativeCommandError`，以 `git status -sb`（无 ahead）为准。**
-- **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版未实测（侧栏自动化入口、模式选择器位置与 **Beta 功能分区均已实测通过**）；④ `release\Cubex Setup 0.1.1.exe`（137.83 MB 旧包）待用户确认后删。
-- **下一步第一件事**：等用户明确指示后，把步骤 J + K + L 一起 commit/push（**用户已确认 `vendor/aoci/` 一并提交进 git**；带 7890 代理并核对 `ls-remote`），再收集 ①②③ 的实测反馈。用户已确认**分离任务面板的永久置顶保留**，该项无需改动。
+- **已提交并推送（2026-10-06）**：`a07116f`（feat：19 files / +2353 −50，含 `vendor/aoci/aoci.exe` 24,729,600 B）+ `9ea6de1`（docs：回填 J/K/L），`26be755..9ea6de1  main -> main`，`git status -sb` 无 ahead、`ls-remote` 返回 `9ea6de1a668…` 与本地 HEAD 一致。**本轮是直连推送成功的**：`127.0.0.1:7890` 已无 LISTEN（FlClash 核心只开 1053 DNS，`ProxyEnable=0`），带代理直接 `Could not connect to server`；实测**直连 github:443 现已通畅**（此前「直连被 reset」的情况已失效）。**坑：先 `git ls-remote origin main` 试一下再决定带不带代理；PowerShell 下 push 的 stderr 仍可能显示 `NativeCommandError`，以 `git status -sb`（无 ahead）为准。**
+- **待办**：① Browser 爬取 + 角标跳转 + 资料报告导出未实测；② 沙箱禁网、工作流进度条未实测；③ 设置页新排版未实测（侧栏自动化入口、模式选择器位置与 **Beta 功能分区均已实测通过**）；④ `release\Cubex Setup 0.1.1.exe` 已按指示删除；⑤ **`release\` 里被取代的 `Cubex Setup 0.1.2-dev.exe`（112.74 MB）与停在 0.1.1 的死文件 `latest.yml` 待用户确认是否删**。
+- **下一步第一件事**：本轮开发与验证已完成，按后续实际使用反馈继续处理；若用户要求发布，先重新打包。此前 `release\Cubex Setup 0.2.1.exe`（112,735,082 B）不含本轮滚动与子智能体增强；源码、版本行与文档均未提交。用户已确认**分离任务面板的永久置顶保留**。
 
 ## 已知风险 / 阻塞项及应对
 

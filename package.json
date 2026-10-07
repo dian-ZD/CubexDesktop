@@ -1,6 +1,6 @@
 {
   "name": "cubex-desktop",
-  "version": "0.1.2-dev",
+  "version": "0.2.2-dev",
   "private": true,
   "description": "CubexDesktop 智能体协作工作站",
   "author": "dian-ZD <liangdianhs@163.com>",
@@ -25,7 +25,7 @@
   "build": {
     "appId": "com.cubex.desktop",
     "productName": "Cubex",
-    "copyright": "Copyright © 2026 Cubex",
+    "copyright": "Copyright © 2026 HIGHLIGHT STUDIO",
     "directories": {
       "output": "release",
       "buildResources": "build"

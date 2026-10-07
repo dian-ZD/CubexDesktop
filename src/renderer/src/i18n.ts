@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useCallback, useContext } from 'react'
 import type { UiLanguage } from '../../shared/schema'
 
 type Dict = Record<string, string>
@@ -105,10 +105,12 @@ export function useI18n(): {
   tr: (zhText: string, vars?: Record<string, string | number>) => string
 } {
   const lang = useContext(LanguageContext)
+  const translateKey = useCallback((key: string, vars?: Record<string, string | number>) => translate(lang, key, vars), [lang])
+  const translateText = useCallback((zhText: string, vars?: Record<string, string | number>) => tr(lang, zhText, vars), [lang])
   return {
     lang,
-    t: (key, vars) => translate(lang, key, vars),
-    tr: (zhText, vars) => tr(lang, zhText, vars),
+    t: translateKey,
+    tr: translateText,
   }
 }
 

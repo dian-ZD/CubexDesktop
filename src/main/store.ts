@@ -37,6 +37,14 @@ export class StateStore {
     }
     let interrupted = 0
     for (const thread of this.state.threads) {
+      for (const agent of thread.subagentRuns ?? []) {
+        if (agent.status === 'queued' || agent.status === 'running' || agent.status === 'awaiting-approval') {
+          agent.status = 'cancelled'
+          agent.detail = '应用退出导致子任务中断'
+          agent.finishedAt = new Date().toISOString()
+          this.dirty = true
+        }
+      }
       if (thread.status !== 'idle') {
         const now = new Date().toISOString()
         thread.status = 'idle'
@@ -60,7 +68,7 @@ export class StateStore {
     }
     if (interrupted > 0) notice = [notice, `${interrupted} 个会话因上次退出被中断`].filter(Boolean).join('；')
     this.state.notice = notice
-    if (interrupted > 0 || notice) {
+    if (interrupted > 0 || notice || this.dirty) {
       this.dirty = true
       await this.flush()
     }

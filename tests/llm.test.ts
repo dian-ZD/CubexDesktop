@@ -75,4 +75,72 @@ describe('streamChat', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('bad key', { status: 401 })))
     await expect(streamChat(request('openai-compatible', () => undefined))).rejects.toThrow('模型服务返回 401：bad key')
   })
+
+  it.each(['openai-compatible', 'anthropic'] as const)('在 %s 响应体中遇到上游超时且尚无文本时重试', async (kind) => {
+    const failure = kind === 'anthropic'
+      ? { type: 'error', error: { message: 'context deadline exceeded (Client.Timeout or context cancellation while reading body)' } }
+      : { error: { message: 'context deadline exceeded (Client.Timeout or context cancellation while reading body)' } }
+    const success = kind === 'anthropic'
+      ? `data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '恢复成功' } })}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n`
+      : `data: ${JSON.stringify({ choices: [{ delta: { content: '恢复成功' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sse([`data: ${JSON.stringify(failure)}\n\n`]))
+      .mockResolvedValueOnce(sse([success]))
+    vi.stubGlobal('fetch', fetchMock)
+    const deltas: string[] = []
+    const turn = await streamChat({ ...request(kind, (delta) => deltas.push(delta)), retries: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(deltas).toEqual(['恢复成功'])
+    expect(turn.content).toBe('恢复成功')
+  })
+
+  it('已有文本后遇到上游超时不自动重放请求', async () => {
+    const fetchMock = vi.fn(async () => sse([
+      'data: {"choices":[{"delta":{"content":"已经收到的内容"}}]}\n\n',
+      'data: {"error":{"message":"context deadline exceeded"}}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const deltas: string[] = []
+    await expect(streamChat({ ...request('openai-compatible', (delta) => deltas.push(delta)), retries: 3 })).rejects.toThrow('本地请求超时设置不能改变服务端时限')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(deltas).toEqual(['已经收到的内容'])
+  })
+
+  it('重试耗尽后保留服务端原始错误和诊断信息', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: { message: 'context deadline exceeded' } }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(streamChat({ ...request('openai-compatible', () => undefined), retries: 1 })).rejects.toThrow('context deadline exceeded')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('重试等待期间取消会立即结束且不再请求', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn(async () => sse(['data: {"error":{"message":"context deadline exceeded"}}\n\n']))
+    vi.stubGlobal('fetch', fetchMock)
+    const result = streamChat({ ...request('openai-compatible', () => undefined), signal: controller.signal, retries: 3 })
+    const assertion = expect(result).rejects.toThrow('已取消')
+    const timer = setTimeout(() => controller.abort(), 50)
+    try {
+      await assertion
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      clearTimeout(timer)
+    }
+  })
+
+  it('收到结束标记后释放仍未关闭的响应体', async () => {
+    const cancel = vi.fn()
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"完成"}}]}\n\ndata: [DONE]\n\n'))
+      },
+      cancel,
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body)))
+    const turn = await streamChat(request('openai-compatible', () => undefined))
+    expect(turn.content).toBe('完成')
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
 })

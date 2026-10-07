@@ -11,6 +11,16 @@ import type { SecretStore } from './secrets'
 import type { StateStore } from './store'
 import { commandTools, delegateTools, extensionToolNames, interactiveTools, matchesCommandRule, mutatingTools, runTool, sensitiveExtensionTools, summarizeCall, todoTools, toolSpecs } from './tools'
 import { browserEngine } from './browser'
+import { subagentRoles, type SubagentRun } from '../shared/schema'
+
+interface SubagentTask {
+  id: string
+  name: string
+  instruction: string
+  role: SubagentRun['role']
+  modelId: string
+  toolAccess: 'read-only' | 'project'
+}
 
 export interface ExtensionRunner {
   specs(settings: Settings, mode?: AgentMode): ToolSpec[]
@@ -19,6 +29,7 @@ export interface ExtensionRunner {
 
 interface Run {
   controller: AbortController
+  approvalQueue?: Promise<void>
   approval?: { callId: string; resolve: (approved: boolean) => void }
   question?: { callId: string; resolve: (answer: string | null) => void }
   outcome: { ok: boolean; cancelled?: boolean; error?: string; lastText: string }
@@ -511,6 +522,7 @@ export class AgentRunner {
       })
       this.activity(threadId, step === 0 ? 'thinking' : 'planning', step === 0 ? '正在理解你的需求…' : '正在规划下一步…', { step: step + 1 })
       let wroteText = false
+      let partialText = ''
       let turn
       try {
         turn = await streamChat({
@@ -522,12 +534,21 @@ export class AgentRunner {
           timeoutMs: modelParams.timeoutSec * 1000,
           retries: modelParams.retries,
           onText: (delta) => {
+            partialText = (partialText + delta).slice(0, 200_000)
             if (!wroteText && delta.trim()) { wroteText = true; this.activity(threadId, 'writing', '正在撰写回复…', { step: step + 1 }) }
             this.emitDelta({ threadId, messageId, delta })
           },
         })
         pendingNudge = ''
       } catch (error) {
+        if (partialText) {
+          await this.store.update((draft) => {
+            const target = draft.threads.find((item) => item.id === threadId)
+            const message = target?.messages.find((item) => item.id === messageId)
+            if (message?.role === 'assistant') message.content = partialText
+          })
+          run.outcome.lastText = partialText
+        }
         await this.dropEmpty(threadId, messageId)
         if (signal.aborted) return
         if (isContextOverflowError(error) && recoveries < 3) {
@@ -665,27 +686,46 @@ export class AgentRunner {
   private async askUser(threadId: string, run: Run, call: ToolCall): Promise<ToolResult> {
     const question = typeof call.args.question === 'string' ? call.args.question.trim().slice(0, 2000) : ''
     if (!question) return { callId: call.id, name: call.name, ok: false, output: 'question 不能为空' }
-    const options = Array.isArray(call.args.options) ? call.args.options.filter((item): item is string => typeof item === 'string').map((item) => item.slice(0, 200)).slice(0, 6) : []
-    const pending: PendingQuestion = { callId: call.id, question, options, multiple: call.args.multiple === true || undefined }
+    const options = Array.isArray(call.args.options) ? [...new Set(call.args.options.filter((item): item is string => typeof item === 'string').map((item) => item.trim().slice(0, 200)).filter(Boolean))].slice(0, 6) : []
+    const recommendation = typeof call.args.recommended === 'string' ? call.args.recommended.trim() : ''
+    const recommended = recommendation && options.includes(recommendation) ? recommendation : undefined
+    if (run.controller.signal.aborted || this.runs.get(threadId) !== run) return { callId: call.id, name: call.name, ok: false, denied: true, output: '本轮已停止' }
+    if (recommended && this.store.get().settings.agent.autoSelectRecommended) {
+      await this.system(threadId, 'info', `已按设置自动选择推荐项：${recommended}`)
+      if (run.controller.signal.aborted) return { callId: call.id, name: call.name, ok: false, denied: true, output: '本轮已停止' }
+      return { callId: call.id, name: call.name, ok: true, output: `已按用户配置自动选择推荐项：${recommended}` }
+    }
+    const pending: PendingQuestion = { callId: call.id, question, options, recommended, multiple: call.args.multiple === true || undefined }
+    let abortQuestion = (): void => undefined
     const answerPromise = new Promise<string | null>((resolve) => {
       run.question = { callId: call.id, resolve }
-      run.controller.signal.addEventListener('abort', () => resolve(null), { once: true })
+      abortQuestion = () => resolve(null)
+      run.controller.signal.addEventListener('abort', abortQuestion, { once: true })
     })
-    await this.store.update((draft) => {
-      const target = draft.threads.find((item) => item.id === threadId)!
-      target.status = 'awaiting-input'
-      target.question = pending
-    })
-    const answer = await answerPromise
-    run.question = undefined
-    await this.store.update((draft) => {
-      const target = draft.threads.find((item) => item.id === threadId)!
-      target.status = 'running'
-      target.question = undefined
-      if (answer) target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content: answer })
-    })
-    if (answer === null) return { callId: call.id, name: call.name, ok: false, denied: true, output: '用户未回答（已停止）。' }
-    return { callId: call.id, name: call.name, ok: true, output: `用户回答：${answer}` }
+    try {
+      await this.store.update((draft) => {
+        const target = draft.threads.find((item) => item.id === threadId)
+        if (!target || run.controller.signal.aborted || this.runs.get(threadId) !== run) { abortQuestion(); return }
+        target.status = 'awaiting-input'
+        target.question = pending
+      })
+      const answer = await answerPromise
+      if (answer === null || run.controller.signal.aborted) return { callId: call.id, name: call.name, ok: false, denied: true, output: '用户未回答（已停止）。' }
+      await this.store.update((draft) => {
+        const target = draft.threads.find((item) => item.id === threadId)
+        if (target && !run.controller.signal.aborted && this.runs.get(threadId) === run) target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content: answer })
+      })
+      return { callId: call.id, name: call.name, ok: true, output: `用户回答：${answer}` }
+    } finally {
+      run.controller.signal.removeEventListener('abort', abortQuestion)
+      if (run.question?.callId === call.id) run.question = undefined
+      await this.store.update((draft) => {
+        const target = draft.threads.find((item) => item.id === threadId)
+        if (!target || this.runs.get(threadId) !== run || target.question?.callId !== call.id) return
+        target.question = undefined
+        if (target.status === 'awaiting-input') target.status = 'running'
+      })
+    }
   }
 
   private async manageTodos(threadId: string, call: ToolCall): Promise<ToolResult> {
@@ -725,50 +765,93 @@ export class AgentRunner {
 
   private async delegate(threadId: string, run: Run, call: ToolCall, step: number): Promise<ToolResult> {
     const raw = Array.isArray(call.args.tasks) ? call.args.tasks : []
-    const tasks = raw
-      .map((item, index) => {
-        if (!item || typeof item !== 'object') return null
-        const record = item as { name?: unknown; instruction?: unknown }
-        const instruction = typeof record.instruction === 'string' ? record.instruction.trim() : ''
-        if (!instruction) return null
-        const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim().slice(0, 40) : `子智能体 ${index + 1}`
-        return { name, instruction: instruction.slice(0, 8000) }
-      })
-      .filter((item): item is { name: string; instruction: string } => item !== null)
-      .slice(0, 4)
-    if (tasks.length === 0) return { callId: call.id, name: call.name, ok: false, output: 'tasks 至少需要一个包含 instruction 的子任务' }
-
+    if (raw.length < 1 || raw.length > 32) return { callId: call.id, name: call.name, ok: false, output: 'tasks 必须包含 1–32 个子任务' }
     const { signal } = run.controller
     const state = this.store.get()
     const thread = this.find(threadId)
-    const model = state.settings.models.find((item) => item.id === thread.modelId)
-    if (!model) return { callId: call.id, name: call.name, ok: false, output: '模型配置已被删除' }
-    const provider = state.settings.providers.find((item) => item.id === model.providerId)
-    if (!provider) return { callId: call.id, name: call.name, ok: false, output: '模型所属的提供商已被删除' }
-    const apiKey = this.secrets.get(provider.id)
-    if (provider.kind !== 'ollama' && !apiKey) return { callId: call.id, name: call.name, ok: false, output: `提供商「${provider.name}」尚未配置 API Key` }
     const project = state.projects.find((item) => item.id === thread.projectId)
     if (!project) return { callId: call.id, name: call.name, ok: false, output: '项目不存在' }
-
+    const tasks: SubagentTask[] = []
+    for (const [index, item] of raw.entries()) {
+      if (!item || typeof item !== 'object') return { callId: call.id, name: call.name, ok: false, output: `第 ${index + 1} 个子任务格式错误` }
+      const record = item as Record<string, unknown>
+      const profile = typeof record.profileId === 'string' ? state.settings.agent.subagentProfiles.find((entry) => entry.id === record.profileId) : undefined
+      if (record.profileId != null && !profile) return { callId: call.id, name: call.name, ok: false, output: `第 ${index + 1} 个子任务的配置不存在` }
+      const instruction = typeof record.instruction === 'string' ? record.instruction.trim() : ''
+      const combined = [profile?.instruction, instruction].filter(Boolean).join('\n\n')
+      if (!instruction || combined.length > 8000) return { callId: call.id, name: call.name, ok: false, output: `第 ${index + 1} 个子任务需要 instruction，合并角色指令后不得超过 8000 字符` }
+      const role = profile?.role ?? record.role ?? 'general'
+      if (!subagentRoles.includes(role as SubagentRun['role'])) return { callId: call.id, name: call.name, ok: false, output: `第 ${index + 1} 个子任务角色无效` }
+      if (record.modelId != null && typeof record.modelId !== 'string') return { callId: call.id, name: call.name, ok: false, output: `第 ${index + 1} 个子任务 modelId 必须是字符串` }
+      tasks.push({
+        id: randomUUID(),
+        name: (typeof record.name === 'string' && record.name.trim() ? record.name.trim() : profile?.name || `子智能体 ${index + 1}`).slice(0, 40),
+        instruction: combined,
+        role: role as SubagentRun['role'],
+        modelId: profile?.modelId || (typeof record.modelId === 'string' ? record.modelId : '') || thread.modelId,
+        toolAccess: role === 'researcher' || role === 'reviewer' || state.settings.permissions.readOnly ? 'read-only' : profile?.toolAccess ?? 'project',
+      })
+    }
+    const batchId = randomUUID()
+    const maxSteps = Math.max(3, Math.min(Math.ceil(state.settings.agent.maxSteps / 2), 20))
+    await this.store.update((draft) => {
+      const target = draft.threads.find((item) => item.id === threadId)
+      if (target) target.subagentRuns = [...(target.subagentRuns ?? []).slice(-32), ...tasks.map((task): SubagentRun => ({ id: task.id, batchId, name: task.name, role: task.role, modelId: task.modelId, instruction: task.instruction, status: 'queued', step: 0, maxSteps }))]
+    })
     this.activity(threadId, 'delegating', `启动 ${tasks.length} 个子智能体…`, { step, agents: tasks.map((item) => item.name) })
-    const outcomes = await Promise.all(tasks.map((task) => this.runSubAgent(task, { provider, apiKey, model, project, settings: state.settings, signal, threadId, step })))
+    const outcomes: Array<{ name: string; ok: boolean; summary: string }> = new Array(tasks.length)
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < tasks.length) {
+        const index = cursor++
+        const task = tasks[index]
+        let outcome: { name: string; ok: boolean; summary: string }
+        try {
+          if (signal.aborted) throw new Error('本轮已停止')
+          const model = state.settings.models.find((item) => item.id === task.modelId)
+          if (!model) throw new Error(`模型配置不存在：${task.modelId}`)
+          const provider = state.settings.providers.find((item) => item.id === model.providerId)
+          if (!provider) throw new Error('模型所属的提供商已被删除')
+          const apiKey = this.secrets.get(provider.id)
+          if (provider.kind !== 'ollama' && !apiKey) throw new Error(`提供商「${provider.name}」尚未配置 API Key`)
+          await this.updateSubagent(threadId, task.id, { status: 'running', startedAt: new Date().toISOString() })
+          outcome = await this.runSubAgent(task, { provider, apiKey, model, project, settings: state.settings, signal, threadId, step })
+        } catch (error) {
+          outcome = { name: task.name, ok: false, summary: error instanceof Error ? error.message : String(error) }
+        }
+        outcomes[index] = outcome
+        await this.updateSubagent(threadId, task.id, { status: signal.aborted ? 'cancelled' : outcome.ok ? 'completed' : 'failed', summary: outcome.summary.slice(0, 12000), finishedAt: new Date().toISOString(), detail: undefined })
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(tasks.length, state.settings.agent.maxConcurrentSubagents) }, worker))
     const merged = outcomes.map((item) => `### ${item.name}\n${item.summary}`).join('\n\n')
     const failed = outcomes.filter((item) => !item.ok).length
     return { callId: call.id, name: call.name, ok: failed === 0, output: `已完成 ${outcomes.length - failed}/${outcomes.length} 个子任务。\n\n${merged}`.slice(0, 60_000) }
   }
 
+  private updateSubagent(threadId: string, id: string, patch: Partial<SubagentRun>): Promise<void> {
+    return this.store.update((draft) => {
+      const agent = draft.threads.find((item) => item.id === threadId)?.subagentRuns?.find((item) => item.id === id)
+      if (agent) Object.assign(agent, patch)
+    })
+  }
+
   private async runSubAgent(
-    task: { name: string; instruction: string },
+    task: SubagentTask,
     ctx: { provider: Parameters<typeof streamChat>[0]['provider']; apiKey: string | undefined; model: Parameters<typeof streamChat>[0]['model']; project: Parameters<typeof buildSystemPrompt>[1]; settings: Settings; signal: AbortSignal; threadId: string; step: number },
   ): Promise<{ name: string; ok: boolean; summary: string }> {
     const { settings, project, signal, threadId } = ctx
     const modelParams = mergeModelParams(settings.modelParams, ctx.model.params)
     const subSteps = Math.max(3, Math.min(Math.ceil(settings.agent.maxSteps / 2), 20))
     const projectFiles = await readProjectFiles(project.path).catch(() => [])
-    const baseSystem = buildSystemPrompt(settings, project, { projectContext: renderProjectContext(projectFiles) })
-    const system = `${baseSystem}\n\n## 你的身份\n你是一个名为「${task.name}」的子智能体，正在与其它子智能体协作完成一个更大的任务。请只专注于分配给你的子任务，完成后用简洁的中文总结你做了什么、改动了哪些文件、以及需要主智能体知道的关键结论。你不能再委派子任务，也不能向用户提问。`
+    const mode = this.find(threadId).mode
+    const effectiveSettings: Settings = { ...settings, agent: { ...settings.agent, autoTodo: false }, permissions: { ...settings.permissions, readOnly: settings.permissions.readOnly || task.toolAccess === 'read-only' } }
+    const baseSystem = buildSystemPrompt(effectiveSettings, project, { projectContext: renderProjectContext(projectFiles), mode })
+    const system = `${baseSystem}\n\n## 你的身份\n你是一个名为「${task.name}」的 ${task.role} 子智能体，正在与其它子智能体协作完成一个更大的任务。请只专注于分配给你的子任务，完成后用简洁的中文总结你做了什么、改动了哪些文件、以及需要主智能体知道的关键结论。你不能再委派子任务，也不能向用户提问。不要修改其它子任务负责的文件。${task.toolAccess === 'read-only' ? '你只有读取与检索权限，不得修改文件或执行命令。' : ''}${ctx.model.systemPromptExtra?.trim() ? `\n\n## 模型专属提示\n${ctx.model.systemPromptExtra.trim()}` : ''}`
     const messages: Message[] = [{ id: randomUUID(), role: 'user', time: new Date().toISOString(), content: task.instruction }]
-    const subTools = toolSpecs.filter((spec) => spec.name !== 'delegate' && spec.name !== 'ask_user')
+    const readTools = new Set(['read_file', 'list_directory', 'search_files', 'browser_open', 'web_search'])
+    const subTools = [...toolSpecs, ...(this.extensions?.specs(effectiveSettings, mode) ?? [])].filter((spec) => spec.name !== 'delegate' && spec.name !== 'ask_user' && spec.name !== 'manage_todos' && (task.toolAccess !== 'read-only' || readTools.has(spec.name)))
+    const allowedTools = new Set(subTools.map((spec) => spec.name))
     const loopOptimized = settings.beta.agentLoop
     const policy = resolveLoopPolicy(loopOptimized)
     let subNoToolCount = 0
@@ -777,6 +860,7 @@ export class AgentRunner {
     try {
       for (let i = 0; i < subSteps && !signal.aborted; i++) {
         this.activity(threadId, 'delegating', `「${task.name}」执行中…`, { step: ctx.step, detail: `第 ${i + 1} 步`, agents: [task.name] })
+        await this.updateSubagent(threadId, task.id, { step: i + 1, detail: '正在思考' })
         const reserve = estimateTokens(system) + (modelParams.maxTokens || 8_000) + 1_500
         const { messages: fitted } = fitContext(messages, { contextWindow: ctx.model.contextWindow, reserve, limit: modelParams.historyLimit })
         const history = subNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: subNudge }] : fitted
@@ -794,10 +878,10 @@ export class AgentRunner {
         finalText = turn.content || finalText
         messages.push({ id: randomUUID(), role: 'assistant', time: new Date().toISOString(), content: turn.content, toolCalls: turn.toolCalls, modelId: ctx.model.id })
         if (turn.toolCalls.length === 0) {
-          if (!loopOptimized) break
+          if (!loopOptimized) return { name: task.name, ok: !signal.aborted, summary: (finalText || '（子智能体未产出文字总结）').slice(0, 12000) }
           subNoToolCount += 1
           const nextStep = nextNoToolStep(subNoToolCount, policy.noToolRounds)
-          if (nextStep.done) break
+          if (nextStep.done) return { name: task.name, ok: !signal.aborted, summary: (finalText || '（子智能体未产出文字总结）').slice(0, 12000) }
           if (nextStep.nudge) subNudge = policy.noToolPrompt
           continue
         }
@@ -809,21 +893,26 @@ export class AgentRunner {
             results.push({ callId: sub.id, name: sub.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' })
             continue
           }
-          if (interactiveTools.has(sub.name) || todoTools.has(sub.name) || delegateTools.has(sub.name)) {
+          if (!allowedTools.has(sub.name) || interactiveTools.has(sub.name) || todoTools.has(sub.name) || delegateTools.has(sub.name)) {
             results.push({ callId: sub.id, name: sub.name, ok: false, output: '子智能体不可使用该工具' })
             continue
           }
-          const decision = await this.authorize(threadId, this.runs.get(threadId)!, sub)
+          const activeRun = this.runs.get(threadId)
+          if (!activeRun || signal.aborted) break
+          const isolatedCall = { ...sub, id: `${task.id}:${sub.id}` }
+          await this.updateSubagent(threadId, task.id, { detail: summarizeCall(sub).slice(0, 2000) })
+          const decision = await this.authorize(threadId, activeRun, isolatedCall)
           if (!decision.approved) {
             results.push({ callId: sub.id, name: sub.name, ok: false, denied: true, output: decision.reason ?? '被拒绝' })
             continue
           }
+          if (signal.aborted) break
           if (extensionToolNames.has(sub.name)) results.push(await this.runExtension(sub, project.path, signal, threadId))
           else results.push(await runTool(sub, { root: project.path, signal, commandTimeoutMs: settings.agent.commandTimeoutSec * 1000, shell: settings.agent.shell, sandbox: { enabled: settings.permissions.sandbox, allowNetwork: settings.permissions.sandboxNetwork } }))
         }
         messages.push({ id: randomUUID(), role: 'tool', time: new Date().toISOString(), results })
       }
-      return { name: task.name, ok: !signal.aborted, summary: (finalText || '（子智能体未产出文字总结）').slice(0, 12_000) }
+      return { name: task.name, ok: false, summary: `${signal.aborted ? '子任务已取消' : '子任务达到步数上限，尚未确认完成'}${finalText ? `\n\n${finalText}` : ''}`.slice(0, 12000) }
     } catch (error) {
       return { name: task.name, ok: false, summary: `执行失败：${error instanceof Error ? error.message : String(error)}` }
     }
@@ -841,6 +930,19 @@ export class AgentRunner {
   }
 
   private async authorize(threadId: string, run: Run, call: ToolCall): Promise<Decision> {
+    const previous = run.approvalQueue ?? Promise.resolve()
+    let release = (): void => undefined
+    run.approvalQueue = new Promise<void>((resolve) => { release = resolve })
+    try {
+      await previous
+      if (run.controller.signal.aborted || this.runs.get(threadId) !== run) return { approved: false, reason: '本轮已停止' }
+      return await this.authorizeNext(threadId, run, call)
+    } finally {
+      release()
+    }
+  }
+
+  private async authorizeNext(threadId: string, run: Run, call: ToolCall): Promise<Decision> {
     const { approvalMode: mode, permissions } = this.store.get().settings
     const isCommand = commandTools.has(call.name)
     const isMutating = mutatingTools.has(call.name)
@@ -856,22 +958,30 @@ export class AgentRunner {
       : isMutating ? mode === 'ask' && !isProjectFileEdit(call) : false
     if (!needs) return { approved: true }
     const pending: PendingApproval = { callId: call.id, name: call.name, args: call.args, summary: summarizeCall(call).slice(0, 2000) }
+    let abortApproval = (): void => undefined
     const approvedPromise = new Promise<boolean>((resolve) => {
       run.approval = { callId: call.id, resolve }
-      run.controller.signal.addEventListener('abort', () => resolve(false), { once: true })
+      abortApproval = () => resolve(false)
+      run.controller.signal.addEventListener('abort', abortApproval, { once: true })
     })
-    await this.store.update((draft) => {
-      const target = draft.threads.find((item) => item.id === threadId)!
-      target.status = 'awaiting-approval'
-      target.pending = pending
-    })
-    const approved = await approvedPromise
-    run.approval = undefined
-    await this.store.update((draft) => {
-      const target = draft.threads.find((item) => item.id === threadId)!
-      target.status = 'running'
-      target.pending = undefined
-    })
-    return { approved }
+    try {
+      await this.store.update((draft) => {
+        const target = draft.threads.find((item) => item.id === threadId)
+        if (!target || run.controller.signal.aborted) { abortApproval(); return }
+        target.status = 'awaiting-approval'
+        target.pending = pending
+      })
+      const approved = await approvedPromise
+      return { approved: approved && !run.controller.signal.aborted }
+    } finally {
+      run.controller.signal.removeEventListener('abort', abortApproval)
+      run.approval = undefined
+      await this.store.update((draft) => {
+        const target = draft.threads.find((item) => item.id === threadId)
+        if (!target || this.runs.get(threadId) !== run || target.pending?.callId !== call.id) return
+        target.pending = undefined
+        if (target.status === 'awaiting-approval') target.status = 'running'
+      })
+    }
   }
 }

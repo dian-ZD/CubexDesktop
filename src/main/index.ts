@@ -7,7 +7,8 @@ import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
-import { browseDirectory, readProjectFile, runShellCommand } from './tools'
+import { browseDirectory, readProjectFile, saveProjectFile, runShellCommand } from './tools'
+import { saveProjectFileInputSchema } from '../shared/schema'
 import { StateStore } from './store'
 import { SecretStore } from './secrets'
 import { AgentRunner } from './agent'
@@ -391,7 +392,6 @@ function registerIpc() {
 
   handle(channels.browserBounds, async (_event, payload) => {
     const input = browserBoundsInputSchema.parse(payload)
-    browserEngine.attach(input.threadId)
     browserEngine.setBounds(input.threadId, { x: input.x, y: input.y, width: input.width, height: input.height })
     return browserEngine.state(input.threadId)
   })
@@ -541,6 +541,11 @@ function registerIpc() {
   handle(channels.readProjectFile, async (_event, payload) => {
     const input = projectPathInputSchema.parse(payload)
     return readProjectFile(findProject(input.projectId).path, input.path)
+  })
+
+  handle(channels.saveProjectFile, async (_event, payload) => {
+    const input = saveProjectFileInputSchema.parse(payload)
+    return saveProjectFile(findProject(input.projectId).path, input.path, input.content, input.expectedContent)
   })
 
   handle(channels.runShell, async (_event, payload) => {

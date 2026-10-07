@@ -45,9 +45,31 @@ function resolveMaxTokens(request: ChatRequest): number {
 }
 
 export async function streamChat(input: ChatRequest): Promise<ChatTurn> {
-  const request = { ...input, messages: sanitizeHistory(input.messages) }
-  if (request.provider.kind === 'anthropic') return anthropicChat(request)
-  return openaiChat(request)
+  const retries = Math.max(0, Math.min(input.retries ?? DEFAULT_RETRIES, 5))
+  const messages = sanitizeHistory(input.messages)
+  for (let attempt = 0; ; attempt++) {
+    if (input.signal.aborted) throw new Error('已取消')
+    let emitted = false
+    const request: ChatRequest = {
+      ...input, messages, retries: 0,
+      onText: (delta) => {
+        if (delta.length) emitted = true
+        input.onText(delta)
+      },
+    }
+    try {
+      const turn = await (request.provider.kind === 'anthropic' ? anthropicChat(request) : openaiChat(request))
+      if (input.signal.aborted) throw new Error('已取消')
+      return turn
+    } catch (error) {
+      if (input.signal.aborted) throw new Error('已取消', { cause: error })
+      const retryable = error instanceof HttpError
+        ? error.status === 408 || error.status === 429 || error.status >= 500
+        : error instanceof ModelStreamError ? error.retryable : isNetworkError(error)
+      if (emitted || !retryable || attempt >= retries) throw error
+      await sleep(Math.min(8_000, 800 * 2 ** attempt), input.signal)
+    }
+  }
 }
 
 export interface ConnectionResult {
@@ -297,9 +319,27 @@ class HttpError extends Error {
   }
 }
 
+class ModelStreamError extends Error {
+  constructor(message: string, readonly retryable: boolean, options?: ErrorOptions) {
+    super(message, options)
+  }
+}
+
+function providerStreamError(message: string): ModelStreamError {
+  const upstreamTimeout = /context deadline exceeded|Client\.Timeout|context cancellation while reading body|upstream[^\n]{0,60}tim(?:e|ed)[ -]?out|gateway timeout/i.test(message)
+  const temporary = upstreamTimeout || /\boverloaded\b|\brate.limit\b|temporarily unavailable/i.test(message)
+  return new ModelStreamError(`模型服务返回错误：${message}${upstreamTimeout ? '\n提示：模型服务或中转网关读取上游响应超时；本地请求超时设置不能改变服务端时限。可稍后继续，或检查服务商状态、减少上下文及降低子智能体并发。' : ''}`, temporary)
+}
+
 const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve) => {
-  const timer = setTimeout(resolve, ms)
-  signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+  if (signal.aborted) { resolve(); return }
+  const finish = () => {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', finish)
+    resolve()
+  }
+  const timer = setTimeout(finish, ms)
+  signal.addEventListener('abort', finish, { once: true })
 })
 
 interface Stream {
@@ -342,8 +382,8 @@ async function openStream(url: string, init: RequestInit, request: ChatRequest):
       if (request.signal.aborted) throw error
       const retryable = error instanceof HttpError ? error.status === 429 || error.status >= 500 : timedOut || isNetworkError(error)
       lastError = timedOut
-        ? new Error(`等待模型服务响应超过 ${Math.round(idleMs / 1000)} 秒，已放弃。可在设置中调大请求超时。`)
-        : error instanceof HttpError || !isNetworkError(error) ? error : new Error(describeNetworkError(error, url))
+        ? new ModelStreamError(`等待模型服务响应超过 ${Math.round(idleMs / 1000)} 秒，已放弃。可在设置中调大请求超时。`, true, { cause: error })
+        : error instanceof HttpError || !isNetworkError(error) ? error : new ModelStreamError(describeNetworkError(error, url), true, { cause: error })
       if (!retryable || attempt === retries) break
       await sleep(Math.min(8_000, 800 * 2 ** attempt), request.signal)
     }
@@ -372,8 +412,8 @@ async function* sseEvents(stream: Stream, userSignal: AbortSignal): AsyncGenerat
         result = await reader.read()
       } catch (error) {
         if (userSignal.aborted) return
-        if (stream.signal.aborted) throw new Error(`模型服务超过 ${Math.round(stream.idleMs / 1000)} 秒没有输出，已中断。可在设置中调大请求超时。`, { cause: error })
-        throw isNetworkError(error) ? new Error('读取模型输出时连接中断，请重试', { cause: error }) : error
+        if (stream.signal.aborted) throw new ModelStreamError(`模型服务超过 ${Math.round(stream.idleMs / 1000)} 秒没有输出，已中断。可在设置中调大请求超时。`, true, { cause: error })
+        throw isNetworkError(error) ? new ModelStreamError('读取模型输出时连接中断，请重试', true, { cause: error }) : error
       }
       if (result.done) break
       stream.touch()
@@ -394,8 +434,8 @@ async function* sseEvents(stream: Stream, userSignal: AbortSignal): AsyncGenerat
     }
   } finally {
     stream.dispose()
+    await reader.cancel().catch(() => undefined)
     reader.releaseLock()
-    if (userSignal.aborted) await stream.response.body!.cancel().catch(() => undefined)
   }
 }
 
@@ -404,7 +444,7 @@ function rawError(data: string): Error {
   try {
     const payload = JSON.parse(data) as { error?: { message?: string } | string; message?: string }
     const message = typeof payload.error === 'string' ? payload.error : payload.error?.message ?? payload.message
-    return message ? new Error(`模型服务返回错误：${message}`) : fallback
+    return message ? providerStreamError(message) : fallback
   } catch {
     return fallback
   }
@@ -556,7 +596,7 @@ async function openaiChat(request: ChatRequest): Promise<ChatTurn> {
       if (event.raw) throw rawError(event.data)
       continue
     }
-    if (payload.error) throw new Error(`模型服务返回错误：${typeof payload.error === 'string' ? payload.error : payload.error.message ?? '未知错误'}`)
+    if (payload.error) throw providerStreamError(typeof payload.error === 'string' ? payload.error : payload.error.message ?? '未知错误')
     if (payload.usage) usage = { input: payload.usage.prompt_tokens ?? 0, output: payload.usage.completion_tokens ?? 0 }
     const choice = payload.choices?.[0]
     if (choice?.finish_reason === 'length') truncated = true
@@ -654,7 +694,7 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
       if (event.raw) throw rawError(event.data)
       continue
     }
-    if (payload.type === 'error' || (event.raw && payload.error)) throw new Error(`模型服务返回错误：${payload.error?.message ?? '未知错误'}`)
+    if (payload.type === 'error' || (event.raw && payload.error)) throw providerStreamError(payload.error?.message ?? '未知错误')
     if (payload.type === 'message_start') usage = { input: payload.message?.usage?.input_tokens ?? 0, output: 0 }
     else if (payload.type === 'message_delta') {
       if (payload.usage) usage = { input: usage?.input ?? 0, output: payload.usage.output_tokens ?? 0 }

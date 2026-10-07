@@ -23,9 +23,9 @@ export const providerSchema = z.object({
     try {
       const url = new URL(value)
       return !url.username && !url.password && !url.search && !url.hash &&
-        (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))
+        (url.protocol === 'https:' || url.protocol === 'http:')
     } catch { return false }
-  }, '端点须为 HTTPS 或本机 HTTP 地址，且不能包含凭据、查询参数或片段'),
+  }, '端点须为 HTTP 或 HTTPS 地址，且不能包含凭据、查询参数或片段'),
   hasKey: z.boolean(),
 })
 
@@ -94,6 +94,17 @@ export const appearanceSchema = z.object({
   background: backgroundSchema,
 })
 
+export const subagentRoles = ['general', 'researcher', 'coder', 'reviewer'] as const
+export const subagentProfileSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(40),
+  role: z.enum(subagentRoles),
+  modelId: z.string().max(100),
+  instruction: z.string().max(8000),
+  toolAccess: z.enum(['read-only', 'project']),
+})
+export type SubagentProfile = z.infer<typeof subagentProfileSchema>
+
 export const agentSchema = z.object({
   maxSteps: z.number().int().min(1, '至少 1 步').max(200, '最多 200 步'),
   commandTimeoutSec: z.number().int().min(5, '至少 5 秒').max(1800, '最多 1800 秒'),
@@ -101,6 +112,9 @@ export const agentSchema = z.object({
   planFirst: z.boolean(),
   verifyChanges: z.boolean(),
   autoTodo: z.boolean(),
+  autoSelectRecommended: z.boolean().default(false),
+  maxConcurrentSubagents: z.number().int().min(1).max(16).default(8),
+  subagentProfiles: z.array(subagentProfileSchema).max(16).refine((profiles) => new Set(profiles.map((profile) => profile.id)).size === profiles.length, '子智能体配置 ID 不能重复').default([]),
 })
 
 export const permissionsSchema = z.object({
@@ -309,6 +323,7 @@ export const pendingQuestionSchema = z.object({
   callId: identifier,
   question: z.string().max(2000),
   options: z.array(z.string().max(200)).max(6),
+  recommended: z.string().max(200).optional(),
   multiple: z.boolean().optional(),
 })
 
@@ -365,6 +380,23 @@ export const workflowRunSchema = z.object({
   finishedAt: isoTime.optional(),
 })
 
+export const subagentRunSchema = z.object({
+  id: identifier,
+  batchId: identifier,
+  name: z.string().max(40),
+  role: z.enum(subagentRoles),
+  modelId: z.string().max(100),
+  instruction: z.string().max(8000),
+  status: z.enum(['queued', 'running', 'awaiting-approval', 'completed', 'failed', 'cancelled']),
+  step: z.number().int().nonnegative(),
+  maxSteps: z.number().int().positive(),
+  detail: z.string().max(2000).optional(),
+  summary: z.string().max(12000).optional(),
+  startedAt: isoTime.optional(),
+  finishedAt: isoTime.optional(),
+})
+export type SubagentRun = z.infer<typeof subagentRunSchema>
+
 export const threadSchema = z.object({
   id: identifier,
   projectId: identifier,
@@ -381,6 +413,7 @@ export const threadSchema = z.object({
   pinned: z.boolean().optional(),
   mode: z.enum(agentModes).optional(),
   workflowRun: workflowRunSchema.optional(),
+  subagentRuns: z.array(subagentRunSchema).max(64).optional(),
 })
 
 export const workflowNodeKinds = ['task', 'check', 'review', 'note', 'computer', 'browser', 'launch', 'command', 'search', 'file', 'git', 'plugin', 'mcp', 'wait', 'ask'] as const
@@ -430,6 +463,7 @@ export const dequeueInputSchema = z.object({ threadId: identifier, queuedId: ide
 export const steerInputSchema = z.object({ threadId: identifier, content: z.string().trim().min(1).max(60_000) }).strict()
 export const providerKeyInputSchema = z.object({ providerId: identifier, apiKey: z.string().max(4000) }).strict()
 export const projectPathInputSchema = z.object({ projectId: identifier, path: z.string().max(2000) }).strict()
+export const saveProjectFileInputSchema = z.object({ projectId: identifier, path: z.string().min(1).max(2000), content: z.string().max(400_000), expectedContent: z.string().max(400_000) }).strict()
 export const runShellInputSchema = z.object({ projectId: identifier, command: z.string().trim().min(1).max(4000) }).strict()
 export const panelWindowInputSchema = z.object({ threadId: identifier }).strict()
 export const openExternalInputSchema = z.object({ url: z.string().url().max(4000) }).strict()
@@ -550,6 +584,7 @@ export interface CubexAPI {
   pickFiles: (input: { projectId: string }) => Promise<Result<string[]>>
   listFiles: (input: { projectId: string; path: string }) => Promise<Result<FileEntry[]>>
   readProjectFile: (input: { projectId: string; path: string }) => Promise<Result<FileContent>>
+  saveProjectFile: (input: { projectId: string; path: string; content: string; expectedContent: string }) => Promise<Result<FileContent>>
   runShell: (input: { projectId: string; command: string }) => Promise<Result<ShellOutput>>
   openPanelWindow: (input: { threadId: string }) => Promise<Result<void>>
   closePanelWindow: () => Promise<Result<void>>
@@ -612,7 +647,7 @@ export function defaultSettings(): Settings {
     general: { language: 'zh-CN', uiLanguage: 'zh-CN', responseStyle: 'balanced', confirmDelete: true },
     appearance: { theme: 'light', accent: 'matcha', fontFamily: 'system', fontSize: 14, codeFontSize: 13, density: 'comfortable', reduceMotion: false, background: { opacity: 0.35 } },
     modelParams: { temperature: null, maxTokens: 0, timeoutSec: 120, retries: 2, historyLimit: 200 },
-    agent: { maxSteps: 40, commandTimeoutSec: 180, shell: 'auto', planFirst: true, verifyChanges: true, autoTodo: true },
+    agent: { maxSteps: 40, commandTimeoutSec: 180, shell: 'auto', planFirst: true, verifyChanges: true, autoTodo: true, autoSelectRecommended: false, maxConcurrentSubagents: 8, subagentProfiles: [] },
     permissions: { readOnly: false, sandbox: true, sandboxNetwork: false, allowCommands: [], denyCommands: ['rm -rf /', 'format', 'shutdown', 'git push --force'] },
     chat: { sendKey: 'enter', showUsage: true, expandTools: false, autoScroll: true, notifyOnDone: true },
     github: { hasToken: false, autoPush: false, repo: '', branch: 'main', private: true },

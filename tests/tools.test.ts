@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { ToolCall } from '../src/shared/schema'
-import { makeDiff, resolveInside, runTool } from '../src/main/tools'
+import { makeDiff, readProjectFile, resolveInside, runTool, saveProjectFile } from '../src/main/tools'
 
 let root: string
 const signal = new AbortController().signal
@@ -87,6 +87,42 @@ describe('文件工具', () => {
 })
 
 describe('run_command', () => {
+  it('手动编辑保存完整文本，保留换行并支持清空文件', async () => {
+    const original = await readProjectFile(root, 'src/a.ts')
+    const content = '\ufeff第一行\r\n第二行\r\n'
+    const saved = await saveProjectFile(root, original.path, content, original.content)
+    expect(saved).toEqual({ path: original.path, content, size: Buffer.byteLength(content), truncated: false })
+    expect(await readFile(join(root, 'src/a.ts'), 'utf8')).toBe(content)
+    await saveProjectFile(root, original.path, '', content)
+    expect(await readFile(join(root, 'src/a.ts'), 'utf8')).toBe('')
+  })
+
+  it('外部修改或并发保存时拒绝覆盖旧版本', async () => {
+    const original = await readProjectFile(root, 'src/a.ts')
+    const results = await Promise.allSettled([
+      saveProjectFile(root, original.path, 'first', original.content),
+      saveProjectFile(root, original.path, 'second', original.content),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    const current = await readFile(join(root, 'src/a.ts'), 'utf8')
+    expect(['first', 'second']).toContain(current)
+    await expect(saveProjectFile(root, original.path, 'stale', original.content)).rejects.toThrow('其他操作修改')
+    expect(await readFile(join(root, 'src/a.ts'), 'utf8')).toBe(current)
+  })
+
+  it('手动保存拒绝截断文件、非 UTF-8 文本和越界路径', async () => {
+    await writeFile(join(root, 'large.txt'), 'x'.repeat(400_001))
+    const preview = await readProjectFile(root, 'large.txt')
+    expect(preview.truncated).toBe(true)
+    await expect(saveProjectFile(root, 'large.txt', 'replacement', preview.content)).rejects.toThrow('截断')
+    expect((await readFile(join(root, 'large.txt'))).length).toBe(400_001)
+    await writeFile(join(root, 'invalid.txt'), Buffer.from([0xff, 0xfe, 0x41]))
+    await expect(saveProjectFile(root, 'invalid.txt', 'replacement', '')).rejects.toThrow('UTF-8')
+    await expect(saveProjectFile(root, '../escape.txt', 'replacement', '')).rejects.toThrow('越出')
+    await expect(saveProjectFile(root, '.env', 'replacement', '')).rejects.toThrow('凭据')
+  })
+
   it('在项目根目录执行并返回退出码', async () => {
     const result = await run('run_command', { command: 'node -e "process.stdout.write(process.cwd())"' })
     expect(result.ok).toBe(true)

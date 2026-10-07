@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
@@ -161,8 +161,14 @@ export function App() {
   const actionLock = useRef(false)
   const scrollPositions = useRef<Record<string, number>>({})
   const scrollRestored = useRef<string | null>(null)
-  const MESSAGE_PAGE = 20
+  const followBottom = useRef(true)
+  const lastScrollTop = useRef(0)
+  const historyAnchor = useRef<{ id?: string; top: number; height: number; scrollTop: number } | null>(null)
+  const MESSAGE_PAGE = 8
   const [visibleCount, setVisibleCount] = useState(MESSAGE_PAGE)
+  const [historyEndId, setHistoryEndId] = useState<string | null>(null)
+  const historyWindows = useRef<Record<string, { count: number; endId: string | null; follow: boolean }>>({})
+  const previousMessages = useRef<{ threadId?: string; lastId?: string }>({})
 
   useEffect(() => {
     let cancelled = false
@@ -315,26 +321,73 @@ export function App() {
     return total
   }, [thread, streams])
 
-  useEffect(() => { setVisibleCount(MESSAGE_PAGE) }, [thread?.id])
+  useLayoutEffect(() => {
+    const saved = thread?.id ? historyWindows.current[thread.id] : undefined
+    setVisibleCount(saved?.count ?? MESSAGE_PAGE)
+    setHistoryEndId(saved?.endId ?? null)
+    followBottom.current = saved?.follow ?? true
+    historyAnchor.current = null
+    previousMessages.current = { threadId: thread?.id }
+  }, [thread?.id])
+
+  useLayoutEffect(() => {
+    const id = thread?.id
+    if (!id) return
+    const windows = historyWindows.current
+    return () => {
+      windows[id] = { count: visibleCount, endId: historyEndId, follow: followBottom.current }
+    }
+  }, [thread?.id, visibleCount, historyEndId])
 
   const totalMessages = thread?.messages.length ?? 0
-  const hiddenCount = Math.max(0, totalMessages - visibleCount)
+  const historyEndIndex = historyEndId ? thread?.messages.findIndex((message) => message.id === historyEndId) ?? -1 : -1
+  const visibleEnd = historyEndIndex >= 0 ? historyEndIndex + 1 : totalMessages
+  const hiddenCount = Math.max(0, visibleEnd - visibleCount)
+  const newerCount = totalMessages - visibleEnd
   const visibleMessages = useMemo(() => {
     if (!thread) return []
-    return hiddenCount > 0 ? thread.messages.slice(hiddenCount) : thread.messages
-  }, [thread, hiddenCount])
+    return thread.messages.slice(hiddenCount, visibleEnd)
+  }, [thread, hiddenCount, visibleEnd])
+
+  useLayoutEffect(() => {
+    const previous = previousMessages.current
+    const lastId = thread?.messages.at(-1)?.id
+    if (thread && previous.threadId === thread.id && previous.lastId && previous.lastId !== lastId && !followBottom.current && !historyEndId) {
+      if (thread.messages.some((message) => message.id === previous.lastId)) setHistoryEndId(previous.lastId)
+    }
+    previousMessages.current = { threadId: thread?.id, lastId }
+  }, [thread, historyEndId])
 
   const loadEarlier = useCallback(() => {
     const node = scrollRef.current
-    const prevHeight = node?.scrollHeight ?? 0
-    const prevTop = node?.scrollTop ?? 0
-    setVisibleCount((count) => Math.min(totalMessages, count + MESSAGE_PAGE))
-    requestAnimationFrame(() => {
-      const current = scrollRef.current
-      if (!current) return
-      current.scrollTop = prevTop + (current.scrollHeight - prevHeight)
-    })
-  }, [totalMessages])
+    if (!node || historyAnchor.current || hiddenCount === 0) return
+    const viewportTop = node.getBoundingClientRect().top
+    const anchor = Array.from(node.querySelectorAll<HTMLElement>('[data-message-id]'))
+      .find((item) => item.getBoundingClientRect().bottom > viewportTop)
+    historyAnchor.current = {
+      id: anchor?.dataset.messageId,
+      top: anchor?.getBoundingClientRect().top ?? viewportTop,
+      height: node.scrollHeight,
+      scrollTop: node.scrollTop,
+    }
+    followBottom.current = false
+    setVisibleCount((count) => Math.min(visibleEnd, count + MESSAGE_PAGE))
+  }, [visibleEnd, hiddenCount])
+
+  useLayoutEffect(() => {
+    const pending = historyAnchor.current
+    const node = scrollRef.current
+    if (!pending || !node) return
+    historyAnchor.current = null
+    const anchor = pending.id
+      ? Array.from(node.querySelectorAll<HTMLElement>('[data-message-id]')).find((item) => item.dataset.messageId === pending.id)
+      : undefined
+    node.scrollTop = anchor
+      ? node.scrollTop + anchor.getBoundingClientRect().top - pending.top
+      : pending.scrollTop + node.scrollHeight - pending.height
+    lastScrollTop.current = node.scrollTop
+    if (thread?.id) scrollPositions.current[thread.id] = node.scrollTop
+  }, [visibleCount, thread?.id])
 
   const dotPreview = useCallback((text: string) => {
     const clean = text.replace(/\s+/g, ' ').trim()
@@ -353,17 +406,35 @@ export function App() {
   }, [thread, dotPreview, tr])
 
   const scrollToMessage = useCallback((id: string, index: number) => {
-    const needVisible = totalMessages - index
-    if (needVisible > visibleCount) setVisibleCount(Math.min(totalMessages, needVisible + 2))
+    followBottom.current = false
+    historyAnchor.current = null
+    const end = Math.min(totalMessages, index + MESSAGE_PAGE - 2)
+    setHistoryEndId(thread?.messages[end - 1]?.id ?? null)
+    setVisibleCount(MESSAGE_PAGE)
     const doScroll = () => {
       const node = scrollRef.current
       if (!node) return
       const target = node.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
       if (!target) return
-      node.scrollTop = target.offsetTop - 16
+      followBottom.current = false
+      node.scrollTop += target.getBoundingClientRect().top - node.getBoundingClientRect().top - 16
+      lastScrollTop.current = node.scrollTop
     }
     requestAnimationFrame(() => requestAnimationFrame(doScroll))
-  }, [totalMessages, visibleCount])
+  }, [totalMessages, thread])
+
+  const jumpToLatest = useCallback(() => {
+    historyAnchor.current = null
+    followBottom.current = true
+    setHistoryEndId(null)
+    setVisibleCount(MESSAGE_PAGE)
+    requestAnimationFrame(() => {
+      const node = scrollRef.current
+      if (!node) return
+      node.scrollTop = node.scrollHeight
+      lastScrollTop.current = node.scrollTop
+    })
+  }, [])
 
   const dotsRef = useRef<HTMLDivElement | null>(null)
   const [dotsFade, setDotsFade] = useState({ top: false, bottom: false })
@@ -392,12 +463,16 @@ export function App() {
     const onScroll = () => {
       if (!thread?.id) return
       if (scrollRestored.current !== thread.id) return
+      const movingUp = node.scrollTop < lastScrollTop.current - 1
+      if (nearBottom(node) && newerCount === 0) followBottom.current = true
+      else if (movingUp) followBottom.current = false
+      lastScrollTop.current = node.scrollTop
       scrollPositions.current[thread.id] = node.scrollTop
-      if (node.scrollTop < 120 && hiddenCount > 0) loadEarlier()
+      if (movingUp && node.scrollTop < 120 && hiddenCount > 0) loadEarlier()
     }
     node.addEventListener('scroll', onScroll, { passive: true })
     return () => node.removeEventListener('scroll', onScroll)
-  }, [thread?.id, hiddenCount, loadEarlier])
+  }, [thread?.id, view, hiddenCount, loadEarlier, nearBottom, newerCount])
 
   useEffect(() => {
     if (!thread?.id) return
@@ -405,31 +480,49 @@ export function App() {
     if (!node) return
     scrollRestored.current = null
     const saved = scrollPositions.current[thread.id]
+    const savedWindow = historyWindows.current[thread.id]
+    followBottom.current = savedWindow?.follow ?? saved == null
     const apply = () => {
-      if (saved != null) node.scrollTop = saved
+      if (saved != null && !followBottom.current) node.scrollTop = saved
       else node.scrollTop = node.scrollHeight
+      lastScrollTop.current = node.scrollTop
       scrollRestored.current = thread.id
     }
     const first = requestAnimationFrame(apply)
-    const second = requestAnimationFrame(() => requestAnimationFrame(apply))
-    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second) }
-  }, [thread?.id, view])
+    let third = 0
+    const second = requestAnimationFrame(() => { third = requestAnimationFrame(apply) })
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); cancelAnimationFrame(third) }
+  }, [thread?.id, view, nearBottom])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!chat.autoScroll) return
     if (!thread?.id) return
     if (scrollRestored.current !== thread.id) return
     const node = scrollRef.current
     if (!node) return
-    if (!nearBottom(node)) return
-    const handle = requestAnimationFrame(() => { node.scrollTop = node.scrollHeight })
-    return () => cancelAnimationFrame(handle)
-  }, [thread?.id, thread?.messages.length, currentStreamLen, thread?.status, chat.autoScroll, nearBottom])
+    if (!followBottom.current) return
+    node.scrollTop = node.scrollHeight
+    lastScrollTop.current = node.scrollTop
+  }, [thread?.id, thread?.messages, currentStreamLen, thread?.status, chat.autoScroll])
+
+  useEffect(() => {
+    const node = scrollRef.current
+    const content = node?.firstElementChild
+    if (!node || !content || !thread?.id || !chat.autoScroll) return
+    const observer = new ResizeObserver(() => {
+      if (scrollRestored.current !== thread.id || !followBottom.current) return
+      node.scrollTop = node.scrollHeight
+      lastScrollTop.current = node.scrollTop
+    })
+    observer.observe(content)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [thread?.id, view, chat.autoScroll])
 
   useEffect(() => {
     const node = inputRef.current
     if (!node) return
-    const base = 48
+    const base = 72
     const max = Math.round(base * 2.5)
     node.style.height = 'auto'
     node.style.height = `${Math.min(Math.max(node.scrollHeight, base), max)}px`
@@ -616,6 +709,9 @@ export function App() {
         if (used === 0 && target.messages.length > 0) used = historyTokens(target.messages)
         if (used / window >= 0.92) await api.compactThread({ threadId: target.id }).catch(() => undefined)
       }
+      followBottom.current = true
+      setHistoryEndId(null)
+      setVisibleCount(MESSAGE_PAGE)
       const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
       if (!result.ok) setError(result.error)
       else {
@@ -629,6 +725,29 @@ export function App() {
       setBusy(false)
     }
   }, [project, input, images, loaded, thread, modelId, isActive, ui, view, model, queue])
+
+  const [continuedErrorKey, setContinuedErrorKey] = useState<string | null>(null)
+  const continueAfterError = useCallback(async (messageId: string) => {
+    if (!thread || !project || !isDesktop || !loaded || !modelId || actionLock.current || thread.status !== 'idle') return
+    const last = thread.messages.at(-1)
+    const key = `${thread.id}:${messageId}`
+    if (last?.id !== messageId || last.role !== 'system' || last.level !== 'error' || continuedErrorKey === key) return
+    actionLock.current = true
+    setBusy(true)
+    try {
+      followBottom.current = true
+      setHistoryEndId(null)
+      setVisibleCount(MESSAGE_PAGE)
+      const result = await api.sendMessage({ threadId: thread.id, content: '继续', modelId })
+      if (!result.ok) setError(result.error)
+      else setContinuedErrorKey(key)
+    } catch {
+      setError(tr('消息未能发送，请重试。'))
+    } finally {
+      actionLock.current = false
+      setBusy(false)
+    }
+  }, [thread, project, loaded, modelId, continuedErrorKey, tr])
 
   const answer = useCallback(async (question: PendingQuestion, value: string) => {
     if (!thread) return
@@ -1093,7 +1212,19 @@ export function App() {
                             <ChevronUp size={14} />{tr('加载更早的 {n} 条消息', { n: Math.min(MESSAGE_PAGE, hiddenCount) })}
                           </button>
                         )}
-                        {visibleMessages.map((message) => <MessageView key={message.id} message={message} stream={streams[message.id]} modelName={models.find((item) => item.id === (message.role === 'assistant' ? message.modelId : ''))?.name} showUsage={chat.showUsage} expandTools={chat.expandTools} canEdit={thread.status === 'idle'} actions={messageActions} />)}
+                        {visibleMessages.map((message) => <MessageView key={message.id} message={message} stream={streams[message.id]} modelName={models.find((item) => item.id === (message.role === 'assistant' ? message.modelId : ''))?.name} showUsage={chat.showUsage} expandTools={chat.expandTools} canEdit={thread.status === 'idle'} actions={messageActions}
+                          onContinue={message.role === 'system' && message.level === 'error' && thread.messages.at(-1)?.id === message.id && thread.status === 'idle' && !busy && isDesktop && loaded && !!modelId && continuedErrorKey !== `${thread.id}:${message.id}` ? continueAfterError : undefined} />)}
+                        {newerCount > 0 && (
+                          <div className="history-navigation">
+                            <button type="button" className="load-earlier" onClick={() => {
+                              followBottom.current = false
+                              const end = Math.min(totalMessages, visibleEnd + MESSAGE_PAGE)
+                              setHistoryEndId(thread.messages[end - 1]?.id ?? null)
+                              setVisibleCount((count) => count + end - visibleEnd)
+                            }}><ChevronDown size={14} />{tr('加载后续 {n} 条消息', { n: Math.min(MESSAGE_PAGE, newerCount) })}</button>
+                            <button type="button" className="load-earlier" onClick={jumpToLatest}>{tr('回到最新消息')}</button>
+                          </div>
+                        )}
                         {thread.status === 'running' && !thread.messages.some((message) => message.role === 'assistant' && message.content === '' && streams[message.id]) && thread.messages[thread.messages.length - 1]?.role !== 'assistant' && (
                           <ActivityIndicator activity={activities[thread.id]} fallback={tr('正在思考…')} />
                         )}
@@ -1413,7 +1544,7 @@ function QuestionOverlay({ question, onAnswer, onCancel }: { question: PendingQu
           {options.map((option) => (
             <button key={option} type="button" className={`question-option${selected.includes(option) ? ' selected' : ''}`} aria-pressed={question.multiple ? selected.includes(option) : undefined} disabled={submitted} onClick={() => pick(option)}>
               {question.multiple && <span className="option-check">{selected.includes(option) && <Check size={12} />}</span>}
-              <span>{option}</span>
+              <span className="question-option-title">{option}{question.recommended === option && <span className="question-recommended-dot" role="img" aria-label={tr('推荐选项')} title={tr('推荐选项')} />}</span>
             </button>
           ))}
         </div>
@@ -1428,7 +1559,7 @@ function QuestionOverlay({ question, onAnswer, onCancel }: { question: PendingQu
 }
 
 type MessageAction = { regenerate: (id: string) => void; rollback: (id: string) => void; remove: (id: string) => void }
-type MessageViewProps = { message: Message; stream?: string; modelName?: string; showUsage: boolean; expandTools: boolean; canEdit: boolean; actions: MessageAction }
+type MessageViewProps = { message: Message; stream?: string; modelName?: string; showUsage: boolean; expandTools: boolean; canEdit: boolean; actions: MessageAction; onContinue?: (messageId: string) => Promise<void> }
 
 // 状态经 IPC 推送后对象引用每次都会变化。用关键字段浅比较代替昂贵的 JSON.stringify 深比较，
 // 避免任意后台任务的一次状态广播就让当前会话所有消息重新序列化。
@@ -1460,6 +1591,7 @@ function sameMessage(a: Message, b: Message): boolean {
 
 const sameMessageProps = (prev: MessageViewProps, next: MessageViewProps) =>
   prev.stream === next.stream && prev.modelName === next.modelName && prev.showUsage === next.showUsage && prev.expandTools === next.expandTools && prev.canEdit === next.canEdit
+  && prev.onContinue === next.onContinue
   && sameMessage(prev.message, next.message)
 
 function CopyButton({ text }: { text: string }) {
@@ -1494,7 +1626,7 @@ function ActivityIndicator({ activity, fallback }: { activity?: AgentActivity; f
   )
 }
 
-const MessageView = memo(function MessageView({ message, stream, modelName, showUsage, expandTools, canEdit, actions }: MessageViewProps) {
+const MessageView = memo(function MessageView({ message, stream, modelName, showUsage, expandTools, canEdit, actions, onContinue }: MessageViewProps) {
   const { tr } = useI18n()
   if (message.role === 'user') {
     return (
@@ -1525,15 +1657,15 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
     )
   }
   if (message.role === 'system') {
-    return <div className={`msg system ${message.level}`}><CircleHelp size={14} /><span>{message.content}</span></div>
+    return <div className={`msg system ${message.level}`} data-message-id={message.id}><CircleHelp size={14} /><span className="system-message-text">{message.content}</span>{message.level === 'error' && <button type="button" className="btn-secondary error-continue" disabled={!onContinue} onClick={() => void onContinue?.(message.id)}>{tr('继续')}</button>}</div>
   }
   if (message.role === 'tool') {
-    return <div className="msg tool">{message.results.map((result) => <ToolResultCard key={result.callId} result={result} defaultOpen={expandTools} />)}</div>
+    return <div className="msg tool" data-message-id={message.id}>{message.results.map((result) => <ToolResultCard key={result.callId} result={result} defaultOpen={expandTools} />)}</div>
   }
   const streaming = !message.content && !!stream
   const content = message.content || stream || ''
   return (
-    <div className="msg assistant">
+    <div className="msg assistant" data-message-id={message.id}>
       <div className="assistant-head"><span className="result-mark"><Logo size={26} rounded /></span><strong>Cubex</strong>{modelName && <span className="muted">{modelName}</span>}{showUsage && message.usage && <span className="muted">{message.usage.input + message.usage.output} tokens</span>}</div>
       {content && (streaming ? <div className="stream-text">{content}</div> : <Markdown source={content} />)}
       {!content && message.toolCalls.length === 0 && <div className="thinking"><LoaderCircle size={14} className="spin" />{tr('正在生成…')}</div>}

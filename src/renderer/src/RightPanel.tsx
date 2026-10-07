@@ -6,6 +6,8 @@ import type { OpenTarget } from './components/Markdown'
 import { api, isDesktop } from './bridge'
 import { useI18n } from './i18n'
 import { collectSources, sourcesToMarkdown, type SearchHit } from './sources'
+import { SubagentPanel } from './components/SubagentPanel'
+import { useUi } from './ui'
 
 export type OpenRequest = { target: OpenTarget; nonce: number }
 
@@ -59,15 +61,16 @@ export function RightPanel({ thread, project, detached, onDetach, onError, onAdd
         </div>
       </div>
       <div className="right-panel-body" role="tabpanel">
-        {view === 'files' && <FilesView project={project} onError={onError} openRequest={fileRequest} />}
+        {view === 'files' && <FilesView key={project?.id} project={project} onError={onError} openRequest={fileRequest} />}
         {view === 'terminal' && <TerminalView project={project} onError={onError} />}
         {view === 'browser' && <BrowserView onAddToChat={onAddToChat} openRequest={urlRequest} />}
         {view === 'summary' && (
           <div className="panel-summary-wrap">
+            {!!thread?.subagentRuns?.length && <SubagentPanel key={`${thread.id}:${thread.subagentRuns.at(-1)?.batchId}`} runs={thread.subagentRuns.filter((run) => run.batchId === thread.subagentRuns?.at(-1)?.batchId)} pendingCallId={thread.pending?.callId} />}
             {thread ? <SummaryView thread={thread} project={project} contextWindow={contextWindow} onError={onError} /> : <PanelEmpty icon={ListChecks} text={tr('选择或新建任务后显示任务摘要')} />}
           </div>
         )}
-        {view === 'changes' && (thread ? <ChangesView thread={thread} /> : <PanelEmpty icon={FileCode2} text={tr('选择或新建任务后显示文件变更')} />)}
+        {view === 'changes' && (thread ? <ChangesView key={thread.id} thread={thread} project={project} onError={onError} /> : <PanelEmpty icon={FileCode2} text={tr('选择或新建任务后显示文件变更')} />)}
       </div>
     </aside>
   )
@@ -85,32 +88,138 @@ function normalizeRel(project: Project | null, raw: string): string {
   return value
 }
 
+interface FileDraft { base: FileContent; text: string }
+const fileDrafts = new Map<string, FileDraft>()
+const editorText = (content: string) => content.replace(/\r\n/g, '\n')
+
+function FileEditor({ project, file, onBack }: { project: Project; file: FileContent; onBack: () => void }) {
+  const { tr } = useI18n()
+  const ui = useUi()
+  const draftKey = JSON.stringify([project.id, file.path])
+  const [base, setBase] = useState(() => fileDrafts.get(draftKey)?.base ?? file)
+  const [text, setText] = useState(() => fileDrafts.get(draftKey)?.text ?? editorText(file.content))
+  const [editing, setEditing] = useState(() => fileDrafts.has(draftKey))
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const lock = useRef(false)
+  const dirty = text !== editorText(base.content)
+
+  const updateText = (value: string) => {
+    setText(value)
+    if (value === editorText(base.content)) fileDrafts.delete(draftKey)
+    else fileDrafts.set(draftKey, { base, text: value })
+  }
+
+  const save = async () => {
+    if (lock.current || !dirty || base.truncated) return
+    lock.current = true
+    setSaving(true)
+    setError('')
+    const content = base.content.includes('\r\n') && !base.content.replace(/\r\n/g, '').includes('\n') ? text.replace(/\n/g, '\r\n') : text
+    try {
+      const result = await api.saveProjectFile({ projectId: project.id, path: base.path, content, expectedContent: base.content })
+      if (!result.ok) { setError(result.error); return }
+      fileDrafts.delete(draftKey)
+      setBase(result.data)
+      setText(editorText(result.data.content))
+      ui.toast(tr('文件已保存'), 'success')
+    } catch {
+      setError(tr('保存文件失败，草稿已保留，请重试。'))
+    } finally {
+      lock.current = false
+      setSaving(false)
+    }
+  }
+
+  const reload = async () => {
+    if (lock.current) return
+    lock.current = true
+    try {
+      if (dirty && !(await ui.confirm({ title: tr('放弃未保存的修改'), message: tr('重新加载将丢弃此文件的草稿，读取磁盘上的最新内容。'), confirmLabel: tr('重新加载'), danger: true }))) return
+      setSaving(true)
+      const result = await api.readProjectFile({ projectId: project.id, path: base.path })
+      if (!result.ok) { setError(result.error); return }
+      fileDrafts.delete(draftKey)
+      setBase(result.data)
+      setText(editorText(result.data.content))
+      setError('')
+      if (result.data.truncated) setEditing(false)
+    } catch {
+      setError(tr('重新加载文件失败，草稿已保留。'))
+    } finally {
+      lock.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="panel-file">
+      <div className="panel-crumbs">
+        <button type="button" className="icon-button" aria-label={tr('返回')} title={tr('返回')} disabled={saving} onClick={onBack}><ArrowLeft size={14} /></button>
+        <span className="truncate" title={base.path}>{base.path}</span>
+        <span className="panel-meta">{formatSize(base.size)}</span>
+      </div>
+      <div className="file-editor-actions">
+        <button type="button" className="btn-secondary" disabled={saving || base.truncated} onClick={() => setEditing((value) => !value)}>{editing ? tr('预览') : tr('编辑文件')}</button>
+        <button type="button" className="btn-primary" disabled={saving || !dirty || base.truncated} onClick={() => void save()}>{saving ? <LoaderCircle size={14} className="spin" /> : null}{tr('保存文件')}</button>
+        <button type="button" className="btn-secondary" disabled={saving} onClick={() => void reload()}>{tr('重新加载')}</button>
+      </div>
+      {error && <div className="file-editor-error" role="alert">{error}</div>}
+      {dirty && <div className="panel-note" role="status">{tr('未保存的草稿；切换面板后仍保留，关闭应用前请保存。')}</div>}
+      {editing ? (
+        <textarea className="file-editor-input" aria-label={tr('文件内容')} spellCheck={false} wrap="off" value={text} disabled={saving} maxLength={400000} onChange={(event) => updateText(event.target.value)} onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); void save() }
+        }} />
+      ) : <pre className="panel-code">{text.split('\n').map((line, index) => <span key={index}><i>{index + 1}</i>{line}{'\n'}</span>)}</pre>}
+      {base.truncated && <div className="panel-note">{tr('文件过大，当前为截断预览，不能编辑保存。')}</div>}
+    </div>
+  )
+}
+
 function FilesView({ project, onError, openRequest }: { project: Project | null; onError: (message: string) => void; openRequest?: OpenRequest | null }) {
   const { tr } = useI18n()
   const [path, setPath] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [file, setFile] = useState<FileContent | null>(null)
   const [loading, setLoading] = useState(false)
+  const requestSequence = useRef(0)
+  const projectId = project?.id
+
+  useEffect(() => () => { requestSequence.current++ }, [])
 
   const load = useCallback(async (target: string) => {
-    if (!project || !isDesktop) return
+    if (!projectId || !isDesktop) return
+    const sequence = ++requestSequence.current
     setLoading(true)
-    const result = await api.listFiles({ projectId: project.id, path: target || '.' })
-    setLoading(false)
-    if (!result.ok) { onError(result.error); return }
-    setEntries(result.data)
-    setPath(target)
-    setFile(null)
-  }, [project, onError])
+    try {
+      const result = await api.listFiles({ projectId, path: target || '.' })
+      if (sequence !== requestSequence.current) return
+      if (!result.ok) { onError(result.error); return }
+      setEntries(result.data)
+      setPath(target)
+      setFile(null)
+    } catch {
+      if (sequence === requestSequence.current) onError(tr('读取目录失败，请重试。'))
+    } finally {
+      if (sequence === requestSequence.current) setLoading(false)
+    }
+  }, [projectId, onError, tr])
 
   const openFile = useCallback(async (rel: string) => {
-    if (!project || !isDesktop) return
+    if (!projectId || !isDesktop) return
+    const sequence = ++requestSequence.current
     setLoading(true)
-    const result = await api.readProjectFile({ projectId: project.id, path: rel })
-    setLoading(false)
-    if (!result.ok) { onError(result.error); return }
-    setFile(result.data)
-  }, [project, onError])
+    try {
+      const result = await api.readProjectFile({ projectId, path: rel })
+      if (sequence !== requestSequence.current) return
+      if (!result.ok) { onError(result.error); return }
+      setFile(result.data)
+    } catch {
+      if (sequence === requestSequence.current) onError(tr('读取文件失败，请重试。'))
+    } finally {
+      if (sequence === requestSequence.current) setLoading(false)
+    }
+  }, [projectId, onError, tr])
 
   useEffect(() => { void load('') }, [load])
 
@@ -121,14 +230,10 @@ function FilesView({ project, onError, openRequest }: { project: Project | null;
     else void openFile(rel)
   }, [openRequest, project, load, openFile])
 
-  const open = async (entry: FileEntry) => {
-    if (!project) return
+  const open = (entry: FileEntry) => {
+    if (!projectId) return
     if (entry.kind === 'directory') { void load(entry.path); return }
-    setLoading(true)
-    const result = await api.readProjectFile({ projectId: project.id, path: entry.path })
-    setLoading(false)
-    if (!result.ok) { onError(result.error); return }
-    setFile(result.data)
+    void openFile(entry.path)
   }
 
   const up = () => {
@@ -139,19 +244,7 @@ function FilesView({ project, onError, openRequest }: { project: Project | null;
   if (!project) return <PanelEmpty icon={Folder} text={tr('请先选择项目')} />
   if (!isDesktop) return <PanelEmpty icon={Folder} text={tr('文件浏览仅在桌面应用中可用')} />
 
-  if (file) {
-    return (
-      <div className="panel-file">
-        <div className="panel-crumbs">
-          <button className="icon-button" aria-label={tr('返回目录')} title={tr('返回目录')} onClick={() => setFile(null)}><ArrowLeft size={14} /></button>
-          <span className="truncate" title={file.path}>{file.path}</span>
-          <span className="panel-meta">{formatSize(file.size)}</span>
-        </div>
-        <pre className="panel-code">{file.content.split('\n').map((line, i) => <span key={i}><i>{i + 1}</i>{line}{'\n'}</span>)}</pre>
-        {file.truncated && <div className="panel-note">{tr('文件过大，仅显示前 400 KB')}</div>}
-      </div>
-    )
-  }
+  if (file) return <FileEditor key={JSON.stringify([project.id, file.path])} project={project} file={file} onBack={() => setFile(null)} />
 
   return (
     <div className="panel-files">
@@ -553,14 +646,35 @@ function SummaryGroup({ icon: Icon, title, items, empty }: { icon: typeof Folder
   )
 }
 
-function ChangesView({ thread }: { thread: Thread }) {
+function ChangesView({ thread, project, onError }: { thread: Thread; project: Project | null; onError: (message: string) => void }) {
   const { tr } = useI18n()
   const changes = useMemo(() => collectChanges(thread), [thread])
   const [selected, setSelected] = useState<string | null>(null)
+  const [file, setFile] = useState<FileContent | null>(null)
+  const [loading, setLoading] = useState(false)
+  const openSequence = useRef(0)
+  useEffect(() => () => { openSequence.current++ }, [])
   const active = changes.find((item) => item.path === selected) ?? changes[changes.length - 1] ?? null
+  const editFile = async () => {
+    if (!project || !active || loading) return
+    const sequence = ++openSequence.current
+    setLoading(true)
+    try {
+      const result = await api.readProjectFile({ projectId: project.id, path: normalizeRel(project, active.path) })
+      if (sequence !== openSequence.current) return
+      if (!result.ok) { onError(result.error); return }
+      setFile(result.data)
+    } catch {
+      if (sequence === openSequence.current) onError(tr('读取文件失败，请重试。'))
+    } finally {
+      if (sequence === openSequence.current) setLoading(false)
+    }
+  }
+  if (file && project) return <FileEditor key={JSON.stringify([project.id, file.path])} project={project} file={file} onBack={() => setFile(null)} />
   if (changes.length === 0) return <PanelEmpty icon={FileCode2} text={tr('本任务尚未修改文件。写入或编辑后，改动会在这里按文件列出并高亮显示。')} />
   return (
     <div className="panel-changes">
+      {active && <div className="file-editor-actions"><button type="button" className="btn-secondary" disabled={!project || !isDesktop || loading || active.path === '未知文件'} onClick={() => void editFile()}>{loading && <LoaderCircle size={14} className="spin" />}{tr('编辑当前文件')}</button></div>}
       <ul className="change-list">
         {changes.map((item) => (
           <li key={item.path}>

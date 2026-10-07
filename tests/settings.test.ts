@@ -31,6 +31,33 @@ describe('migrateState', () => {
     expect(migrateState(null)).toBeNull()
     expect(migrateState({ version: 1 })).toEqual({ version: 1 })
   })
+
+  it('旧配置补齐子智能体默认值并保留已有智能体设置', () => {
+    const state = createInitialState()
+    const raw = { ...state, settings: { ...state.settings, agent: { maxSteps: 75, commandTimeoutSec: 120, shell: 'auto', planFirst: false, verifyChanges: true, autoTodo: false } } }
+    const migrated = stateSchema.parse(migrateState(raw))
+    expect(migrated.settings.agent).toMatchObject({ maxSteps: 75, planFirst: false, autoTodo: false, maxConcurrentSubagents: 8, subagentProfiles: [] })
+    expect(migrated.settings.agent.autoSelectRecommended).toBe(false)
+  })
+
+  it('自动选择推荐项的显式设置在迁移后保留', () => {
+    const state = createInitialState()
+    state.settings.agent.autoSelectRecommended = true
+    const restored = stateSchema.parse(migrateState(JSON.parse(JSON.stringify(state))))
+    expect(restored.settings.agent.autoSelectRecommended).toBe(true)
+  })
+
+  it('子智能体配置和并发上限可持久化，非法并发单独回退', () => {
+    const state = createInitialState()
+    state.settings.agent.maxConcurrentSubagents = 16
+    state.settings.agent.subagentProfiles = [{ id: 'review', name: '审查', role: 'reviewer', modelId: 'review-model', instruction: '检查边界条件', toolAccess: 'read-only' }]
+    const restored = stateSchema.parse(migrateState(JSON.parse(JSON.stringify(state))))
+    expect(restored.settings.agent).toEqual(state.settings.agent)
+    const invalid = { ...state, settings: { ...state.settings, agent: { ...state.settings.agent, maxConcurrentSubagents: 99 } } }
+    const repaired = stateSchema.parse(migrateState(invalid))
+    expect(repaired.settings.agent.maxConcurrentSubagents).toBe(8)
+    expect(repaired.settings.agent.subagentProfiles).toEqual(state.settings.agent.subagentProfiles)
+  })
 })
 
 describe('matchesCommandRule', () => {

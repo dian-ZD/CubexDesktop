@@ -20,9 +20,9 @@ export const toolSpecs: ToolSpec[] = [
   { name: 'write_file', description: '创建或整体覆盖一个文件。', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
   { name: 'edit_file', description: '把文件中 old_text 的首次出现替换为 new_text。old_text 必须在文件中唯一出现。', parameters: { type: 'object', properties: { path: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' } }, required: ['path', 'old_text', 'new_text'] } },
   { name: 'run_command', description: '在项目根目录执行 shell 命令，返回 stdout/stderr 与退出码。超时由设置决定，可用 timeout_ms 缩短。', parameters: { type: 'object', properties: { command: { type: 'string' }, timeout_ms: { type: 'integer' } }, required: ['command'] } },
-  { name: 'ask_user', description: '当用户给的信息不足以继续、或存在需要用户决定的关键分歧时，向用户提出一个明确的问题并暂停等待回答。可给出 2–6 个候选选项，用户也可以自由输入。不要用它来确认显而易见的事。', parameters: { type: 'object', properties: { question: { type: 'string', description: '要问用户的问题，一句话说清' }, options: { type: 'array', items: { type: 'string' }, description: '候选选项，2–6 个' }, multiple: { type: 'boolean', description: '是否允许多选' } }, required: ['question'] } },
+  { name: 'ask_user', description: '当缺少必要信息或存在需要用户决定的关键分歧时，提出一个明确问题，给出 2–6 个候选选项。能够根据任务判断最佳方案时，用 recommended 指定一个推荐项，并在问题中简述理由。用户也可以自由输入；开启自动选择推荐项时，系统会直接采用有效推荐项。不要为未知事实、凭据或必须由用户完成的操作编造推荐答案。', parameters: { type: 'object', properties: { question: { type: 'string', description: '问题及推荐理由，一句话说清' }, options: { type: 'array', items: { type: 'string' }, description: '候选选项，2–6 个；标题不添加推荐后缀，界面会显示推荐标记' }, recommended: { type: 'string', description: '推荐选项的完整标题，必须与 options 中一项完全相同；无法合理推荐时省略' }, multiple: { type: 'boolean', description: '是否允许多选；自动推荐选择只采用 recommended 指定的那一项' } }, required: ['question'] } },
   { name: 'manage_todos', description: '维护当前任务的待办清单，用于把复杂任务拆成有序步骤并逐项推进，防止在长任务中丢失进度。action=set：用 items 数组整体设置清单（每项 content 为一句话步骤）；action=start：把某项标记为进行中（同一时刻只应有一项进行中）；action=complete：把某项标记为已完成；action=clear：清空清单。除“只是回答一个简单问题/查询”外，动手前都应先用 set 建立待办，之后每完成一步就用 complete 更新。返回最新的清单与进度。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['set', 'start', 'complete', 'clear'], description: 'set/start/complete/clear' }, items: { type: 'array', items: { type: 'string' }, description: 'action=set 时的步骤文本数组，按顺序排列' }, index: { type: 'integer', description: 'action=start/complete 时要操作的待办序号（从 1 开始）' } }, required: ['action'] } },
-  { name: 'delegate', description: '把一个界限清晰、可独立完成的子任务委派给一个专注的子智能体去执行。子智能体拥有与你相同的工具（读写文件、搜索、执行命令等）并在同一项目目录内工作，完成后返回结果摘要。适合把较大的任务拆成几个互相独立的部分并行推进；不要用它做只需一步就能完成的琐事。可一次给出多个子任务并行委派。', parameters: { type: 'object', properties: { tasks: { type: 'array', items: { type: 'object', properties: { name: { type: 'string', description: '子智能体名称，如「前端」「接口」' }, instruction: { type: 'string', description: '交给该子智能体的完整、独立的任务说明' } }, required: ['instruction'] }, description: '要委派的子任务数组（1–4 个）' } }, required: ['tasks'] } },
+  { name: 'delegate', description: '把复杂任务拆成界限清晰、可独立完成的子任务并行委派。每批支持 1–32 个子任务，按设置的并发上限排队执行，返回各任务结果。可选择已配置的子智能体 profileId，或指定角色和模型。研究与审查角色仅能读取和检索；编码与通用角色仍受项目权限及审批约束。同一文件的修改必须串行安排。', parameters: { type: 'object', properties: { tasks: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'object', properties: { name: { type: 'string', description: '子智能体名称，如「前端」「接口」' }, instruction: { type: 'string', description: '完整独立的任务说明，包含目标、负责文件、约束和验收标准' }, profileId: { type: 'string', description: '已配置的子智能体 ID，取自系统提示中的配置列表；配置的角色和非空模型优先' }, role: { type: 'string', enum: ['general', 'researcher', 'coder', 'reviewer'], description: '未选择配置时的角色，默认 general；researcher 和 reviewer 为只读' }, modelId: { type: 'string', description: '模型配置 ID，取自系统提示中的可用模型列表；省略时沿用主智能体模型' } }, required: ['instruction'] }, description: '子任务数组，超出并发上限的任务自动排队' } }, required: ['tasks'] } },
 ]
 
 export const interactiveTools: ReadonlySet<ToolName> = new Set(['ask_user'])
@@ -287,6 +287,36 @@ export async function readProjectFile(root: string, path: string): Promise<{ pat
   if (text.includes('\u0000')) throw new Error(`二进制文件无法预览：${path}`)
   const truncated = text.length > MAX_READ_BYTES
   return { path, content: truncated ? text.slice(0, MAX_READ_BYTES) : text, size: info.size, truncated }
+}
+
+const pendingFileSaves = new Map<string, Promise<void>>()
+
+export async function saveProjectFile(root: string, path: string, content: string, expectedContent: string): Promise<{ path: string; content: string; size: number; truncated: boolean }> {
+  if (content.length > MAX_READ_BYTES || expectedContent.length > MAX_READ_BYTES) throw new Error('文件过大，无法在预览中编辑')
+  if (content.includes('\u0000')) throw new Error('不能保存包含二进制内容的文件')
+  const file = await resolveInside(root, path)
+  const key = process.platform === 'win32' ? file.toLowerCase() : file
+  const previous = pendingFileSaves.get(key) ?? Promise.resolve()
+  let release = (): void => undefined
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  pendingFileSaves.set(key, pending)
+  try {
+    await previous
+    const checked = await resolveInside(root, path)
+    if (checked !== file) throw new Error('文件路径已变化，请重新打开文件')
+    const info = await stat(file)
+    if (!info.isFile()) throw new Error(`不是文件：${path}`)
+    const bytes = await readFile(file)
+    const before = bytes.toString('utf8')
+    if (before.includes('\u0000') || !Buffer.from(before, 'utf8').equals(bytes)) throw new Error('此文件不是可编辑的 UTF-8 文本')
+    if (before.length > MAX_READ_BYTES) throw new Error('文件过大，截断预览不能用于保存')
+    if (before !== expectedContent) throw new Error('文件已被其他操作修改，请重新加载后再编辑；当前草稿未保存')
+    if (content !== before) await writeFile(file, content, 'utf8')
+    return { path, content, size: Buffer.byteLength(content, 'utf8'), truncated: false }
+  } finally {
+    release()
+    if (pendingFileSaves.get(key) === pending) pendingFileSaves.delete(key)
+  }
 }
 
 export function runShellCommand(root: string, command: string, options: { signal?: AbortSignal; timeoutMs?: number; shell?: ToolContext['shell']; sandbox?: SandboxOptions } = {}): Promise<string> {

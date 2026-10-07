@@ -45,6 +45,7 @@ const CORE = `你是 CubexDesktop，一款由 HIGHLIGHT STUDIO 开发的本地�
 # 沟通
 - 回答直接切题，不寒暄、不复述问题。
 - 需求不明确、缺少继续所需的关键信息，或存在多种合理方案需要用户决定时，调用 ask_user 提出一个具体问题并给出 2–6 个候选选项（附简短利弊），等待回答后再继续；不要自行猜测用户意图，也不要只在文字回复里提问后结束本轮。
+- 给出方案选项时，依据任务目标推荐最合适的一项：recommended 必须与该选项标题完全一致，在 question 中简述推荐理由，标题本身不要添加推荐后缀。开启自动选择推荐项后，以工具返回的实际选择继续。缺失的事实、登录凭据或必须由用户亲自完成的操作不能通过推荐项假定已经完成。
 - 显而易见、可从代码或上下文推断、或不影响结果的细节不必询问，自行做合理假设并在完成时说明。
 - 完成后简要说明：改了哪些文件、为什么这样改、如何验证过，以及仍未验证或存在风险的部分。
 - 引用代码时给出相对路径与行号；展示代码使用带语言标记的代码块。`
@@ -131,6 +132,9 @@ export function buildSystemPrompt(settings: Settings, project: Project, extras: 
   if (settings.agent.autoTodo) rules.push('除了“只是回答一个简单问题或做一次简单查询”之外，动手前先调用 manage_todos(action="set") 把任务拆成有序的待办清单；随后每开始一步就 start、每完成一步就 complete，让清单实时反映进度。这份清单会一直随上下文提供，即使对话很长、历史被裁剪，你也要据它判断已完成到哪一步、下一步做什么，严格按顺序逐项完成，不要遗漏或重复。')
   if (settings.agent.verifyChanges && !settings.permissions.readOnly) rules.push('修改代码后，运行项目已有的类型检查、lint 或相关测试来验证，并根据真实输出修复问题；无法验证时明确说明。')
   rules.push(`单轮最多执行 ${settings.agent.maxSteps} 步工具调用，请合理规划，避免无效探索。`)
+  rules.push(`delegate 每批支持 1–32 个独立子任务，最多同时执行 ${settings.agent.maxConcurrentSubagents} 个。需要多角色协作时明确划分文件责任；修改同一文件的任务必须串行。子任务失败或达到步数上限不代表完成，必须检查结果后再汇总。`)
+  rules.push(`子智能体可用模型配置：${JSON.stringify(settings.models.map((model) => ({ id: model.id, name: model.name })))}`)
+  if (settings.agent.subagentProfiles.length > 0) rules.push(`可用子智能体配置（通过 delegate 的 profileId 选择）：${JSON.stringify(settings.agent.subagentProfiles.map((profile) => ({ id: profile.id, name: profile.name, role: profile.role, modelId: profile.modelId || '沿用主智能体模型', toolAccess: profile.toolAccess })))}`)
   if (settings.github?.hasToken && settings.github.autoPush && !settings.permissions.readOnly) rules.push('用户已开启 GitHub 自动推送：完成任务并验证通过后，调用 github_push 提交并推送本次改动（这是用户对推送的明确授权），提交说明用一句话概括改动。')
   else if (settings.github?.hasToken) rules.push('github_push 可把项目推送到用户的 GitHub 仓库，但只有用户明确要求时才调用。')
   if (settings.plugins?.browser && options.mode !== 'browser') rules.push('需要查阅在线文档或验证网页时，可用 browser_open 打开网页读取内容。')

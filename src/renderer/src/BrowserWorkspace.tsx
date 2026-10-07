@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Globe, LoaderCircle, Plus, Quote, RotateCw, X } from 'lucide-react'
 import { buildSearchUrl, type BrowserState, type SearchEngine } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
@@ -20,6 +20,13 @@ export function BrowserWorkspace({ threadId, active, onError, searchEngine, sear
   const editingRef = useRef(false)
   const [state, setState] = useState<BrowserState>(() => initialState(threadId))
   const [address, setAddress] = useState('')
+  const visible = active && !modalOpen
+  const visibilityRef = useRef<{ threadId: string; visible: boolean } | null>(null)
+
+  useLayoutEffect(() => {
+    visibilityRef.current = { threadId, visible }
+    return () => { visibilityRef.current = null }
+  }, [threadId, visible])
 
   useEffect(() => {
     setState(initialState(threadId))
@@ -43,20 +50,21 @@ export function BrowserWorkspace({ threadId, active, onError, searchEngine, sear
   }, [threadId, active])
 
   const reportBounds = useCallback(() => {
-    if (!isDesktop || !active) return
+    if (!isDesktop || !visible || visibilityRef.current?.threadId !== threadId || !visibilityRef.current.visible) return
     const el = frameRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    if (rect.width < 1 || rect.height < 1) return
+    if (rect.width < 1 || rect.height < 1) {
+      void api.browserHide({ threadId }).catch(() => undefined)
+      return
+    }
     void api.browserBounds({ threadId, x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) }).then((result) => {
       if (!result.ok) onError(result.error)
     }).catch(() => undefined)
-  }, [threadId, active, onError])
+  }, [threadId, visible, onError])
 
   // 模态弹窗打开期间把原生视图摘下：它是原生图层，永远盖在 DOM 之上，
   // 若不摘下，弹窗遮罩压暗应用时浏览器画面仍全亮，看起来像单独弹出的窗口。
-  const visible = active && !modalOpen
-
   useEffect(() => {
     if (!isDesktop) return
     if (!visible) {

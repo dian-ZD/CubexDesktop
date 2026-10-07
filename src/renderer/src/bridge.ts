@@ -43,6 +43,7 @@ const previewApi: CubexAPI = {
   pickFiles: () => unavailable('添加文件'),
   listFiles: () => unavailable('浏览文件'),
   readProjectFile: () => unavailable('读取文件'),
+  saveProjectFile: () => unavailable('保存文件'),
   runShell: () => unavailable('终端'),
   openPanelWindow: () => unavailable('独立窗口'),
   closePanelWindow: () => Promise.resolve({ ok: true, data: undefined }),
