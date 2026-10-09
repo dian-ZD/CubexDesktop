@@ -533,6 +533,7 @@ export class AgentRunner {
           maxTokens: modelParams.maxTokens || undefined,
           timeoutMs: modelParams.timeoutSec * 1000,
           retries: modelParams.retries,
+          thinkingLevel: modelParams.thinkingLevel ?? undefined,
           onText: (delta) => {
             partialText = (partialText + delta).slice(0, 200_000)
             if (!wroteText && delta.trim()) { wroteText = true; this.activity(threadId, 'writing', '正在撰写回复…', { step: step + 1 }) }
@@ -871,6 +872,7 @@ export class AgentRunner {
           maxTokens: modelParams.maxTokens || undefined,
           timeoutMs: modelParams.timeoutSec * 1000,
           retries: modelParams.retries,
+          thinkingLevel: modelParams.thinkingLevel ?? undefined,
           onText: () => undefined,
         })
         subNudge = ''

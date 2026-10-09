@@ -138,7 +138,7 @@ export function buildSystemPrompt(settings: Settings, project: Project, extras: 
   if (settings.github?.hasToken && settings.github.autoPush && !settings.permissions.readOnly) rules.push('用户已开启 GitHub 自动推送：完成任务并验证通过后，调用 github_push 提交并推送本次改动（这是用户对推送的明确授权），提交说明用一句话概括改动。')
   else if (settings.github?.hasToken) rules.push('github_push 可把项目推送到用户的 GitHub 仓库，但只有用户明确要求时才调用。')
   if (settings.plugins?.browser && options.mode !== 'browser') rules.push('需要查阅在线文档或验证网页时，可用 browser_open 打开网页读取内容。')
-  if (settings.plugins?.computer) rules.push('computer_use 可操控用户电脑，每次都需要用户批准；仅在任务确实需要操作桌面应用时使用。')
+  if (settings.plugins?.computer) rules.push(`computer_use 可操控用户电脑，每次都需要用户批准；仅在任务确实需要操作桌面应用时使用。支持 click / double_click / right_click / move / drag / scroll，拖拽用 fromX,fromY → toX,toY；若检测到用户正在使用键鼠，会先等待空闲再操作。${settings.computer?.mode === 'isolated' ? `当前为独立桌面模式：AI 的鼠标、键鼠和应用都运行在独立桌面上，不影响你的桌面；交互类操作需要提供 window（目标窗口标题）。` : ''}`)
   if (settings.plugins?.image) rules.push(`generate_image 可调用用户配置的生图模型画图：需要插画、示意图、图标、封面等任何图片产出时，把一段具体完整的提示词（主体、风格、构图、光影）传给它；图片会保存到项目 .cubex/images 并展示给用户。不要用它画图表或精确的技术示意图。`)
   if (settings.mcp?.servers.some((server) => server.enabled)) rules.push('已接入 MCP 服务器：当其提供的工具更适合完成任务（如访问外部服务、数据库、专用 API）时，通过 mcp_call 调用，server 与 tool 取自 mcp_call 的工具目录。')
   if (settings.beta?.tokenSaving) rules.push(AOCI_RULE)

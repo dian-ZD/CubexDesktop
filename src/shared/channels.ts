@@ -61,4 +61,9 @@ export const channels = {
   browserTab: 'cubex:browser-tab',
   browserState: 'cubex:browser-state',
   workflowControl: 'cubex:workflow-control',
+  openFloatingWindow: 'cubex:open-floating-window',
+  closeFloatingWindow: 'cubex:close-floating-window',
+  focusMainWindow: 'cubex:focus-main-window',
+  desktopMirror: 'cubex:desktop-mirror',
+  copyText: 'cubex:copy-text',
 } as const

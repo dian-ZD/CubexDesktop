@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
-import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ToolCall, type ToolResult } from '../../shared/schema'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, PictureInPicture, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
+import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ThinkingLevel, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
 import { Logo } from './components/Logo'
@@ -21,6 +21,8 @@ const SettingsPanel = lazy(() => importSettingsPanel().then((module) => ({ defau
 const RightPanel = lazy(() => importRightPanel().then((module) => ({ default: module.RightPanel })))
 const WorkflowCanvas = lazy(() => importWorkflowCanvas().then((module) => ({ default: module.WorkflowCanvas })))
 const BrowserWorkspace = lazy(() => importBrowserWorkspace().then((module) => ({ default: module.BrowserWorkspace })))
+const FloatingPanel = lazy(() => import('./components/FloatingPanel').then((module) => ({ default: module.FloatingPanel })))
+const ModelPicker = lazy(() => import('./components/ModelPicker').then((module) => ({ default: module.ModelPicker })))
 
 function prefetchPanels() {
   const run = () => { void importRightPanel(); void importSettingsPanel(); void importWorkflowCanvas() }
@@ -282,6 +284,7 @@ export function App() {
     })
   }, [])
   const detachedThreadId = useMemo(panelThreadId, [])
+  const floatingMode = useMemo(() => /^#floating/.test(window.location.hash), [])
   useEffect(() => api.onWindowState((next) => {
     setMaximized(next.maximized)
     setFocused(next.focused)
@@ -843,8 +846,8 @@ export function App() {
     requestAnimationFrame(() => { inputRef.current?.focus(); inputRef.current?.setSelectionRange(inputRef.current.value.length, inputRef.current.value.length) })
     ui.toast(ref.selection ? tr('已引用选中文字到对话') : tr('已引用页面截图到对话'), 'success')
   }, [ui, tr])
-  const onSpeechError = useCallback((message: string) => ui.toast(message, 'error'), [ui])
-  const speech = useSpeech(general.uiLanguage, onSpeechText, onSpeechError)
+  const onSpeechError = useCallback((message: string, kind: 'info' | 'error' = 'error') => ui.toast(message, kind), [ui])
+  const speech = useSpeech(general.uiLanguage, onSpeechText, onSpeechError, state.settings.speech?.model, state.settings.speech?.downloadSource)
   const toggleListening = speech.toggle
 
   const changeApprovalMode = async (mode: Settings['approvalMode']) => {
@@ -872,6 +875,12 @@ export function App() {
     }
   }, [ui])
 
+  const saveThinking = async (level: ThinkingLevel) => {
+    if (state.settings.modelParams.thinkingLevel === level) return
+    const next: Settings = { ...state.settings, modelParams: { ...state.settings.modelParams, thinkingLevel: level } }
+    await call(() => api.saveSettings(next), tr('保存思考强度失败，请重试。'))
+  }
+
   const removeThread = async (item: Thread) => {
     if (general.confirmDelete && !(await ui.confirm({ title: tr('删除任务'), message: tr('确定删除任务「{title}」？对话记录将无法恢复，项目文件不受影响。', { title: item.title }), confirmLabel: tr('删除'), danger: true }))) return
     if (await call(() => api.deleteThread({ threadId: item.id }), tr('删除失败，请重试。'), tr('任务已删除')) && threadId === item.id) setThreadId(null)
@@ -885,8 +894,15 @@ export function App() {
     rollback: (messageId: string) => {
       if (!threadId) return
       void (async () => {
-        if (general.confirmDelete && !(await ui.confirm({ title: tr('回退对话'), message: tr('将删除这条消息及其之后的所有内容，回到发送前的状态，无法恢复。'), confirmLabel: tr('回退'), danger: true }))) return
-        await call(() => api.rollbackMessage({ threadId, messageId }), tr('回退失败，请重试。'), tr('已回退'))
+        if (general.confirmDelete && !(await ui.confirm({ title: tr('回退对话'), message: tr('将删除这条消息及其之后的所有内容，并把这条消息的文字和附件放回输入框，可在修改后重新发送。'), confirmLabel: tr('回退'), danger: true }))) return
+        const target = thread?.messages.find((item) => item.id === messageId)
+        const restored = target?.role === 'user' ? target : null
+        if (restored) {
+          setInput((current) => (current.trim() ? `${current.trimEnd()}\n${restored.content}` : restored.content))
+          if (restored.images?.length) setImages((current) => [...current, ...restored.images!.slice(0, 8 - current.length)])
+        }
+        const ok = await call(() => api.rollbackMessage({ threadId, messageId }), tr('回退失败，请重试。'))
+        if (ok) ui.toast(restored ? tr('已回退，内容已放回输入框') : tr('已回退'), 'success')
       })()
     },
     remove: (messageId: string) => {
@@ -896,7 +912,7 @@ export function App() {
         await call(() => api.deleteMessage({ threadId, messageId }), tr('删除失败，请重试。'), tr('消息已删除'))
       })()
     },
-  }), [threadId, modelOverride, general.confirmDelete, call, ui, tr])
+  }), [threadId, thread, modelOverride, general.confirmDelete, call, ui, tr])
 
   const renameThread = async (item: Thread) => {
     const title = await ui.prompt({ title: tr('重命名任务'), value: item.title, placeholder: tr('任务名称'), confirmLabel: tr('保存'), maxLength: 120 })
@@ -927,7 +943,7 @@ export function App() {
   const projectMenu = (item: Project): MenuEntry[] => [
     { label: tr('新建任务'), icon: SquarePen, onSelect: () => newThreadIn(item) },
     { label: tr('在资源管理器中打开'), icon: FolderOpen, disabled: !isDesktop, onSelect: () => void call(() => api.revealProject({ projectId: item.id }), tr('无法打开文件夹。')) },
-    { label: tr('复制路径'), icon: Copy, onSelect: () => void navigator.clipboard.writeText(item.path).then(() => ui.toast(tr('路径已复制'), 'success'), () => ui.toast(tr('复制失败'), 'error')) },
+    { label: tr('复制路径'), icon: Copy, onSelect: () => void call(() => api.copyText({ text: item.path }), tr('复制失败'), tr('路径已复制')) },
     'separator',
     { label: tr('重命名'), icon: Pencil, disabled: !isDesktop, onSelect: () => void renameProject(item) },
     { label: tr('归档'), icon: Archive, disabled: !isDesktop, onSelect: () => void archiveProject(item) },
@@ -1050,7 +1066,21 @@ export function App() {
   const panelMode = view === 'chat' || view === 'work' || view === 'browser'
   const showRightPanel = rightPanelOpen && view === 'chat' && !panelDetached
 
-  if (detachedThreadId) {
+  if (detachedThreadId || floatingMode) {
+    if (floatingMode) {
+      return (
+        <LanguageContext.Provider value={uiLang}>
+        <OpenTargetContext.Provider value={requestOpen}>
+        <div className="floating-window" data-draggable>
+          {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在加载…')}</div>
+            : <FloatingPanel state={state}
+                onClose={() => void api.closeFloatingWindow()}
+                onOpenMain={() => { void api.focusMainWindow().catch(() => undefined) }} />}
+        </div>
+        </OpenTargetContext.Provider>
+        </LanguageContext.Provider>
+      )
+    }
     const panelThread = state.threads.find((item) => item.id === detachedThreadId) ?? null
     const panelProject = panelThread ? state.projects.find((item) => item.id === panelThread.projectId) ?? null : null
     return (
@@ -1165,6 +1195,7 @@ export function App() {
             {panelMode && (panelDetached
               ? <button className="icon-button" aria-label={tr('收回任务面板')} title={tr('收回任务面板')} onClick={() => { void api.closePanelWindow().catch(() => undefined); setRightPanelOpen(true) }}><PanelRight size={17} /></button>
               : <button className="icon-button" aria-label={rightPanelOpen ? tr('收起右栏') : tr('展开右栏')} aria-pressed={rightPanelOpen} title={rightPanelOpen ? tr('收起右栏') : tr('展开右栏')} onClick={() => setRightPanelOpen((value) => !value)}><PanelRight size={17} /></button>)}
+            {isDesktop && <button className="icon-button" aria-label={tr('打开悬浮窗')} title={tr('打开悬浮窗')} onClick={() => { void api.openFloatingWindow().then((result) => { if (!result.ok) setError(result.error) }) }}><PictureInPicture size={17} /></button>}
             <div className="window-controls" role="group" aria-label={tr('窗口控制')}>
               <button className="window-button" aria-label={tr('最小化')} title={tr('最小化')} onClick={() => windowAction('minimize')}><Minus size={15} /></button>
               <button className="window-button" aria-label={maximized ? tr('还原') : tr('最大化')} title={maximized ? tr('还原') : tr('最大化')} onClick={() => windowAction('maximize')}>{maximized ? <Copy size={12} /> : <Maximize2 size={13} />}</button>
@@ -1316,8 +1347,9 @@ export function App() {
                           }} />
                         <div className="composer-toolbar">
                           <button className="composer-project" type="button" onClick={() => void selectProject()} disabled={busy || !isDesktop} title={project?.path ?? (isDesktop ? tr('选择项目 · Ctrl O') : tr('本机目录仅在桌面应用中可用'))}><FolderOpen size={15} /><span className="truncate">{project?.name ?? tr('选择项目')}</span><ChevronDown size={12} /></button>
-                          <Select className="composer-model" label={tr('模型')} icon={Cpu} value={modelId} disabled={models.length === 0} iconOnly={view === 'browser'} onChange={setModelOverride}
-                            options={models.map((item) => ({ value: item.id, label: item.name, hint: item.modelId }))} />
+                          <ModelPicker className="composer-model" label={tr('模型')} models={models} value={modelId} fallbackParams={state.settings.modelParams} compact={view === 'browser'} disabled={models.length === 0}
+                            onChangeModel={setModelOverride}
+                            onChangeThinking={(level) => void saveThinking(level)} />
                           <Select className="composer-approval" label={tr('审批模式')} icon={ShieldCheck} value={state.settings.approvalMode} disabled={!isDesktop} iconOnly={view === 'browser'} onChange={(value) => void changeApprovalMode(value as Settings['approvalMode'])}
                             options={approvalModes.map((mode) => ({ value: mode, label: tr(approvalLabels[mode].name), hint: tr(approvalLabels[mode].hint) }))} />
                           <div className="composer-tools" role="group" aria-label={tr('输入工具')}>
@@ -1597,7 +1629,13 @@ const sameMessageProps = (prev: MessageViewProps, next: MessageViewProps) =>
 function CopyButton({ text }: { text: string }) {
   const { tr } = useI18n()
   const [done, setDone] = useState(false)
-  const copy = () => { void navigator.clipboard?.writeText(text).then(() => { setDone(true); window.setTimeout(() => setDone(false), 1400) }).catch(() => undefined) }
+  const copy = () => {
+    void api.copyText({ text }).then((result) => {
+      if (!result.ok) return
+      setDone(true)
+      window.setTimeout(() => setDone(false), 1400)
+    })
+  }
   return <button type="button" className="msg-action" title={tr('复制')} aria-label={tr('复制')} onClick={copy}>{done ? <Check size={13} /> : <Copy size={13} />}</button>
 }
 

@@ -1,6 +1,7 @@
 import { createContext, memo, useContext, useState, type ReactNode } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { api } from '../bridge'
 import { extractSources, parseSourceLine, type SourceRef } from '../sources'
 
 export type OpenTarget = { kind: 'url' | 'file' | 'folder'; value: string }
@@ -195,10 +196,11 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   const { tr } = useI18n()
   const [copied, setCopied] = useState(false)
   const copy = () => {
-    void navigator.clipboard?.writeText(text).then(() => {
+    void api.copyText({ text }).then((result) => {
+      if (!result.ok) return
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1400)
-    }).catch(() => undefined)
+    })
   }
   return (
     <div className="md-code">

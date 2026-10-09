@@ -1,4 +1,4 @@
-import { toolNames, type Message, type ModelConfig, type ProviderConfig, type ToolCall, type ToolName } from '../shared/schema'
+import { toolNames, type Message, type ModelConfig, type ProviderConfig, type ThinkingLevel, type ToolCall, type ToolName } from '../shared/schema'
 import { describeNetworkError, isNetworkError, statusHint } from './errors'
 
 export interface ToolSpec {
@@ -27,6 +27,7 @@ export interface ChatRequest {
   maxTokens?: number
   timeoutMs?: number
   retries?: number
+  thinkingLevel?: ThinkingLevel
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000
@@ -583,6 +584,8 @@ async function openaiChat(request: ChatRequest): Promise<ChatTurn> {
     ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     max_tokens: resolveMaxTokens(request),
     ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
+    // 思考强度：仅 OpenAI 兼容端点通用的 reasoning_effort；ollama 与不支持该参数的端点会自行忽略。
+    ...(request.thinkingLevel && request.thinkingLevel !== 'off' ? { reasoning_effort: request.thinkingLevel } : {}),
   }
   const stream = await openStream(endpoint(base, '/chat/completions'), { method: 'POST', headers, body: JSON.stringify(body) }, request)
   let content = ''
@@ -670,6 +673,7 @@ function toAnthropicMessages(messages: Message[]): unknown[] {
 
 async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
   if (!request.apiKey) throw new Error('Anthropic 提供商需要 API Key')
+  const thinkingBudget = request.thinkingLevel ? { off: 0, low: 2_048, medium: 8_192, high: 24_576 }[request.thinkingLevel] : 0
   const body = {
     model: request.model.modelId,
     max_tokens: resolveMaxTokens(request),
@@ -678,6 +682,7 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
     messages: toAnthropicMessages(request.messages),
     ...(request.temperature !== undefined ? { temperature: Math.min(request.temperature, 1) } : {}),
     ...(request.tools.length ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) } : {}),
+    ...(thinkingBudget > 0 ? { thinking: { type: 'enabled', budget_tokens: Math.min(thinkingBudget, resolveMaxTokens(request) - 1) } } : {}),
   }
   const stream = await openStream(endpoint(request.provider.baseUrl, '/v1/messages'), {
     method: 'POST',

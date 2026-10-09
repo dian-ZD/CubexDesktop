@@ -27,6 +27,44 @@ describe('migrateState', () => {
     expect(stateSchema.safeParse(migrated).success).toBe(true)
   })
 
+  it('旧配置补齐电脑操控、悬浮窗与思考强度默认值', () => {
+    const state = createInitialState()
+    const raw = {
+      ...state,
+      settings: {
+        ...state.settings,
+        computer: undefined,
+        floating: undefined,
+        modelParams: { temperature: null, maxTokens: 0, timeoutSec: 60, retries: 1, historyLimit: 50 },
+      },
+    }
+    const migrated = stateSchema.parse(migrateState(raw))
+    expect(migrated.settings.computer).toEqual({ mode: 'current', idleWaitSec: 3, mirror: true })
+    expect(migrated.settings.floating).toEqual({ opacity: 0.92, autoShow: true })
+    expect(migrated.settings.modelParams.thinkingLevel).toBeNull()
+    expect(migrated.settings.modelParams.timeoutSec).toBe(60)
+  })
+
+  it('独立桌面模式与自定义透明度在迁移后保留', () => {
+    const state = createInitialState()
+    state.settings.computer = { mode: 'isolated', idleWaitSec: 8, mirror: false }
+    state.settings.floating = { opacity: 0.6, autoShow: false }
+    state.settings.modelParams.thinkingLevel = 'high'
+    const migrated = stateSchema.parse(migrateState(JSON.parse(JSON.stringify(state))))
+    expect(migrated.settings.computer.mode).toBe('isolated')
+    expect(migrated.settings.computer.mirror).toBe(false)
+    expect(migrated.settings.floating.opacity).toBe(0.6)
+    expect(migrated.settings.modelParams.thinkingLevel).toBe('high')
+  })
+
+  it('独立桌面模式只在合法枚举内', () => {
+    const state = createInitialState()
+    for (const mode of ['current', 'isolated'] as const) {
+      expect(stateSchema.safeParse({ ...state, settings: { ...state.settings, computer: { ...state.settings.computer, mode } } }).success).toBe(true)
+    }
+    expect(stateSchema.safeParse({ ...state, settings: { ...state.settings, computer: { ...state.settings.computer, mode: 'nope' } } }).success).toBe(false)
+  })
+
   it('无法识别的数据原样返回', () => {
     expect(migrateState(null)).toBeNull()
     expect(migrateState({ version: 1 })).toEqual({ version: 1 })

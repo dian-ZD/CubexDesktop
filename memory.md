@@ -1,10 +1,40 @@
 # 记忆
 
-> 最后更新时间：2026-10-07 ｜ 更新者：AI Agent（HTTP 端点与 0.2.2-dev 安装包）
+> 最后更新时间：2026-10-09 ｜ 更新者：AI Agent（0.3.1-dev：透明度/圆角/拖动/对齐/报错修复）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
 ## 技术栈与约定
+
+### 2026-10-09 电脑操控、悬浮窗、思考等级与复制/语音修复
+
+- **独立桌面（电脑操控）**：`src/main/computer.ts` 用 PowerShell P/Invoke 做四件事——`CreateDesktop` 建 `CubexAgent` 桌面、`CreateProcess`（`lpDesktop` 指向该桌面）启动应用、`gdi32` 的 `CreateDC/CreateCompatibleBitmap/BitBlt` 截屏、`EnumDesktopWindows` 按标题找窗口后 `PostMessage` 点击/输入。坑（全部实测定位）：① GDI 函数写成 user32.dll 会报找不到入口点，必须 gdi32.dll；② `Add-Type` 里可选字符串指针传 `$null` 会被当空串，`CreateProcess`/`CreateDC` 返回 123/87，必须 `[NullString]::Value`；③ `CreateProcess` 的 `lpCurrentDirectory` 传 `$null` 同样触发 123；④ `FindWindow` 看不到其它桌面的窗口，只能在目标桌面内枚举；⑤ PowerShell 输出默认 OEM 代码页，中文标题必须 base64 传输。
+- **镜像帧下发**：`liveWindows()` 必须包含悬浮窗，否则镜像 IPC 到不了悬浮窗（曾因此看不到画面）。
+- **当前桌面避让**：`GetLastInputInfo` 取用户空闲秒数，`waitForUserIdle` 在设置的上限内等待；超限则放弃本次输入并如实返回，不强行抢鼠标。
+- **悬浮窗**：主进程新建 frameless/transparent/alwaysOnTop/skipTaskbar 窗口，hash `#floating`，渲染 `components/FloatingPanel.tsx`；透明度来自 `settings.floating.opacity`，自动弹出由 `settings.floating.autoShow` 控制，触发点是扩展层 `onControl`（任务开始操控浏览器/电脑）。`window.cubex` 桥接复用同一 preload，`trusted()` 与 `liveWindows()` 已覆盖该窗口。
+- **思考强度**：`modelParams.thinkingLevel`（off/low/medium/high，默认 null）经 `mergeModelParams` 支持单模型覆盖；OpenAI 兼容走 `reasoning_effort`，Anthropic 走 `thinking.budget_tokens`。是否支持用 `supportsThinkingLevel(modelId)` 按已知推理/普通模型名单判断，未知型号按支持处理并在 UI 标注。
+- **语音输入**：打包后渲染页在 app.asar 内 file://，里面 `new Worker(url, {type:'module'})` 能构造但起不来（worker 里 sandboxed_renderer bundle 报 `binding.startupData` 为 null），表现为状态卡在「正在识别」。改为渲染进程主线程动态 `import('@xenova/transformers')`（whisper-tiny + onnxruntime-web，wasmPaths 显式指向 jsdelivr）。`src/renderer/index.html` 的 CSP meta 必须放行 `script-src 'wasm-unsafe-eval'` 与 `connect-src https://huggingface.co https://*.hf.co https://cdn.jsdelivr.net`，否则 wasm 编译和模型下载都会被拦。
+- **复制**：`navigator.clipboard.writeText` 在窗口未聚焦时直接抛 `NotAllowedError: Document is not focused`（实测），点「复制」恰恰常发生在焦点切换后。所有复制改走主进程 `clipboard.writeText`（新增 `copyText` IPC），浏览器预览模式回退到 `navigator.clipboard`。
+### 2026-10-09 0.3.1-dev 修复轮（透明度/圆角/拖动/对齐/报错）
+
+- **CSS 变量缺失是多个「透明/无边框」现象的共同根因**：`styles.css` 用了 `--bg-panel`、`--accent`、`--surface`、`--border`、`--text-secondary`、`--matcha-dim` 六个变量，但全文件从未 `:define`，深浅主题都没有。未定义变量在 `color-mix()` 与 `background` 里会让整条声明失效 → 背景变全透明、边框消失。已补齐并保留原配色语义（`--accent` 取原 accent 蓝，`--bg-panel` 深 #23252a / 浅 #ffffff）。**教训：新增 CSS 变量必须同时加进 `:root` 与 `[data-theme='light']` 两处。**
+- **Electron `shell.openPath()` 的失败返回值就是字符串 `"Failed to open path"`**（已用 electron 直调复现，空字符串与 http 地址返回 `""` 表示成功）。所以用户看到的「一直报错 Failed to open path」来自 `computer_use open` 工具，不是抛异常。修复：相对路径 `resolve(root, raw)`、未注册关联的应用名回落 `cmd /c start`、路径不存在时给中文提示。
+- **`transparent: true` 的无边框窗口在 Windows 上圆角外会露出 DWM 灰色残留**（用户描述的「灰色的尖」）。悬浮窗改为不透明窗口 + `backgroundColor` 随主题（`nativeTheme.shouldUseDarkColors` 判断 system），圆角交给 CSS。
+- **`-webkit-app-region: drag` 会被任何后代的 `no-drag` 覆盖**：之前拖动条规则写在 `.floating-window`，而内层 `.floating-panel` 整个 `no-drag`，等于完全不可拖。改为只给 `.floating-head` 设 drag、其内 button 设 no-drag。
+- **滑条几何统一用「半径内缩」公式**：`left: calc(r + ratio * (100% - 2r))` + `transform: translate(-50%,-50%)`，让滑块中心、刻度点中心、填充条末端三者重合（旧实现滑块用 `translate` 而填充条用 `left`，两端各差半个滑块宽）。模型选择器 `THUMB=10`，设置滑条 `SLIDER_THUMB=8`。
+- **原生 `input[type=range]` 不适合这里的视觉**：端点处留白、填充与滑块无法对齐，且 accent-color 在深色主题下不跟随强调色。改为自绘 `Slider` 组件（`.slider` / `.slider-fill` / `.slider-thumb` + 磁吸 transition），提示音音量与悬浮窗透明度共用。
+- **悬浮窗透明度「调整不好使」**：`applyFloatingOpacity()` 只在建窗时调用，设置改了不生效。改为在 `publish()`（所有 store 变更的统一出口）里每次都调用，并顺带同步 `backgroundColor`。
+- **语音下载源**：`speech.downloadSource: 'auto' | 'official' | 'mirror'`，`speech.ts` 里 `REMOTE_HOSTS = { official: 'https://huggingface.co/', mirror: 'https://hf-mirror.com/' }`，`loadAsr()` 按 hostsFor 依次尝试、每个 host 独立缓存（key `${host}|${modelId}`），全部失败才抛出带「可更换下载源」提示的中文错误。「没有识别到语音内容」从 `error` 降级为 `info`（`useSpeech` 的 `onError` 增加可选 kind 参数）。
+- **VocoType 是独立桌面应用（内核阿里 FunASR），不是可替换的模型文件**；用户在选择题里选了「保持在线下载 + 国内镜像」，故未接入 FunASR 引擎。
+- 版本 0.2.2-dev → **0.3.1-dev**（仅改 `package.json` 的 `version`，源码无硬编码版本号）。
+
+### 2026-10-09 语音、悬浮窗与模型选择器细节
+
+- **语音（音乐）幻觉**：`（音乐）` 是 whisper 对静音/低电平音频的典型幻觉，分块解码还会把首尾静音块的幻觉文本拼进结果。`prepareAudio()` 按 20ms 帧 RMS 裁掉首尾静音、把峰值归一化到约 -3 dBFS（增益上限 4×，避免放大噪声），峰值过低直接返回空样本；超过 30 秒才启用 `chunk_length_s`；`stripHallucination()` 命中整段幻觉短语时返回空，交由 UI 提示「没有识别到语音内容」。模型可在 设置 → 通用 → 语音输入 里换（轻量/均衡/较准）。
+- **悬浮窗生命期**：`controlActive` + `floatingAuto` 两个标记决定收放——`onControl` 激活时按 `floating.autoShow` 弹出并（独立桌面模式）启动镜像，失活时 `releaseControlFloating()` 收起自动弹出的窗口并停镜像；`force`（标题栏手动打开）不受影响。2 秒兜底计时器也改为只在操控期间检查镜像。
+- **模型选择器**：单组件双模式（`slider` / `models`）。默认显示等级名 + 模型名（点击进列表、隐藏滑条）；滑条用绝对定位 + `transition: left 220ms cubic-bezier(0.34,1.5,0.64,1)` 做磁吸回弹，dragging 时关掉过渡跟手。`stopFromClientX()` 按轨道宽度算档位，键盘方向键也可调。**坑：合成 PointerEvent 没有真实指针，`setPointerCapture` 会抛 NotFoundError，必须先 `pick()` 再用 try/catch 包住 capture。**
+- **设置分组**：Row 增加 `group`，渲染时同一分组只显示一次标题（`sortByGroup` 保证分组顺序稳定）；「通用」分区图标换成 `SlidersHorizontal`。
+- 当前本机无法访问 huggingface.co，模型下载类验证只能靠预处理单测；真实中文识别需用户在能联网的环境实测。
 
 ### 2026-10-07 HTTP 端点与 0.2.2-dev 安装包
 

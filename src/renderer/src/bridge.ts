@@ -99,6 +99,14 @@ const previewApi: CubexAPI = {
   browserTab: () => unavailable('浏览器标签'),
   onBrowserState: () => () => undefined,
   workflowControl: () => unavailable('工作流控制'),
+  openFloatingWindow: () => unavailable('悬浮窗'),
+  closeFloatingWindow: () => unavailable('悬浮窗'),
+  focusMainWindow: () => unavailable('主窗口'),
+  copyText: ({ text }) => {
+    if (!navigator.clipboard) return Promise.resolve({ ok: false as const, error: '当前环境不支持剪贴板' })
+    return navigator.clipboard.writeText(text).then(() => ({ ok: true as const, data: undefined }), () => ({ ok: false as const, error: '复制失败，请手动选择文本复制' }))
+  },
+  onDesktopMirror: () => () => undefined,
   onState: (listener) => {
     previewListeners.add(listener)
     return () => previewListeners.delete(listener)

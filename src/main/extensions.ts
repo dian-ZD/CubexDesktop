@@ -1,10 +1,12 @@
-import { spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { execFile, spawn } from 'node:child_process'
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { isAbsolute, join, resolve } from 'node:path'
 import { BrowserWindow, desktopCapturer, shell } from 'electron'
 import { buildSearchUrl, pluginManifestSchema, type PluginInfo, type PluginManifest, type Settings, type ToolCall } from '../shared/schema'
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
+import { captureIsolatedDesktop, clickIsolatedDesktop, ISOLATED_DESKTOP_NAME, keyIsolatedDesktop, launchOnIsolatedDesktop, typeIsolatedDesktop, waitForUserIdle } from './computer'
 import { browserEngine, type BrowserAction } from './browser'
 import { killTree, spawnDetached } from './platform/proc'
 import { desktopCaptureSupported } from './platform/capture'
@@ -12,6 +14,14 @@ import { desktopCaptureSupported } from './platform/capture'
 const MAX_OUTPUT = 40_000
 const clip = (text: string) => (text.length > MAX_OUTPUT ? `${text.slice(0, MAX_OUTPUT)}\n…（已截断，共 ${text.length} 字符）` : text)
 const str = (value: unknown) => (typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value))
+
+/** 用系统 start 启动未注册文件关联的应用名（如 notepad / msedge）；名字含特殊字符时不执行，避免命令注入。 */
+function startShellApplication(name: string): Promise<boolean> {
+  if (!/^[\w .\-()@+#']{1,80}$/.test(name)) return Promise.resolve(false)
+  return new Promise((resolvePromise) => {
+    execFile('cmd.exe', ['/c', 'start', '', name], { windowsHide: true }, (error) => resolvePromise(!error))
+  })
+}
 
 export { extensionToolNames } from './tools'
 
@@ -106,7 +116,7 @@ export class ExtensionHost {
     const builtin: PluginInfo[] = [
       { name: 'browser', description: '内置浏览器：打开网页并读取标题、正文与链接，供智能体查资料、验证页面。', builtin: true, enabled: settings.plugins.browser, tools: [{ name: 'browser_open', description: '打开 http/https 页面并提取文本' }] },
       { name: 'search', description: '联网搜索：输入关键词，返回相关网页的标题、地址与摘要，搜索到的网页会显示在任务摘要中。', builtin: true, enabled: settings.plugins.search, tools: [{ name: 'web_search', description: '按关键词联网搜索并返回结果列表' }] },
-      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击坐标。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer && desktopCaptureSupported(), tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click' }] },
+      { name: 'computer', description: '电脑操控：截屏、打开应用或文件、输入文字、按键、点击、拖拽、滚动。每次操作都需要你批准。', builtin: true, enabled: settings.plugins.computer && desktopCaptureSupported(), tools: [{ name: 'computer_use', description: 'screenshot / open / type / key / click / double_click / right_click / move / drag / scroll' }] },
       { name: 'image', description: '图片生成：调用用户配置的生图模型（OpenAI 兼容 /images/generations 接口），按提示词生成图片并保存到项目 .cubex/images，同时在对话中展示。', builtin: true, enabled: settings.plugins.image, tools: [{ name: 'generate_image', description: '按提示词生成一张图片' }] },
     ]
     const user = this.plugins.map<PluginInfo>((item) => item.manifest
@@ -135,7 +145,7 @@ export class ExtensionHost {
     // Browser 模式下不提供后台抓取式 web_search：搜索应直接在用户可见的浏览器视图里打开结果页，
     // 由 AI 用 browser_navigate 完成（既能实时展现搜索过程，也避免离屏抓取导致的超时）。
     if (settings.plugins.search && mode !== 'browser') specs.push({ name: 'web_search', description: '联网搜索：输入关键词，返回若干条相关网页的标题、地址与摘要。需要获取最新资料、查证事实或寻找网页时使用；拿到结果后可再用 browser_open 打开某个地址查看详情。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' }, limit: { type: 'integer', description: '返回结果条数，默认 6，最多 10' } }, required: ['query'] } })
-    if (settings.plugins.computer && desktopCaptureSupported()) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，同时保存到项目 .cubex/screenshots，你可以据此判断屏幕内容）、open（打开应用/文件/网址，target 为路径或 URL）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 屏幕坐标单击）。每次调用都需要用户批准。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, x: { type: 'integer' }, y: { type: 'integer' } }, required: ['action'] } })
+    if (settings.plugins.computer && desktopCaptureSupported()) specs.push({ name: 'computer_use', description: '操控用户电脑。action：screenshot（截屏并把图片直接返回给你查看，你可以据此判断屏幕内容）、open（打开应用/文件/网址）、type（输入 text）、key（发送按键 keys，SendKeys 语法，如 ^s、{ENTER}）、click（在 x,y 单击）、double_click（双击）、right_click（右键单击）、move（只移动鼠标）、drag（从 fromX,fromY 拖到 toX,toY，可设 hold 毫秒）、scroll（滚轮，amount 正数向下）。除截图外每次调用都需要用户批准；模式为「独立桌面」时，click/drag/type/key 需要额外提供 window（目标窗口标题），AI 的鼠标和键鼠操作都发生在独立桌面上，不会抢占你当前的桌面。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['screenshot', 'open', 'type', 'key', 'click', 'double_click', 'right_click', 'move', 'drag', 'scroll'] }, target: { type: 'string' }, text: { type: 'string' }, keys: { type: 'string' }, window: { type: 'string', description: '独立桌面模式下的目标窗口标题' }, x: { type: 'integer' }, y: { type: 'integer' }, fromX: { type: 'integer' }, fromY: { type: 'integer' }, toX: { type: 'integer' }, toY: { type: 'integer' }, hold: { type: 'integer', description: '拖拽按下后的停留毫秒' }, amount: { type: 'integer', description: '滚动单位，正数向下' } }, required: ['action'] } })
     if (settings.plugins.image) {
       const configured = settings.image.providerId && settings.image.modelId
       const sizeHint = settings.image.size === 'auto' ? '由服务自动决定' : settings.image.size
@@ -195,7 +205,7 @@ export class ExtensionHost {
         const action = str(call.args.action)
         this.deps.onControl?.({ active: true, kind: 'computer', label: `正在操控电脑：${actionLabels[action] ?? action}`, threadId: context.threadId ?? '' })
         try {
-          return await computerAction(call.args, context.root)
+          return await computerAction(call.args, context.root, settings)
         } finally {
           this.deps.onControl?.({ active: false })
         }
@@ -828,10 +838,56 @@ function powershell(script: string): Promise<string> {
 
 const psQuote = (text: string) => `'${text.replace(/'/g, "''")}'`
 
-export async function computerAction(args: Record<string, unknown>, root: string): Promise<{ output: string; image?: string }> {
+const MOUSE_DLL = `Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int e);' -Name U -Namespace Cubex; `
+
+const mouseScript = (points: Array<{ x: number; y: number; hold?: number; buttons?: Array<'down' | 'up'>; wheel?: number }>): string => {
+  const steps = points.map((point) => {
+    const lines = [`[Cubex.U]::SetCursorPos(${point.x}, ${point.y}) | Out-Null`]
+    if (point.hold) lines.push(`Start-Sleep -Milliseconds ${point.hold}`)
+    for (const button of point.buttons ?? []) {
+      if (button === 'down') lines.push('[Cubex.U]::mouse_event(2,0,0,0,0)')
+      else lines.push('[Cubex.U]::mouse_event(4,0,0,0,0)')
+    }
+    if (point.wheel) lines.push(`[Cubex.U]::mouse_event(0x0800,0,0,${point.wheel},0)`)
+    return lines.join('; ')
+  })
+  return MOUSE_DLL + steps.join('; ')
+}
+
+const mouseClickScript = (x: number, y: number, options: { clicks: number; right?: boolean }): string => {
+  const down = options.right ? 8 : 2
+  const up = options.right ? 16 : 4
+  const steps = [`[Cubex.U]::SetCursorPos(${x}, ${y}) | Out-Null`]
+  for (let index = 0; index < options.clicks; index++) {
+    steps.push(`[Cubex.U]::mouse_event(${down},0,0,0,0)`, `[Cubex.U]::mouse_event(${up},0,0,0,0)`)
+    if (options.clicks > 1) steps.push('Start-Sleep -Milliseconds 80')
+  }
+  return MOUSE_DLL + steps.join('; ')
+}
+
+const coordinate = (value: unknown, label: string): number => {
+  const num = Number(value)
+  if (!Number.isFinite(num) || !Number.isInteger(num) || num < 0 || num > 20_000) throw new Error(`${label} 需要合法的整数坐标（0–20000）`)
+  return num
+}
+
+export async function computerAction(args: Record<string, unknown>, root: string, settings: Settings): Promise<{ output: string; image?: string }> {
   const action = str(args.action)
+  const control = settings.computer
+  const isolated = control.mode === 'isolated'
   switch (action) {
     case 'screenshot': {
+      if (isolated) {
+        const shot = await captureIsolatedDesktop()
+        const png = await readFile(shot.png)
+        await rm(shot.png, { force: true }).catch(() => undefined)
+        const dir = join(root, '.cubex', 'screenshots')
+        await mkdir(dir, { recursive: true })
+        const file = join(dir, `desktop-${Date.now()}.png`)
+        await writeFile(file, png)
+        const dataUrl = `data:image/png;base64,${png.toString('base64')}`
+        return { output: `已截取独立桌面「${ISOLATED_DESKTOP_NAME}」（${shot.width}×${shot.height}，${shot.windows.length} 个窗口），保存到 ${file}。坐标以这张截图为准。`, image: dataUrl }
+      }
       const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } })
       const image = sources[0]?.thumbnail
       if (!image || image.isEmpty()) throw new Error('截屏失败：未获取到屏幕画面')
@@ -845,34 +901,113 @@ export async function computerAction(args: Record<string, unknown>, root: string
       return { output: `已截屏（${size.width}×${size.height}），保存到 ${file}。截图已附在下方供你查看。`, image: dataUrl }
     }
     case 'open': {
-      const target = str(args.target).trim()
-      if (!target) throw new Error('open 需要 target')
-      if (/^https?:\/\//i.test(target)) { await shell.openExternal(target); return { output: `已在默认浏览器打开 ${target}` } }
+      const raw = str(args.target).trim()
+      if (!raw) throw new Error('open 需要 target')
+      if (isolated) {
+        const command = /^https?:\/\//i.test(raw) ? 'msedge' : raw
+        const argument = /^https?:\/\//i.test(raw) ? raw : ''
+        const pid = await launchOnIsolatedDesktop(command, argument)
+        return { output: `已在独立桌面「${ISOLATED_DESKTOP_NAME}」启动 ${raw}（进程 ${pid}）。该桌面与你的当前桌面互不干扰，可在设置里关闭实时镜像。` }
+      }
+      if (/^https?:\/\//i.test(raw)) { await shell.openExternal(raw); return { output: `已在默认浏览器打开 ${raw}` } }
+      // 相对路径按项目根目录解析，避免在应用自身的工作目录下找不到文件。
+      const target = isAbsolute(raw) ? raw : resolve(root, raw)
       const error = await shell.openPath(target)
-      if (error) throw new Error(`无法打开：${error}`)
-      return { output: `已打开 ${target}` }
+      if (!error) return { output: `已打开 ${target}` }
+      // shell.openPath 打不开未注册文件关联的应用名（如 notepad），退回到系统 start。
+      if (!/[/\\]/.test(raw) && await startShellApplication(raw)) return { output: `已启动应用「${raw}」` }
+      if (!existsSync(target)) throw new Error(`无法打开「${raw}」：路径不存在（已按项目目录解析为 ${target}）。请确认路径是否正确，或改用绝对路径。`)
+      throw new Error(`无法打开「${raw}」：${error}（已解析为 ${target}）`)
     }
     case 'type': {
       const text = str(args.text)
       if (!text) throw new Error('type 需要 text')
       const escaped = text.replace(/[+^%~(){}[\]]/g, '{$&}')
+      if (isolated) {
+        const title = str(args.window).trim()
+        if (!title) throw new Error('独立桌面模式下 type 需要 window（目标窗口标题）')
+        await typeIsolatedDesktop(title, text)
+        return { output: `已在独立桌面窗口「${title}」输入 ${text.length} 个字符` }
+      }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      if (waited >= control.idleWaitSec && control.idleWaitSec > 0) return { output: `检测到你正在使用键鼠，已等待 ${Math.round(waited)} 秒仍未空闲，本次输入未执行，请稍后重试或调小「等待空闲」时间` }
       await powershell(`$w = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 300; $w.SendKeys(${psQuote(escaped)})`)
-      return { output: `已输入 ${text.length} 个字符` }
+      return { output: `已输入 ${text.length} 个字符${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
     }
     case 'key': {
       const keys = str(args.keys)
       if (!keys) throw new Error('key 需要 keys')
+      if (isolated) {
+        const title = str(args.window).trim()
+        if (!title) throw new Error('独立桌面模式下 key 需要 window（目标窗口标题）')
+        await keyIsolatedDesktop(title, keys)
+        return { output: `已向独立桌面窗口「${title}」发送按键 ${keys}` }
+      }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      if (waited >= control.idleWaitSec && control.idleWaitSec > 0) return { output: `检测到你正在使用键鼠，已等待 ${Math.round(waited)} 秒仍未空闲，本次按键未执行` }
       await powershell(`$w = New-Object -ComObject WScript.Shell; Start-Sleep -Milliseconds 300; $w.SendKeys(${psQuote(keys)})`)
-      return { output: `已发送按键 ${keys}` }
+      return { output: `已发送按键 ${keys}${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
     }
-    case 'click': {
-      const x = Number(args.x)
-      const y = Number(args.y)
-      if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x > 20_000 || y > 20_000) throw new Error('click 需要合法的整数坐标 x、y')
-      await powershell(`Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(int f, int dx, int dy, int d, int e);' -Name U -Namespace Cubex; [Cubex.U]::SetCursorPos(${x}, ${y}) | Out-Null; [Cubex.U]::mouse_event(2,0,0,0,0); [Cubex.U]::mouse_event(4,0,0,0,0)`)
-      return { output: `已在 (${x}, ${y}) 单击` }
+    case 'click':
+    case 'double_click':
+    case 'right_click': {
+      const x = coordinate(args.x, 'click')
+      const y = coordinate(args.y, 'click')
+      const clicks = action === 'double_click' ? 2 : 1
+      const right = action === 'right_click'
+      if (isolated) {
+        const title = str(args.window).trim()
+        if (!title) throw new Error('独立桌面模式下 click 需要 window（目标窗口标题）')
+        await clickIsolatedDesktop(title, x, y, { right, double: clicks > 1 })
+        return { output: `已在独立桌面窗口「${title}」的 (${x}, ${y}) ${right ? '右键' : action === 'double_click' ? '双击' : '单击'}` }
+      }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      if (waited >= control.idleWaitSec && control.idleWaitSec > 0) return { output: `检测到你正在使用鼠标，已等待 ${Math.round(waited)} 秒仍未空闲，本次点击未执行，请稍后重试或调小「等待空闲」时间` }
+      await powershell(mouseClickScript(x, y, { clicks, right }))
+      return { output: `已在 (${x}, ${y}) ${right ? '右键单击' : action === 'double_click' ? '双击' : '单击'}${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
+    }
+    case 'move': {
+      const x = coordinate(args.x, 'move')
+      const y = coordinate(args.y, 'move')
+      if (isolated) return { output: `独立桌面模式下不移动你的鼠标指针；如需在独立桌面内定位，请使用 click 的 window + 坐标` }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      await powershell(mouseScript([{ x, y }]))
+      return { output: `鼠标已移动到 (${x}, ${y})${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
+    }
+    case 'drag': {
+      const fromX = coordinate(args.fromX ?? args.x1, 'drag 的 fromX')
+      const fromY = coordinate(args.fromY ?? args.y1, 'drag 的 fromY')
+      const toX = coordinate(args.toX ?? args.x2, 'drag 的 toX')
+      const toY = coordinate(args.toY ?? args.y2, 'drag 的 toY')
+      const hold = Math.max(0, Math.min(10_000, Number(args.hold ?? 200)))
+      if (isolated) {
+        const title = str(args.window).trim()
+        if (!title) throw new Error('独立桌面模式下 drag 需要 window（目标窗口标题）')
+        // 独立桌面没有真实指针：用「按下—移动—抬起」的语义由三次点击近似，并等待目标窗口响应。
+        await clickIsolatedDesktop(title, fromX, fromY, { holdMs: hold })
+        await clickIsolatedDesktop(title, Math.round((fromX + toX) / 2), Math.round((fromY + toY) / 2), { holdMs: hold })
+        await clickIsolatedDesktop(title, toX, toY)
+        return { output: `已在独立桌面窗口「${title}」从 (${fromX}, ${fromY}) 拖到 (${toX}, ${toY})（独立桌面以分步点击近似拖拽轨迹）` }
+      }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      if (waited >= control.idleWaitSec && control.idleWaitSec > 0) return { output: `检测到你正在使用鼠标，已等待 ${Math.round(waited)} 秒仍未空闲，本次拖拽未执行` }
+      const steps = 12
+      const path: Array<{ x: number; y: number; hold?: number; buttons?: Array<'down' | 'up'> }> = [{ x: fromX, y: fromY, buttons: ['down'] }]
+      for (let index = 1; index <= steps; index++) {
+        path.push({ x: Math.round(fromX + ((toX - fromX) * index) / steps), y: Math.round(fromY + ((toY - fromY) * index) / steps) })
+      }
+      path.push({ x: toX, y: toY, hold, buttons: ['up'] })
+      await powershell(mouseScript(path))
+      return { output: `已从 (${fromX}, ${fromY}) 拖拽到 (${toX}, ${toY})${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
+    }
+    case 'scroll': {
+      const amount = Math.max(-2400, Math.min(2400, Number(args.amount ?? 600)))
+      if (isolated) return { output: '独立桌面模式下请用 key 的 window 参数发送 PgDn/PgUp 或方向键滚动' }
+      const waited = await waitForUserIdle(control.idleWaitSec)
+      await powershell(mouseScript([{ x: Number(args.x ?? 0), y: Number(args.y ?? 0), wheel: amount }]))
+      return { output: `已滚动 ${amount > 0 ? '向下' : '向上'} ${Math.abs(amount)} 单位${waited > 0 ? `（已等你空闲 ${Math.round(waited)} 秒）` : ''}` }
     }
     default:
-      throw new Error(`未知操作：${action}（可选 screenshot / open / type / key / click）`)
+      throw new Error(`未知操作：${action}（可选 screenshot / open / type / key / click / double_click / right_click / move / drag / scroll）`)
   }
 }

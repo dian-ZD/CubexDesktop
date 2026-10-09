@@ -1,10 +1,40 @@
 # 计划
 
-> 最后更新时间：2026-10-08 ｜ 更新者：AI Agent（补充 README 并推送 GitHub）
+> 最后更新时间：2026-10-09 ｜ 更新者：AI Agent（0.3.1-dev：透明度/圆角/拖动/对齐/报错修复并推送）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
+
+### 当前任务：0.3.1-dev 打磨（透明度、圆角、拖动、滑条对齐、报错来源）
+
+- [x] 根因修复：`styles.css` 里 `--bg-panel`/`--accent`/`--surface`/`--border`/`--text-secondary`/`--matcha-dim` 六个变量从未定义，导致悬浮窗与模型弹层背景透明、多处边框失效。已在深浅两套主题中补齐（实测弹层背景 rgb(35,37,42) 不透明、悬浮窗窗口背景同色）。
+- [x] 悬浮窗灰色尖角：`transparent: true` 的无边框窗口在 Windows 上圆角外会露出 DWM 灰色残留。改为不透明窗口（`backgroundColor` 随主题切换）+ CSS 12px 圆角，`publish()` 里同步 `applyFloatingOpacity()`，透明度与主题改动即时生效（实测拖到 100% 后 state.json 落盘 opacity=1）。
+- [x] 悬浮窗无法拖动：`.floating-window` 的 `-webkit-app-region: drag` 被子元素 `.floating-panel` 的 `no-drag` 整体覆盖。改为标题栏 `drag`、按钮 `no-drag`（实测 computed style 分别为 drag / no-drag）。
+- [x] 思考强度刻度错位：滑块、刻度点、填充条各用一套坐标。统一为「半径内缩」公式 `calc(10px + ratio * (100% - 20px))`（`THUMB` 常量）。实测低档 thumb=445.9 = dots[0] = fillRight，高档 702.7 = dots[3] = fillRight。
+- [x] 模型选择按钮去掉描边（实测 borderTopColor rgba(0,0,0,0)）。
+- [x] 设置里的滑条改为自绘 `Slider`（轨道 + 填充 + 滑块 + 磁吸回弹），原生 `input[type=range]` 在端点处右侧留白、填充与滑块不对齐的问题一并解决；提示音音量与悬浮窗透明度两处都已替换。
+- [x] 「Failed to open path」定位：Electron `shell.openPath()` 对不存在/不可打开的路径返回的正是这个英文串（已用 electron 单测复现）。`computer_use open` 工具改为：相对路径按项目根目录解析、未注册关联的应用名回落系统 `start`、路径不存在时给出中文可操作提示。
+- [x] 语音：新增「模型下载源」设置（自动 / 官方 / 国内镜像 hf-mirror），auto 先试官方、失败自动切镜像重试，每个源各自缓存；下载失败时提示可更换下载源。「没有识别到语音内容」从 error 降级为 info 提示，不再当报错弹。
+- [x] 版本号 0.2.2-dev → 0.3.1-dev；typecheck 通过、lint 0 error / 9 既有 warning、171 passed / 4 skipped；dist 产出 release\Cubex Setup 0.3.1-dev.exe（112,772,960 B）。
+- [x] 按用户明确指示 commit 并 push 到 origin/main。
+
+下一步第一件事：请用户安装 release\Cubex Setup 0.3.1-dev.exe 实测（中文语音、悬浮窗拖动与透明度、模型选择器、打开文件路径报错）；若有新问题继续在 0.3.x 迭代。VocoType（FunASR 引擎）暂未接入，用户选择保持在线下载 + 国内镜像。
+
+
+### 当前任务：电脑操控增强、任务悬浮窗、思考等级，以及复制/回退修复
+
+- [x] 电脑操控新增拖拽、双击、右键、只移动鼠标、滚动；当前桌面模式用 GetLastInputInfo 检测键鼠占用并等待空闲，独立桌面模式完全不碰用户鼠标。
+- [x] 新增独立 Windows 桌面（`CubexAgent`，PowerShell P/Invoke 创建桌面、启动进程、GDI 截屏、按标题枚举窗口并以 PostMessage 点击/输入）。已实测：在独立桌面启动记事本、按标题找到窗口、点击与按键成功、截图有实际内容。
+- [x] 右下角置顶悬浮窗：可查看任务、待办、最近消息与追问选项，可随时插话、停止回复；透明度可调（最低 30%）、可自动弹出，标题栏可手动打开。
+- [x] 独立桌面实时镜像：操控独立桌面时按设置把画面推送到悬浮窗小窗，可在设置中关闭。
+- [x] 模型选择改为 Codex 风格（模型名 + 点击弹出列表），下方四档思考强度滑条；随强度切换边框/徽标样式，不支持的模型标注「不支持思考强度」。思考强度经 `reasoning_effort`（OpenAI 兼容）与 Anthropic `thinking.budget_tokens` 下发。
+- [x] 语音输入修复：打包后页面来自 asar 内 file://，其中 Web Worker 起不来（sandbox bundle 报 preloadScripts 为 null），改为渲染进程主线程动态加载 @xenova/transformers；index.html CSP 放行 wasm-unsafe-eval 与模型/wasm 域名。打包版实测录音→识别→回填输入框全通过。
+- [x] 复制修复：渲染进程 `navigator.clipboard` 在窗口未聚焦时直接失败（实测 NotAllowedError: Document is not focused），全部复制改走主进程 clipboard IPC。实测窗口失焦也能复制成功。
+- [x] 回退到此消息之前：把该消息文字与附件放回输入框（已有内容则追加换行），确认弹窗文案同步更新。实测 4 条消息回退到 2 条，文字与 1 个附件都回到输入框。
+- [x] 收尾校验：typecheck 通过、lint 0 error / 9 既有 warning、166 passed / 4 skipped；npm run dist 生成 release\Cubex Setup 0.2.2-dev.exe（112,770,346 B），打包版隔离冒烟通过；复制、回退、模型选择器、悬浮窗与镜像、语音均在打包版实测通过。
+
+下一步第一件事：等待用户安装或使用反馈；若用户要求发布或提交，再执行 commit/push。源码和 out 已更新；release 安装包已包含本轮全部改动。
 
 ### 当前任务：补充 README 并推送 GitHub
 

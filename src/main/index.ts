@@ -1,14 +1,15 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, nativeTheme, safeStorage, session, shell, type IpcMainInvokeEvent } from 'electron'
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
-import { realpath, writeFile } from 'node:fs/promises'
+import { realpath, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type McpServer, type Result, type StreamDelta, type Thread } from '../shared/schema'
 import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
+import { captureIsolatedDesktop, ISOLATED_DESKTOP_NAME } from './computer'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, saveProjectFile, runShellCommand } from './tools'
-import { saveProjectFileInputSchema } from '../shared/schema'
+import { saveProjectFileInputSchema, copyTextInputSchema } from '../shared/schema'
 import { StateStore } from './store'
 import { SecretStore } from './secrets'
 import { AgentRunner } from './agent'
@@ -27,6 +28,7 @@ const mcp = new McpManager()
 const skills = new SkillStore(join(app.getPath('userData'), 'skills'))
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
+let floatingWindow: BrowserWindow | null = null
 
 let appIcon: Electron.NativeImage | null = null
 
@@ -72,7 +74,7 @@ async function buildAppIcon(): Promise<Electron.NativeImage | undefined> {
   }
   return undefined
 }
-const liveWindows = () => [mainWindow, panelWindow].filter((win): win is BrowserWindow => !!win && !win.isDestroyed())
+const liveWindows = () => [mainWindow, panelWindow, floatingWindow].filter((win): win is BrowserWindow => !!win && !win.isDestroyed())
 const extensions = new ExtensionHost({
   pluginsDir: join(app.getPath('userData'), 'plugins'),
   getSettings: () => store.get().settings,
@@ -81,7 +83,17 @@ const extensions = new ExtensionHost({
   mcp,
   onControl: (control) => {
     const payload: ControlState = control.active ? control : { active: false }
+    controlActive = control.active
     for (const win of liveWindows()) win.webContents.send(channels.control, payload)
+    // 任务开始操控浏览器/电脑（也就是原生视图会盖住应用界面）时弹出右下角悬浮窗，
+    // 让用户既能盯着主界面，也能随时看到进度并插话；操控一结束就收起来，不长期占屏。
+    if (control.active) {
+      const settings = store.get().settings
+      if (settings.floating.autoShow) openFloatingWindow()
+      if (settings.computer.mode === 'isolated' && settings.computer.mirror && !mirrorTimer) startDesktopMirror(ISOLATED_DESKTOP_NAME)
+    } else {
+      releaseControlFloating()
+    }
   },
 })
 const agent = new AgentRunner(store, secrets, (delta: StreamDelta) => {
@@ -177,6 +189,8 @@ function publish() {
   publishPending = true
   setImmediate(() => {
     publishPending = false
+    // 透明度/主题改动要立刻作用到悬浮窗，否则设置里拖了滑条窗口没反应。
+    applyFloatingOpacity()
     const payload = withKeys(store.get())
     for (const win of liveWindows()) win.webContents.send(channels.state, payload)
   })
@@ -284,6 +298,125 @@ function openPanelWindow(threadId: string) {
   })
   void loadRenderer(panelWindow, `panel=${encodeURIComponent(threadId)}`)
   broadcastWindowState()
+}
+
+const FLOATING_WIDTH = 380
+const FLOATING_HEIGHT = 520
+
+function floatingSlot(): { x: number; y: number } | undefined {
+  const source = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : undefined
+  const base = source ?? { x: 0, y: 0, width: 1920, height: 1080 }
+  const margin = 24
+  return { x: Math.round(base.x + base.width - FLOATING_WIDTH - margin), y: Math.round(base.y + base.height - FLOATING_HEIGHT - margin - 48) }
+}
+
+function floatingDark(): boolean {
+  const theme = store.get().settings.appearance.theme
+  if (theme === 'system') return nativeTheme.shouldUseDarkColors
+  return theme === 'dark'
+}
+
+// 与 styles.css 中 --bg-panel 的深浅两色保持一致，避免窗口背景与面板出现色差。
+function floatingBackgroundColor(): string {
+  return floatingDark() ? '#23252a' : '#ffffff'
+}
+
+function applyFloatingOpacity(): void {
+  if (!floatingWindow || floatingWindow.isDestroyed()) return
+  const opacity = store.get().settings.floating.opacity
+  floatingWindow.setOpacity(opacity)
+  floatingWindow.setBackgroundColor(floatingBackgroundColor())
+}
+
+// 悬浮窗与镜像只在「任务正在操控浏览器/电脑（原生视图会盖住应用界面）」期间存在。
+let controlActive = false
+// 标记悬浮窗是否由「任务正在操控浏览器/电脑」自动弹出：只有这种才在操控结束时自动关闭，
+// 用户手动打开的（force）会保留到他自己关掉。
+let floatingAuto = false
+
+function openFloatingWindow(options: { force?: boolean } = {}): void {
+  const settings = store.get().settings
+  if (!options.force && !settings.floating.autoShow) return
+  if (floatingWindow && !floatingWindow.isDestroyed()) {
+    floatingWindow.showInactive()
+    return
+  }
+  const slot = floatingSlot()
+  floatingAuto = !options.force
+  floatingWindow = new BrowserWindow({
+    width: FLOATING_WIDTH,
+    height: FLOATING_HEIGHT,
+    minWidth: 320,
+    minHeight: 360,
+    ...(slot ?? {}),
+    show: false,
+    frame: false,
+    // 不用 transparent：透明无边框窗口在 Windows 上会让圆角外露出灰色残留（DWM 阴影），
+    // 改为不透明窗口 + 圆角由 CSS 承担，背景色随主题切换避免闪烁。
+    backgroundColor: floatingBackgroundColor(),
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: true,
+    title: 'Cubex 悬浮助手',
+    ...(appIcon && !appIcon.isEmpty() ? { icon: appIcon } : {}),
+    webPreferences: webPreferences(),
+  })
+  floatingWindow.setAlwaysOnTop(true, 'floating')
+  applyFloatingOpacity()
+  floatingWindow.once('ready-to-show', () => floatingWindow?.showInactive())
+  guardNavigation(floatingWindow)
+  floatingWindow.on('closed', () => { floatingWindow = null })
+  void loadRenderer(floatingWindow, 'floating')
+}
+
+function closeFloatingWindow(): void {
+  if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.close()
+  floatingWindow = null
+  floatingAuto = false
+  stopDesktopMirror()
+}
+
+/** 任务结束操控浏览器/电脑时收起源自动弹出的悬浮窗与镜像，避免长期占屏。 */
+function releaseControlFloating(): void {
+  stopDesktopMirror()
+  if (!floatingAuto) return
+  floatingAuto = false
+  if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.close()
+  floatingWindow = null
+}
+
+let mirrorTimer: NodeJS.Timeout | null = null
+let mirrorBusy = false
+
+function stopDesktopMirror(): void {
+  if (mirrorTimer) { clearInterval(mirrorTimer); mirrorTimer = null }
+  for (const win of liveWindows()) win.webContents.send(channels.desktopMirror, null)
+}
+
+function broadcastMirror(frame: { image: string; width: number; height: number }): void {
+  for (const win of liveWindows()) win.webContents.send(channels.desktopMirror, frame)
+}
+
+export function startDesktopMirror(name: string, intervalMs = 1200): void {
+  if (process.platform !== 'win32') return
+  if (mirrorTimer) clearInterval(mirrorTimer)
+  const tick = async () => {
+    if (mirrorBusy) return
+    mirrorBusy = true
+    try {
+      const shot = await captureIsolatedDesktop(name)
+      const png = await readFile(shot.png)
+      await rm(shot.png, { force: true }).catch(() => undefined)
+      broadcastMirror({ image: `data:image/png;base64,${png.toString('base64')}`, width: shot.width, height: shot.height })
+    } catch (error) {
+      // 镜像失败不影响主流程：桌面可能还没创建或已被关闭。
+      console.error('[cubex] 独立桌面镜像失败', error instanceof Error ? error.message : error)
+    } finally {
+      mirrorBusy = false
+    }
+  }
+  void tick()
+  mirrorTimer = setInterval(() => void tick(), intervalMs)
 }
 
 function createWindow() {
@@ -564,6 +697,22 @@ function registerIpc() {
     openPanelWindow(input.threadId)
   })
 
+  handle(channels.openFloatingWindow, async () => { openFloatingWindow({ force: true }) })
+  handle(channels.closeFloatingWindow, async () => { closeFloatingWindow() })
+  handle(channels.focusMainWindow, async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+
+  // 复制统一走主进程：渲染进程的 navigator.clipboard 在窗口未聚焦时会直接失败
+  // （实测 NotAllowedError: Document is not focused），用户点「复制」往往正好伴随焦点切换。
+  handle(channels.copyText, async (_event, payload) => {
+    const input = copyTextInputSchema.parse(payload)
+    clipboard.writeText(input.text)
+  })
+
   handle(channels.closePanelWindow, async () => {
     if (panelWindow && !panelWindow.isDestroyed()) panelWindow.close()
   })
@@ -804,6 +953,13 @@ app.whenReady().then(async () => {
       void syncAoci().then((servers) => mcp.sync(servers))
       startAutomationScheduler()
     }, 1200)
+    // 兜底：操控期间若镜像被意外停掉（例如 suspended 后回来），按设置在操控恢复时重新拉起。
+    setInterval(() => {
+      if (!controlActive) { stopDesktopMirror(); return }
+      const settings = store.get().settings
+      if (settings.computer.mode !== 'isolated' || !settings.computer.mirror) { stopDesktopMirror(); return }
+      if (!mirrorTimer) startDesktopMirror(ISOLATED_DESKTOP_NAME)
+    }, 2000)
   }
   if (process.env.CUBEX_SMOKE === '1' && mainWindow) {
     mainWindow.webContents.once('did-finish-load', async () => {

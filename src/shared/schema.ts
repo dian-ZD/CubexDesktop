@@ -29,13 +29,68 @@ export const providerSchema = z.object({
   hasKey: z.boolean(),
 })
 
+export const thinkingLevels = ['off', 'low', 'medium', 'high'] as const
+export type ThinkingLevel = (typeof thinkingLevels)[number]
+
+export const computerModes = ['current', 'isolated'] as const
+
+export const computerSchema = z.object({
+  mode: z.enum(computerModes),
+  idleWaitSec: z.number().int().min(0, '不能为负数').max(300, '最多 300 秒'),
+  mirror: z.boolean(),
+})
+
+export const floatingSchema = z.object({
+  opacity: z.number().min(0.3, '最低 30%').max(1),
+  autoShow: z.boolean(),
+})
+
+export const speechModels = [
+  { id: 'Xenova/whisper-tiny', label: '轻量（默认）', size: '约 40 MB' },
+  { id: 'Xenova/whisper-base', label: '均衡', size: '约 78 MB' },
+  { id: 'Xenova/whisper-small', label: '较准（慢）', size: '约 242 MB' },
+] as const
+
+export const speechDownloadSources = ['auto', 'official', 'mirror'] as const
+export type SpeechDownloadSource = (typeof speechDownloadSources)[number]
+
+export const speechDownloadSourceLabels: Record<SpeechDownloadSource, string> = {
+  auto: '自动（推荐）',
+  official: 'HuggingFace 官方',
+  mirror: '国内镜像 hf-mirror',
+}
+
+export const speechDownloadHostLabels: Record<'official' | 'mirror', string> = {
+  official: 'huggingface.co',
+  mirror: 'hf-mirror.com',
+}
+
+export const speechSchema = z.object({
+  model: z.string().trim().min(1).max(120),
+  downloadSource: z.enum(speechDownloadSources),
+})
+
 export const modelParamsSchema = z.object({
   temperature: z.number().min(0, '温度不能小于 0').max(2, '温度不能大于 2').nullable(),
   maxTokens: z.number().int().min(0, '不能为负数').max(200_000, '最多 200000'),
   timeoutSec: z.number().int().min(10, '至少 10 秒').max(900, '最多 900 秒'),
   retries: z.number().int().min(0, '不能为负数').max(5, '最多 5 次'),
   historyLimit: z.number().int().min(10, '至少 10 条').max(400, '最多 400 条'),
+  thinkingLevel: z.enum(thinkingLevels).nullable(),
 })
+
+export const thinkingLevelLabels: Record<ThinkingLevel, string> = { off: '关闭', low: '低', medium: '中', high: '高' }
+
+const thinkingModelPattern = /deepseek-r|deepseek-reasoner|qwen3|glm-4\.5|glm-z1|kimi-k2-thinking|gpt-5|gpt-o|o[1-9]-|claude-3-7|claude-sonnet-4|claude-opus-4|reasoner|thinking|magistral|hunyuan-t1|doubao-[\w.-]*thinking|seed-oss|pangu-pro-moe/i
+const plainModelPattern = /deepseek-chat|deepseek-v3|qwen-max|qwen-plus|qwen-turbo|glm-4(?!\.)|gpt-4|gpt-3\.5|kimi-k2(?!-thinking)|llama|mistral|gemma|phi-|yi-|baichuan|internlm|minicpm|ernie(?!-x1)/i
+
+// 依据模型 ID 判断是否支持思考强度：已知推理模型按支持，已知普通模型按不支持，其余默认支持（用户可自行关闭）。
+export function supportsThinkingLevel(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase()
+  if (!id) return false
+  if (thinkingModelPattern.test(id)) return true
+  return !plainModelPattern.test(id)
+}
 
 export const modelSchema = z.object({
   id: identifier,
@@ -248,6 +303,9 @@ export const settingsSchema = z.object({
   work: workSchema,
   browser: browserSettingsSchema,
   sound: soundSchema,
+  computer: computerSchema,
+  floating: floatingSchema,
+  speech: speechSchema,
   image: imageSettingsSchema,
   beta: betaSchema,
   automations: z.array(automationSchema).max(30),
@@ -464,6 +522,7 @@ export const steerInputSchema = z.object({ threadId: identifier, content: z.stri
 export const providerKeyInputSchema = z.object({ providerId: identifier, apiKey: z.string().max(4000) }).strict()
 export const projectPathInputSchema = z.object({ projectId: identifier, path: z.string().max(2000) }).strict()
 export const saveProjectFileInputSchema = z.object({ projectId: identifier, path: z.string().min(1).max(2000), content: z.string().max(400_000), expectedContent: z.string().max(400_000) }).strict()
+export const copyTextInputSchema = z.object({ text: z.string().max(2_000_000) }).strict()
 export const runShellInputSchema = z.object({ projectId: identifier, command: z.string().trim().min(1).max(4000) }).strict()
 export const panelWindowInputSchema = z.object({ threadId: identifier }).strict()
 export const openExternalInputSchema = z.object({ url: z.string().url().max(4000) }).strict()
@@ -617,6 +676,11 @@ export interface CubexAPI {
   browserTab: (input: { threadId: string; action: 'new' | 'close' | 'activate'; tabId?: string; url?: string }) => Promise<Result<BrowserState>>
   onBrowserState: (listener: (state: BrowserState) => void) => () => void
   workflowControl: (input: { threadId: string; action: 'pause' | 'resume' | 'retry-node' | 'skip-node'; nodeId?: string }) => Promise<Result<void>>
+  openFloatingWindow: () => Promise<Result<void>>
+  closeFloatingWindow: () => Promise<Result<void>>
+  focusMainWindow: () => Promise<Result<void>>
+  copyText: (input: { text: string }) => Promise<Result<void>>
+  onDesktopMirror: (listener: (frame: { image: string; width: number; height: number } | null) => void) => () => void
   onState: (listener: (state: AppState) => void) => () => void
   onDelta: (listener: (delta: StreamDelta) => void) => () => void
   onActivity: (listener: (activity: AgentActivity) => void) => () => void
@@ -646,7 +710,10 @@ export function defaultSettings(): Settings {
     approvalMode: 'ask',
     general: { language: 'zh-CN', uiLanguage: 'zh-CN', responseStyle: 'balanced', confirmDelete: true },
     appearance: { theme: 'light', accent: 'matcha', fontFamily: 'system', fontSize: 14, codeFontSize: 13, density: 'comfortable', reduceMotion: false, background: { opacity: 0.35 } },
-    modelParams: { temperature: null, maxTokens: 0, timeoutSec: 120, retries: 2, historyLimit: 200 },
+    modelParams: { temperature: null, maxTokens: 0, timeoutSec: 120, retries: 2, historyLimit: 200, thinkingLevel: null },
+    computer: { mode: 'current', idleWaitSec: 3, mirror: true },
+    floating: { opacity: 0.92, autoShow: true },
+    speech: { model: 'Xenova/whisper-tiny', downloadSource: 'auto' },
     agent: { maxSteps: 40, commandTimeoutSec: 180, shell: 'auto', planFirst: true, verifyChanges: true, autoTodo: true, autoSelectRecommended: false, maxConcurrentSubagents: 8, subagentProfiles: [] },
     permissions: { readOnly: false, sandbox: true, sandboxNetwork: false, allowCommands: [], denyCommands: ['rm -rf /', 'format', 'shutdown', 'git push --force'] },
     chat: { sendKey: 'enter', showUsage: true, expandTools: false, autoScroll: true, notifyOnDone: true },
@@ -698,6 +765,9 @@ export function migrateState(raw: unknown): unknown {
     work: mergeGroup(workSchema, defaults.work, legacy.work),
     browser: mergeGroup(browserSettingsSchema, defaults.browser, legacy.browser),
     sound: mergeGroup(soundSchema, defaults.sound, legacy.sound),
+    computer: mergeGroup(computerSchema, defaults.computer, legacy.computer),
+    floating: mergeGroup(floatingSchema, defaults.floating, legacy.floating),
+    speech: mergeGroup(speechSchema, defaults.speech, legacy.speech),
     image: mergeGroup(imageSettingsSchema, defaults.image, legacy.image),
     beta: mergeGroup(betaSchema, defaults.beta, legacy.beta),
     automations: Array.isArray(legacy.automations)

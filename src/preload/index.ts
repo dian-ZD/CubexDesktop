@@ -71,6 +71,15 @@ const api: CubexAPI = {
     return () => ipcRenderer.removeListener(channels.browserState, wrapped)
   },
   workflowControl: (input) => ipcRenderer.invoke(channels.workflowControl, { threadId: input.threadId, action: input.action, ...(input.nodeId ? { nodeId: input.nodeId } : {}) }),
+  openFloatingWindow: () => ipcRenderer.invoke(channels.openFloatingWindow),
+  closeFloatingWindow: () => ipcRenderer.invoke(channels.closeFloatingWindow),
+  focusMainWindow: () => ipcRenderer.invoke(channels.focusMainWindow),
+  copyText: (input) => ipcRenderer.invoke(channels.copyText, { text: input.text }),
+  onDesktopMirror: (listener) => {
+    const wrapped = (_event: unknown, frame: { image: string; width: number; height: number } | null) => listener(frame)
+    ipcRenderer.on(channels.desktopMirror, wrapped)
+    return () => ipcRenderer.removeListener(channels.desktopMirror, wrapped)
+  },
   onState: (listener) => {
     const wrapped = (_event: unknown, state: AppState) => listener(state)
     ipcRenderer.on(channels.state, wrapped)
