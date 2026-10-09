@@ -16,7 +16,8 @@
 - [x] 设置里的滑条改为自绘 `Slider`（轨道 + 填充 + 滑块 + 磁吸回弹），原生 `input[type=range]` 在端点处右侧留白、填充与滑块不对齐的问题一并解决；提示音音量与悬浮窗透明度两处都已替换。
 - [x] 「Failed to open path」定位：Electron `shell.openPath()` 对不存在/不可打开的路径返回的正是这个英文串（已用 electron 单测复现）。`computer_use open` 工具改为：相对路径按项目根目录解析、未注册关联的应用名回落系统 `start`、路径不存在时给出中文可操作提示。
 - [x] 语音：新增「模型下载源」设置（自动 / 官方 / 国内镜像 hf-mirror），auto 先试官方、失败自动切镜像重试，每个源各自缓存；下载失败时提示可更换下载源。「没有识别到语音内容」从 error 降级为 info 提示，不再当报错弹。
-- [x] 版本号 0.2.2-dev → 0.3.1-dev；typecheck 通过、lint 0 error / 9 既有 warning、171 passed / 4 skipped；dist 产出 release\Cubex Setup 0.3.1-dev.exe（112,772,960 B）。
+- [x] i18n 收口：扫描全部 `tr('…')` 字面量共 835 条，补上缺失/未登记的 56 条英文词条（新增 `miscPhrases` Record 并注册），现已 0 缺失。
+- [x] 版本号 0.2.2-dev → 0.3.1-dev；typecheck 通过、lint 0 error / 9 既有 warning、171 passed / 4 skipped；dist 产出 release\Cubex Setup 0.3.1-dev.exe（112,773,865 B，SHA256 A8BACB45EB2E44D2D3072E2AFB40F43EF32C288A3E1973FEB961E7E9B79B4266）。
 - [x] 按用户明确指示 commit 并 push 到 origin/main。
 
 下一步第一件事：请用户安装 release\Cubex Setup 0.3.1-dev.exe 实测（中文语音、悬浮窗拖动与透明度、模型选择器、打开文件路径报错）；若有新问题继续在 0.3.x 迭代。VocoType（FunASR 引擎）暂未接入，用户选择保持在线下载 + 国内镜像。

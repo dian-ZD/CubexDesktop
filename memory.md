@@ -26,6 +26,7 @@
 - **悬浮窗透明度「调整不好使」**：`applyFloatingOpacity()` 只在建窗时调用，设置改了不生效。改为在 `publish()`（所有 store 变更的统一出口）里每次都调用，并顺带同步 `backgroundColor`。
 - **语音下载源**：`speech.downloadSource: 'auto' | 'official' | 'mirror'`，`speech.ts` 里 `REMOTE_HOSTS = { official: 'https://huggingface.co/', mirror: 'https://hf-mirror.com/' }`，`loadAsr()` 按 hostsFor 依次尝试、每个 host 独立缓存（key `${host}|${modelId}`），全部失败才抛出带「可更换下载源」提示的中文错误。「没有识别到语音内容」从 `error` 降级为 `info`（`useSpeech` 的 `onError` 增加可选 kind 参数）。
 - **VocoType 是独立桌面应用（内核阿里 FunASR），不是可替换的模型文件**；用户在选择题里选了「保持在线下载 + 国内镜像」，故未接入 FunASR 引擎。
+- **i18n 无覆盖测试**：`tests/` 里没有 phrases 覆盖用例，`tr()` 缺词条不会报错，只会让英文界面残留中文。本轮扫描 `src/renderer` 全部 835 条 `tr('…')` 字面量，补齐 56 条缺失英文（新增 `miscPhrases` Record 并在 `registerPhrases` 注册），现为 0 缺失；后续改文案可用同样方式正则扫描 `phrases.ts` 是否包含该 key。
 - 版本 0.2.2-dev → **0.3.1-dev**（仅改 `package.json` 的 `version`，源码无硬编码版本号）。
 
 ### 2026-10-09 语音、悬浮窗与模型选择器细节
