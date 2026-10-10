@@ -106,7 +106,7 @@ const agent = new AgentRunner(store, secrets, (delta: StreamDelta) => {
   for (const win of liveWindows()) win.webContents.send(channels.delta, delta)
 }, undefined, extensions, (activity: AgentActivity) => {
   for (const win of liveWindows()) win.webContents.send(channels.activity, activity)
-})
+}, skills)
 browserEngine.setStateListener((state: BrowserState) => {
   for (const win of liveWindows()) win.webContents.send(channels.browserState, state)
 })
@@ -326,22 +326,10 @@ function floatingSlot(): { x: number; y: number } | undefined {
   return { x: Math.round(base.x + base.width - FLOATING_WIDTH - margin), y: Math.round(base.y + base.height - FLOATING_HEIGHT - margin - 48) }
 }
 
-function floatingDark(): boolean {
-  const theme = store.get().settings.appearance.theme
-  if (theme === 'system') return nativeTheme.shouldUseDarkColors
-  return theme === 'dark'
-}
-
-// 与 styles.css 中 --bg-panel 的深浅两色保持一致，避免窗口背景与面板出现色差。
-function floatingBackgroundColor(): string {
-  return floatingDark() ? '#23252a' : '#ffffff'
-}
-
+// 悬浮窗已改为透明窗口 + CSS 圆角，不再需要主进程侧背景色
 function applyFloatingOpacity(): void {
   if (!floatingWindow || floatingWindow.isDestroyed()) return
-  const opacity = store.get().settings.floating.opacity
-  floatingWindow.setOpacity(opacity)
-  floatingWindow.setBackgroundColor(floatingBackgroundColor())
+  floatingWindow.setOpacity(store.get().settings.floating.opacity)
 }
 
 // 操控态按整个 agent 任务跟踪，工具调用之间不收起悬浮窗。
@@ -364,9 +352,9 @@ function openFloatingWindow(options: { force?: boolean; threadId?: string } = {}
     ...(slot ?? {}),
     show: false,
     frame: false,
-    // 不用 transparent：透明无边框窗口在 Windows 上会让圆角外露出灰色残留（DWM 阴影），
-    // 改为不透明窗口 + 圆角由 CSS 承担，背景色随主题切换避免闪烁。
-    backgroundColor: floatingBackgroundColor(),
+    // 透明窗口 + CSS 圆角：不透明窗口的 backgroundColor 会填满圆角外的四角（这是之前圆角发灰的根因）
+    transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: true,
     skipTaskbar: true,
     resizable: true,
@@ -437,8 +425,9 @@ function createWindow() {
     minHeight: 680,
     show: false,
     frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
+    // 不透明窗口（transparent 会让 Windows 把它当 layered window，shell 不认为它是全屏应用，
+    // 任务栏自动隐藏与其他应用的全屏检测都会失效）；圆角由 CSS 承担，窗口背景色随主题更新。
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e2025' : '#ffffff',
     title: 'CubexDesktop',
     ...(appIcon && !appIcon.isEmpty() ? { icon: appIcon } : {}),
     webPreferences: webPreferences(),
@@ -564,7 +553,7 @@ function registerIpc() {
   handle(channels.sendMessage, async (_event, payload) => {
     const input = sendMessageInputSchema.parse(payload)
     mcp.sync(await syncAoci(input.threadId))
-    await agent.send(input.threadId, input.content, input.modelId, input.card, input.images)
+    await agent.send(input.threadId, input.content, input.modelId, input.card, input.images, input.instruction)
   })
 
   handle(channels.regenerateMessage, async (_event, payload) => {

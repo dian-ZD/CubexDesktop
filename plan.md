@@ -6,6 +6,38 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.6-dev（技能占位交互修正 + 技能自选 + create_workflow + 独立桌面/全屏修复）
+
+- [x] 技能改「输入框占位」：/选择技能 → 图标+名称 chip 挂在输入框（可移除），用户继续补字，手动发送时才发出；全文仍走 instruction 不进历史。失败路径恢复 chip。
+- [x] 模型自选技能：新增 load_skill 工具（会话层处理，无需审批）；系统提示注入「可用技能」清单，按需加载。
+- [x] 「帮我做个工作流」：新增 create_workflow 工具，agent 直接落成 Work 画布工作流（线性串联，1–20 节点）。
+- [x] 悬浮窗圆角：floatingWindow 恢复 transparent + CSS 圆角；移除 setBackgroundColor 破坏透明的调用。
+- [x] 全屏后任务栏不隐藏/全屏不可检测：mainWindow 去掉 transparent（layered window 导致 shell 不认为全屏），改为不透明 + CSS 圆角 + 主题背景色。
+- [x] 独立桌面「仍操控当前桌面」：实测底层（CreateDesktop/启动/截屏/枚举）全部正常；修复点为系统提示——①明确告知模型当前是哪种模式；②独立桌面模式下严禁用 run_command 模拟键鼠（SendKeys/mouse_event 会作用在用户桌面）。
+- [x] toolNames 新增 load_skill/create_workflow；工具图标映射补齐。
+- [x] Linux 适配验证：新增功能均为平台无关纯逻辑；独立桌面/电脑操控非 win32 已有 supported:false 门，无需改动。
+- [x] 校验 typecheck / lint / 187 passed。
+- [ ] 打包 0.3.6-dev + 冒烟 + 推送 + 打 tag。
+
+### 当前任务：0.3.5-dev（技能消息改图标+名称占位）
+
+- [x] schema：messageCardSchema 改 discriminatedUnion，新增 `skill` 卡（skillId + name）；sendMessageInput 新增可选 `instruction`（技能全文，≤200k）。
+- [x] 渲染层 pickSkill：不再把技能全文塞进消息，消息 content = `/技能名 + 用户补充`，card 标 `skill`，全文经 `instruction` 传主进程；失败/提前返回把 `/命令` 放回输入框（沿用一次性消费语义）。
+- [x] 主进程：agent.send/start 增加 instruction 参数 → run.instruction；loop 第一步注入为末尾 user 消息并立即置空（重试/续轮/steering 恢复不重复注入）；写历史的只有占位消息。preload/bridge/CubexAPI 全链路透传。
+- [x] MessageView：skill 卡渲染为「🧩 /技能名 + 补充」一行占位（Puzzle 图标），样式 .msg-card.skill-card。
+- [x] 版本号 → 0.3.5-dev（package-lock 同步）。
+- [x] 校验 typecheck / lint 0 error / 187 passed。
+
+### 当前任务：0.3.4-dev（版本发布 + Linux 验证 + CI 发布流程）
+
+- [x] 版本号 0.3.3-dev → 0.3.4-dev。
+- [x] Linux 兼容性评估（只验证不改动）：代码可跑——platform 分支收口（proc/shell/capture 覆盖 linux）、computer 桌面操控正确返回 supported:false、无原生编译依赖、electron-builder linux 配置（AppImage+deb x64）与 dist:linux script 已存在。降级项：aoci 二进制 Windows-only（resolve 返回 null 优雅降级）、Wayland 无截图、无密钥环时弱加密提示。
+- [x] .github/workflows/release.yml：tag v* 触发（也支持手动 dispatch），matrix 构建 windows NSIS + ubuntu AppImage/deb，含 typecheck + test + 冒烟（Linux 走 xvfb），softprops/action-gh-release 传 draft Release。
+- [x] 本地打包 `release\Cubex Setup 0.3.4-dev.exe`（112,785,533 B）+ 冒烟通过；推送 tag v0.3.4-dev 触发 Actions（run 38069989249）。
+- [ ] 观察Actions 构建结果（首跑常见坑：npm ci 的 lockfile、xvfb 冒烟、electron-builder linux 依赖）。
+
+**结论：后续 Windows 侧改动不需要为 Linux 重新适配**——平台分支已收口在 src/main/platform/ 与显式 `platform !== 'win32'` 守卫；新增功能只要用 path.join、不直接调 PowerShell/注册表就天然兼容。
+
 ### 当前任务：0.3.3-dev 第七批（性能与加载速度）
 
 复审修复（评审发现 2 bug + 2 加固）：

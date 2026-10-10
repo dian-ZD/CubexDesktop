@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mergeModelParams, type ActivityPhase, type AgentActivity, type AgentMode, type AssistantMessage, type Message, type MessageCard, type MessageImage, type PendingApproval, type PendingQuestion, type Settings, type StreamDelta, type Thread, type TodoItem, type ToolCall, type ToolResult } from '../shared/schema'
+import { mergeModelParams, type ActivityPhase, type AgentActivity, type AgentMode, type AssistantMessage, type Message, type MessageCard, type MessageImage, type PendingApproval, type PendingQuestion, type Settings, type SkillDetail, type SkillMeta, type StreamDelta, type Thread, type TodoItem, type ToolCall, type ToolResult } from '../shared/schema'
 import { estimateTokens, historyTokens } from '../shared/tokens'
 import { fitContext } from './context'
 import { describeError } from './errors'
@@ -32,6 +32,8 @@ interface Run {
   approvalQueue?: Promise<void>
   approval?: { callId: string; resolve: (approved: boolean) => void }
   question?: { callId: string; resolve: (answer: string | null) => void }
+  /** 一次性指令（如技能全文）：仅随本轮第一次请求发送，消费后置空，不写入历史 */
+  instruction?: string
   outcome: { ok: boolean; cancelled?: boolean; error?: string; lastText: string }
   settled: Promise<void>
   settle: () => void
@@ -86,6 +88,7 @@ export class AgentRunner {
     private readonly onUsage: (usage: { input: number; output: number; modelId?: string }) => Promise<void> = async () => undefined,
     private readonly extensions?: ExtensionRunner,
     private readonly emitActivity: (activity: AgentActivity) => void = () => undefined,
+    private readonly skills?: { list: () => Promise<SkillMeta[]>; read: (id: string) => Promise<SkillDetail> },
   ) {}
 
   private activity(threadId: string, phase: ActivityPhase, label: string, extra?: { detail?: string; step?: number; agents?: string[] }): void {
@@ -126,7 +129,7 @@ export class AgentRunner {
     })
   }
 
-  async send(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[]): Promise<void> {
+  async send(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[], instruction?: string): Promise<void> {
     const thread = this.find(threadId)
     if (thread.status !== 'idle' || this.runs.has(threadId)) {
       await this.store.update((draft) => {
@@ -137,7 +140,7 @@ export class AgentRunner {
       })
       return
     }
-    await this.start(threadId, content, modelId, card, images)
+    await this.start(threadId, content, modelId, card, images, instruction)
   }
 
   async steer(threadId: string, content: string): Promise<void> {
@@ -341,7 +344,7 @@ export class AgentRunner {
     })
   }
 
-  private async start(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[]): Promise<Run> {
+  private async start(threadId: string, content: string, modelId?: string, card?: MessageCard, images?: MessageImage[], instruction?: string): Promise<Run> {
     const thread = this.find(threadId)
     const model = this.store.get().settings.models.find((item) => item.id === (modelId || thread.modelId || this.store.get().settings.defaultModelId))
     if (!model) throw new Error('请先在设置中添加模型并选择')
@@ -353,7 +356,10 @@ export class AgentRunner {
       target.updatedAt = new Date().toISOString()
       target.messages = this.append(target.messages, { id: randomUUID(), role: 'user', time: new Date().toISOString(), content, ...(card ? { card } : {}), ...(images?.length ? { images } : {}) })
     })
+    // 技能全文等一次性指令：随本轮第一次请求发送（不写入历史，重试/续轮不重复注入）
+    const runInstruction = instruction?.trim()
     const run = createRun()
+    if (runInstruction) run.instruction = runInstruction
     this.runs.set(threadId, run)
     let failed = false
     void this.loop(threadId, run).catch(async (error: unknown) => {
@@ -522,19 +528,32 @@ export class AgentRunner {
       const messageId = randomUUID()
       const projectFiles = await readProjectFiles(project.path)
       const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles), mode: thread.mode })
+      // 可用技能清单：让模型按需自行 load_skill，而不是只能靠用户 /命令
+      let skillHint = ''
+      if (this.skills) {
+        const metas = await this.skills.list().catch(() => [] as SkillMeta[])
+        if (metas.length > 0) skillHint = `## 可用技能\n以下技能已安装，当任务与某个技能的适用场景匹配、或用户以 /名称 提到它时，先调用 load_skill(id) 加载完整指令，再严格按技能内容执行：\n${metas.map((skill) => `- ${skill.id}（${skill.name}）：${skill.description}`).join('\n')}`
+      }
       // 上下文预算仪表：让模型知道还剩多少空间，主动控制输出与探索范围
       const usedTokens = historyTokens(thread.messages)
       const budget = model.contextWindow || 128_000
       const gauge = `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round((usedTokens / budget) * 100)}%）。${usedTokens / budget > 0.7 ? '接近上限：避免输出冗长内容、不要重复读取已读过的文件，尽快收敛到结论。' : '正常：可正常探索，但避免重复读取与冗长输出。'}`
       const extraParts = [
         `## 上下文预算\n${gauge}`,
+        skillHint,
         thread.todos && thread.todos.length > 0 ? `## 当前任务待办（这份清单始终可见，即使历史被裁剪也不会丢失，请据此判断做到哪一步、还剩什么，并及时用 manage_todos 更新状态）\n${renderTodos(thread.todos)}` : '',
         model.systemPromptExtra?.trim() ? `## 模型专属提示\n${model.systemPromptExtra.trim()}` : '',
       ].filter(Boolean)
       const system = extraParts.length ? `${baseSystem}\n\n${extraParts.join('\n\n')}` : baseSystem
       const reserve = estimateTokens(system) + (modelParams.maxTokens || 16_000) + 1_500
       const { messages: fitted } = fitContext(thread.messages, { contextWindow: model.contextWindow, reserve, limit: modelParams.historyLimit })
-      const history = pendingNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: pendingNudge }] : retrospective ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: retrospective }] : fitted
+      // 一次性指令（技能全文）：仅第一步作为最后一条 user 消息随请求发送并立即消费；写入历史的只是占位消息
+      const oneShot = step === 0 ? run.instruction : undefined
+      if (step === 0 && run.instruction) run.instruction = undefined
+      const history = pendingNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: pendingNudge }]
+        : retrospective ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: retrospective }]
+        : oneShot ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: oneShot }]
+        : fitted
       const placeholder: AssistantMessage = { id: messageId, role: 'assistant', time: new Date().toISOString(), content: '', toolCalls: [], modelId: model.id }
       await this.store.update((draft) => {
         const target = draft.threads.find((item) => item.id === threadId)!
@@ -673,6 +692,14 @@ export class AgentRunner {
         }
         if (todoTools.has(call.name)) {
           sequentialResults.push(await this.manageTodos(threadId, call))
+          continue
+        }
+        if (call.name === 'load_skill') {
+          sequentialResults.push(await this.loadSkill(call))
+          continue
+        }
+        if (call.name === 'create_workflow') {
+          sequentialResults.push(await this.createWorkflow(threadId, call))
           continue
         }
         const decision = await this.authorize(threadId, run, call)
@@ -818,6 +845,52 @@ export class AgentRunner {
     })
     if (error) return { callId: call.id, name: call.name, ok: false, output: error }
     return { callId: call.id, name: call.name, ok: true, output: renderTodos(todos) }
+  }
+
+  /** load_skill：加载技能全文（无副作用、不需审批）；重复加载同一技能直接复用缓存内容 */
+  private async loadSkill(call: ToolCall): Promise<ToolResult> {
+    const id = typeof call.args.id === 'string' ? call.args.id.trim() : ''
+    if (!this.skills) return { callId: call.id, name: call.name, ok: false, output: '技能服务不可用' }
+    if (!id) return { callId: call.id, name: call.name, ok: false, output: '缺少 id 参数，请从系统提示的可用技能列表中选择' }
+    try {
+      const skill = await this.skills.read(id)
+      return { callId: call.id, name: call.name, ok: true, output: `# 技能：${skill.name}\n\n${skill.content}`.slice(0, 60_000) }
+    } catch (error) {
+      return { callId: call.id, name: call.name, ok: false, output: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /** create_workflow：把多步骤任务落成 Work 画布工作流（当前项目下），保存后即可在画布中查看与运行 */
+  private async createWorkflow(threadId: string, call: ToolCall): Promise<ToolResult> {
+    const name = typeof call.args.name === 'string' ? call.args.name.trim().slice(0, 60) : ''
+    const raw = Array.isArray(call.args.nodes) ? call.args.nodes : []
+    if (!name) return { callId: call.id, name: call.name, ok: false, output: '缺少 name（工作流名称）' }
+    if (raw.length < 1 || raw.length > 20) return { callId: call.id, name: call.name, ok: false, output: 'nodes 必须包含 1–20 个节点' }
+    const thread = this.find(threadId)
+    const nodes = raw.map((item, index) => {
+      const node = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
+      const title = typeof node.title === 'string' && node.title.trim() ? node.title.trim().slice(0, 60) : `步骤 ${index + 1}`
+      const prompt = typeof node.prompt === 'string' ? node.prompt.trim().slice(0, 8000) : ''
+      const kind = typeof node.kind === 'string' ? node.kind : undefined
+      return { id: randomUUID(), title, prompt, x: 0, y: index * 160, ...(kind ? { kind: kind as never } : {}) }
+    })
+    if (nodes.some((node) => !node.prompt)) return { callId: call.id, name: call.name, ok: false, output: '每个节点都需要 prompt（该步骤的完整执行指令）' }
+    const workflow = {
+      id: randomUUID(),
+      projectId: thread.projectId,
+      name,
+      nodes,
+      edges: nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id })),
+      updatedAt: new Date().toISOString(),
+    }
+    try {
+      const { workflowSchema } = await import('../shared/schema')
+      const parsed = workflowSchema.parse(workflow)
+      await this.store.update((draft) => { draft.workflows = [...(draft.workflows ?? []), parsed].slice(-50) })
+      return { callId: call.id, name: call.name, ok: true, output: `已保存工作流「${name}」（${nodes.length} 个步骤，线性串联）。用户可在 Work 画布中查看、编辑和运行它。` }
+    } catch (error) {
+      return { callId: call.id, name: call.name, ok: false, output: `工作流校验失败：${error instanceof Error ? error.message : String(error)}` }
+    }
   }
 
   private async delegate(threadId: string, run: Run, call: ToolCall, step: number): Promise<ToolResult> {

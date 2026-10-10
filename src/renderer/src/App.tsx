@@ -48,6 +48,8 @@ const toolIcon = {
   ask_user: MessageCircleQuestion,
   manage_todos: ListChecks,
   delegate: Workflow,
+  load_skill: Puzzle,
+  create_workflow: Workflow,
   github_push: CloudUpload,
   browser_open: Globe,
   web_search: Search,
@@ -270,7 +272,7 @@ export function App() {
   }, [])
   const [skills, setSkills] = useState<SkillMeta[]>([])
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
-  const [skillPending, setSkillPending] = useState<{ skillName: string; content: string } | null>(null)
+  const [skillPending, setSkillPending] = useState<{ skillId: string; skillName: string; instruction: string } | null>(null)
   const reloadSkills = useCallback(() => { void api.listSkills().then((result) => { if (result.ok) setSkills(result.data) }) }, [])
   useEffect(() => { reloadSkills() }, [reloadSkills])
   const onInputChange = useCallback((value: string) => {
@@ -284,11 +286,10 @@ export function App() {
     setSkillQuery(null)
     void api.readSkill({ id: skill.id }).then(async (result) => {
       if (!result.ok) { setError(result.error); return }
-      const supplement = input.replace(/^\/[^\s/]*\s?/, '').trim()
-      const content = [result.data.content.trim(), supplement].filter(Boolean).join('\n\n')
-      if (!content) return
-      setInput('')
-      setSkillPending({ skillName: skill.name, content })
+      // 技能以「图标+名称」占位符挂在输入框上（可移除），用户补充的文字照常键入，手动发送时才发出；
+      // 技能全文经 instruction 随该次请求发送、不进历史
+      setInput(input.replace(/^\/[^\s/]*\s?/, ''))
+      setSkillPending({ skillId: skill.id, skillName: skill.name, instruction: result.data.content })
     })
   }, [input])
   const detachedThreadId = useMemo(panelThreadId, [])
@@ -659,18 +660,18 @@ export function App() {
   }, [])
 
   const queue = useCallback(async () => {
-    // 与 send 一致：技能内容一次性消费，失败路径放回输入框
+    // 技能占位只随本次手动发送消费；内容以用户输入为准，为空则仅凭技能全文也能发
     const pendingSkill = skillPending
     if (pendingSkill) setSkillPending(null)
-    const content = pendingSkill ? pendingSkill.content : input.trim()
+    const content = input.trim()
     const attached = images
-    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) {
-      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+    if (!project || !isDesktop || !loaded || (!content && !pendingSkill && attached.length === 0) || actionLock.current) {
+      if (pendingSkill) setSkillPending(pendingSkill)
       return
     }
     if (!modelId) {
       setError(tr('请先在设置中添加提供商与模型。'))
-      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+      if (pendingSkill) setSkillPending(pendingSkill)
       return
     }
     actionLock.current = true
@@ -680,12 +681,16 @@ export function App() {
       let target = thread
       if (!target) {
         const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
-        if (!created.ok) { setError(created.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content); return }
+        if (!created.ok) { setError(created.error); if (pendingSkill) setSkillPending(pendingSkill); return }
         target = created.data
         setThreadId(target.id)
       }
-      const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
-      if (!result.ok) { setError(result.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content) }
+      const result = await api.sendMessage({
+        threadId: target.id, content: content || `/${pendingSkill?.skillName ?? '任务'}`, modelId,
+        ...(attached.length ? { images: attached } : {}),
+        ...(pendingSkill ? { card: { kind: 'skill' as const, skillId: pendingSkill.skillId, name: pendingSkill.skillName }, instruction: pendingSkill.instruction } : {}),
+      })
+      if (!result.ok) { setError(result.error); if (pendingSkill) setSkillPending(pendingSkill) }
       else {
         setInput('')
         setImages([])
@@ -693,7 +698,7 @@ export function App() {
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
-      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+      if (pendingSkill) setSkillPending(pendingSkill)
     } finally {
       actionLock.current = false
       setBusy(false)
@@ -701,18 +706,18 @@ export function App() {
   }, [project, input, images, loaded, thread, modelId, ui, view, skillPending])
 
   const send = useCallback(async () => {
-    // 技能内容一次性消费：读取后立即清空，任何提前返回/失败路径都不会把旧技能内容劫持到用户下一次手动发送
+    // 技能占位只随本次手动发送消费；失败路径恢复占位，不会劫持下一次发送
     const pendingSkill = skillPending
     if (pendingSkill) setSkillPending(null)
-    const content = pendingSkill ? pendingSkill.content : input.trim()
+    const content = input.trim()
     const attached = images
-    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) {
-      // 消费时机太早（有发送进行中）：把技能内容放回输入框而不是静默丢弃
-      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+    if (!project || !isDesktop || !loaded || (!content && !pendingSkill && attached.length === 0) || actionLock.current) {
+      if (pendingSkill) setSkillPending(pendingSkill)
       return
     }
     if (!modelId) {
       setError(tr('请先在设置中添加提供商与模型。'))
+      if (pendingSkill) setSkillPending(pendingSkill)
       return
     }
     if (thread && isActive) {
@@ -726,7 +731,7 @@ export function App() {
       let target = thread
       if (!target) {
         const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
-        if (!created.ok) { setError(created.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content); return }
+        if (!created.ok) { setError(created.error); if (pendingSkill) setSkillPending(pendingSkill); return }
         target = created.data
         setThreadId(target.id)
       }
@@ -743,20 +748,25 @@ export function App() {
       followBottom.current = true
       setHistoryEndId(null)
       setVisibleCount(MESSAGE_PAGE)
-      const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
-      if (!result.ok) { setError(result.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content) }
+      const result = await api.sendMessage({
+        threadId: target.id, content: content || `/${pendingSkill?.skillName ?? '任务'}`, modelId,
+        ...(attached.length ? { images: attached } : {}),
+        ...(pendingSkill ? { card: { kind: 'skill' as const, skillId: pendingSkill.skillId, name: pendingSkill.skillName }, instruction: pendingSkill.instruction } : {}),
+      })
+      if (!result.ok) { setError(result.error); if (pendingSkill) setSkillPending(pendingSkill) }
       else {
         setInput('')
         setImages([])
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
-      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+      if (pendingSkill) setSkillPending(pendingSkill)
     } finally {
       actionLock.current = false
       setBusy(false)
     }
   }, [project, input, images, loaded, thread, modelId, isActive, ui, view, model, queue, skillPending])
+  const removeSkillPending = useCallback(() => setSkillPending(null), [])
 
   // 选中的技能内容已就绪 → 立即作为用户消息发送（或运行中时入队）。
   const sendRef = useRef(send)
@@ -1373,6 +1383,13 @@ export function App() {
                             ))}
                           </div>
                         )}
+                        {skillPending && (
+                          <div className="composer-skill" role="status" aria-label={tr('已挂载技能')}>
+                            <Puzzle size={14} />
+                            <span className="truncate">/{skillPending.skillName}</span>
+                            <button type="button" className="composer-skill-remove" aria-label={tr('移除技能')} title={tr('移除技能')} onClick={removeSkillPending}><X size={12} /></button>
+                          </div>
+                        )}
                         {skillQuery !== null && <SkillMenu skills={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
                         <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput}
                           onPaste={(event) => { const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void addImageFiles(files) } }}
@@ -1707,7 +1724,12 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
     return (
       <div className="msg user" data-message-id={message.id}>
         {message.card ? (
-          <div className="msg-card"><Workflow size={14} /><div className="msg-card-body"><strong>{message.card.name}</strong><span className="muted">{tr('工作流 · 共 {steps} 步', { steps: message.card.steps })}</span></div></div>
+          message.card.kind === 'skill' ? (
+            // 技能调用占位：图标+名称（用户补充文字照常显示），技能全文不显示在消息里
+            <div className="msg-card skill-card"><Puzzle size={14} /><div className="msg-card-body"><strong>/{message.card.name}</strong>{message.content && message.content !== `/${message.card.name}` && <span className="muted">{message.content}</span>}</div></div>
+          ) : (
+            <div className="msg-card"><Workflow size={14} /><div className="msg-card-body"><strong>{message.card.name}</strong><span className="muted">{tr('工作流 · 共 {steps} 步', { steps: message.card.steps })}</span></div></div>
+          )
         ) : (
           <>
             {message.images && message.images.length > 0 && (

@@ -6,7 +6,7 @@ const isoTime = z.string().datetime()
 
 export const providerKinds = ['openai-compatible', 'anthropic', 'ollama'] as const
 export const approvalModes = ['ask', 'auto-edit', 'full-auto'] as const
-export const toolNames = ['read_file', 'list_directory', 'search_files', 'write_file', 'edit_file', 'run_command', 'ask_user', 'manage_todos', 'delegate', 'github_push', 'browser_open', 'web_search', 'computer_use', 'generate_image', 'plugin_call', 'mcp_call', 'browser_navigate', 'browser_click', 'browser_type', 'browser_extract', 'browser_screenshot', 'browser_wait', 'browser_search', 'browser_tab', 'browser_crawl', 'browser_extract_links'] as const
+export const toolNames = ['read_file', 'list_directory', 'search_files', 'write_file', 'edit_file', 'run_command', 'ask_user', 'manage_todos', 'delegate', 'load_skill', 'create_workflow', 'github_push', 'browser_open', 'web_search', 'computer_use', 'generate_image', 'plugin_call', 'mcp_call', 'browser_navigate', 'browser_click', 'browser_type', 'browser_extract', 'browser_screenshot', 'browser_wait', 'browser_search', 'browser_tab', 'browser_crawl', 'browser_extract_links'] as const
 
 export const projectSchema = z.object({
   id: identifier,
@@ -352,12 +352,11 @@ export const toolResultSchema = z.object({
   durationMs: z.number().nonnegative().optional(),
 })
 
-export const messageCardSchema = z.object({
-  kind: z.literal('workflow'),
-  workflowId: identifier,
-  name: shortText,
-  steps: z.number().int().nonnegative(),
-})
+export const messageCardSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('workflow'), workflowId: identifier, name: shortText, steps: z.number().int().nonnegative() }),
+  // 技能调用占位卡：消息正文只显示图标+技能名（+用户补充），技能全文经 sendMessageInput.instruction 随首轮请求发送、不进历史
+  z.object({ kind: z.literal('skill'), skillId: identifier, name: shortText }),
+])
 
 export const messageImageSchema = z.object({
   dataUrl: z.string().max(15_000_000).regex(/^data:image\/(png|jpeg|jpg|gif|webp);base64,/, '仅支持 png / jpeg / gif / webp 图片'),
@@ -591,7 +590,7 @@ export const stateSchema = z.object({
 })
 
 export const createThreadInputSchema = z.object({ projectId: identifier, modelId: z.string().max(100), mode: z.enum(agentModes).optional() }).strict()
-export const sendMessageInputSchema = z.object({ threadId: identifier, content: z.string().trim().max(60_000), modelId: z.string().max(100).optional(), card: messageCardSchema.optional(), images: z.array(messageImageSchema).max(8).optional() }).strict().refine((value) => value.content.length > 0 || (value.images?.length ?? 0) > 0, { message: '请输入内容或添加图片' })
+export const sendMessageInputSchema = z.object({ threadId: identifier, content: z.string().trim().max(60_000), modelId: z.string().max(100).optional(), card: messageCardSchema.optional(), images: z.array(messageImageSchema).max(8).optional(), instruction: z.string().max(200_000).optional() }).strict().refine((value) => value.content.length > 0 || (value.images?.length ?? 0) > 0, { message: '请输入内容或添加图片' })
 export const regenerateMessageInputSchema = z.object({ threadId: identifier, messageId: identifier, modelId: z.string().max(100).optional() }).strict()
 export const rollbackMessageInputSchema = z.object({ threadId: identifier, messageId: identifier }).strict()
 export const deleteMessageInputSchema = z.object({ threadId: identifier, messageId: identifier }).strict()
@@ -710,7 +709,7 @@ export interface CubexAPI {
   getState: () => Promise<Result<AppState>>
   selectProject: () => Promise<Result<Project | null>>
   createThread: (input: { projectId: string; modelId: string; mode?: AgentMode }) => Promise<Result<Thread>>
-  sendMessage: (input: { threadId: string; content: string; modelId?: string; card?: MessageCard; images?: MessageImage[] }) => Promise<Result<void>>
+  sendMessage: (input: { threadId: string; content: string; modelId?: string; card?: MessageCard; images?: MessageImage[]; instruction?: string }) => Promise<Result<void>>
   regenerateMessage: (input: { threadId: string; messageId: string; modelId?: string }) => Promise<Result<void>>
   rollbackMessage: (input: { threadId: string; messageId: string }) => Promise<Result<void>>
   deleteMessage: (input: { threadId: string; messageId: string }) => Promise<Result<void>>

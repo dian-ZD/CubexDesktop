@@ -1,6 +1,14 @@
 # 记忆
 
-> 最后更新时间：2026-10-11 ｜ 更新者：AI Agent（0.3.3-dev 第七批：性能优化）
+> 最后更新时间：2026-10-11 ｜ 更新者：AI Agent（0.3.4-dev：版本发布 + CI）
+
+## 发布流程（0.3.4-dev 起）
+
+- **发版**：本地 `npm run dist` 出 Windows 包自测 → 提交推送 → `git tag v<版本> && git push origin v<版本>` → Actions（release.yml）在两个 runner 上构建并上传到 **draft Release**（需手动去 GitHub Releases 页面发布）。
+- Actions 里 Linux 冒烟用 xvfb；`CSC_IDENTITY_AUTO_DISCOVERY=false` 防无证书签名探测报错。
+- **Linux 现状**：能构建能跑；降级项——aoci（vendor 只有 aoci.exe，Linux 二进制未提供）、Wayland 截图、桌面操控（supported:false）。给 Linux 加 aoci 需在 vendor/aoci 放对应二进制并在 CI/打包时分平台。
+- workflow 首跑可能踩的坑：npm ci 要求 package-lock 与 package.json 同步（改版本号后记得 npm install 刷 lock）；ubuntu 缺 libarchive-tools 时 AppImage 工具会失败（workflow 已装）。
+
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 

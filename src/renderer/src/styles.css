@@ -3222,6 +3222,54 @@ textarea {
   font-size: 13.5px;
 }
 
+/* 技能调用占位卡：图标 + /技能名 + 用户补充一行展示 */
+.msg-card.skill-card .msg-card-body {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.msg-card.skill-card .msg-card-body strong {
+  color: var(--accent, var(--text));
+}
+
+/* 输入框内已挂载的技能占位 chip：图标 + /名称，可移除 */
+.composer-skill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin: 8px 12px 0;
+  padding: 4px 6px 4px 9px;
+  border-radius: 999px;
+  background: var(--accent-soft, var(--bg-elevated));
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--text);
+  max-width: calc(100% - 24px);
+}
+
+.composer-skill svg {
+  color: var(--accent, var(--text-dim));
+  flex-shrink: 0;
+}
+
+.composer-skill-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.composer-skill-remove:hover { background: var(--bg-hover); color: var(--text); }
+
 .msg-toolbar {
   display: flex;
   align-items: center;
