@@ -261,6 +261,14 @@ export const imageSettingsSchema = z.object({
   size: z.enum(imageSizes).default('1024x1024'),
 })
 
+export const videoSizes = ['1280x720', '1920x1080', '1024x1024', 'auto'] as const
+export const videoSettingsSchema = z.object({
+  providerId: z.string().max(100).default(''),
+  modelId: z.string().trim().max(160).default(''),
+  size: z.enum(videoSizes).default('1280x720'),
+  seconds: z.number().int().min(1).max(60).default(5),
+})
+
 export const automationSchedules = ['interval', 'daily', 'weekly'] as const
 
 export const automationSchema = z.object({
@@ -307,6 +315,7 @@ export const settingsSchema = z.object({
   floating: floatingSchema,
   speech: speechSchema,
   image: imageSettingsSchema,
+  video: videoSettingsSchema,
   beta: betaSchema,
   automations: z.array(automationSchema).max(30),
 }).superRefine((value, ctx) => {
@@ -474,7 +483,7 @@ export const threadSchema = z.object({
   subagentRuns: z.array(subagentRunSchema).max(64).optional(),
 })
 
-export const workflowNodeKinds = ['task', 'check', 'review', 'note', 'computer', 'browser', 'launch', 'command', 'search', 'file', 'git', 'plugin', 'mcp', 'wait', 'ask'] as const
+export const workflowNodeKinds = ['task', 'response', 'image', 'video', 'check', 'review', 'note', 'computer', 'browser', 'launch', 'command', 'search', 'file', 'git', 'plugin', 'mcp', 'wait', 'ask'] as const
 
 export const workflowNodeSchema = z.object({
   id: identifier,
@@ -724,6 +733,7 @@ export function defaultSettings(): Settings {
     browser: { homepage: '', stepApproval: true, leaseMinutes: 30, allowDownloads: false, allowNewWindows: false, userAgent: '', searchEngine: 'bing', searchTemplate: '', crawlMode: 'background', crawlPages: 8 },
     sound: { enabled: true, onDone: true, onApproval: true, onQuestion: true, volume: 0.5 },
     image: { providerId: '', modelId: '', size: '1024x1024' },
+    video: { providerId: '', modelId: '', size: '1280x720', seconds: 5 },
     beta: { tokenSaving: false, agentLoop: false },
     automations: [],
   }
@@ -769,6 +779,7 @@ export function migrateState(raw: unknown): unknown {
     floating: mergeGroup(floatingSchema, defaults.floating, legacy.floating),
     speech: mergeGroup(speechSchema, defaults.speech, legacy.speech),
     image: mergeGroup(imageSettingsSchema, defaults.image, legacy.image),
+    video: mergeGroup(videoSettingsSchema, defaults.video, legacy.video),
     beta: mergeGroup(betaSchema, defaults.beta, legacy.beta),
     automations: Array.isArray(legacy.automations)
       ? legacy.automations.flatMap((item) => {

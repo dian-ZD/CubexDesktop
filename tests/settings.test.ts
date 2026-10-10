@@ -65,6 +65,13 @@ describe('migrateState', () => {
     expect(stateSchema.safeParse({ ...state, settings: { ...state.settings, computer: { ...state.settings.computer, mode: 'nope' } } }).success).toBe(false)
   })
 
+  it('新的视频模型设置和 Work 专用节点类型可迁移并校验', () => {
+    const state = createInitialState()
+    expect(state.settings.video).toEqual({ providerId: '', modelId: '', size: '1280x720', seconds: 5 })
+    const restored = stateSchema.parse(migrateState({ ...state, settings: { ...state.settings, video: undefined } }))
+    expect(restored.settings.video).toEqual(state.settings.video)
+  })
+
   it('无法识别的数据原样返回', () => {
     expect(migrateState(null)).toBeNull()
     expect(migrateState({ version: 1 })).toEqual({ version: 1 })

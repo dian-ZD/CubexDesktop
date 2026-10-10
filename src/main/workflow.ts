@@ -30,6 +30,9 @@ export function orderWorkflowNodes(workflow: Workflow): WorkflowNode[] {
 }
 
 export const kindHints: Record<string, string> = {
+  response: '这是模型回复步骤：根据输入要求生成最终给用户看的文字回复，不要修改文件或调用无关工具。',
+  image: '这是生图步骤：使用已配置的图片模型生成图片；提示词应包含主体、风格、构图与用途。',
+  video: '这是生视频步骤：使用已配置的视频模型生成视频；提示词应包含主体动作、镜头、时长、画幅和风格。',
   check: '这是检查步骤：执行验证（如测试、构建或人工核对），如未通过请先修复再继续。',
   review: '这是审阅步骤：先总结前面步骤的产出，自查是否符合要求，指出问题后再继续。',
   computer: '这是电脑操控步骤：使用 computer_use 工具完成截屏、输入、按键或点击等操作来达成目标。',

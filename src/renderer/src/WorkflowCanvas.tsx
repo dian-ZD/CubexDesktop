@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, StickyNote, Terminal, Trash2, Undo2, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
+import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Project, Settings, Workflow, WorkflowNode, WorkflowNodeKind } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
@@ -17,6 +17,9 @@ const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.rand
 
 const kindMeta: Record<WorkflowNodeKind, { label: string; icon: LucideIcon; hint: string }> = {
   task: { label: '执行', icon: Zap, hint: '让 Cubex 完成一项具体工作' },
+  response: { label: '模型回复', icon: WorkflowIcon, hint: '让模型生成最终给用户看的文字回复' },
+  image: { label: '图片生成', icon: Image, hint: '使用已配置的图片模型生成图片' },
+  video: { label: '视频生成', icon: Video, hint: '使用已配置的视频模型生成视频' },
   check: { label: '检查', icon: ShieldCheck, hint: '运行测试或构建，验证前面步骤的结果' },
   review: { label: '审阅', icon: Eye, hint: '总结并自查前面步骤的产出' },
   note: { label: '备注', icon: StickyNote, hint: '仅作为背景信息，不会被执行' },

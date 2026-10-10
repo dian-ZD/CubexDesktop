@@ -1,10 +1,22 @@
 # 计划
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.2-dev：滑条可拖动 + 色彩条完整修复）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev：独立桌面生命周期 + 任务级悬浮窗 + 视频/图片/模型回复 Work 节点）
 >
 > 记录当前任务的拆解与进度。总目标见 goal.md，过程细节/决策见 memory.md。标记：`[ ]` 未开始 ｜ `[x]` 已完成 ｜ `[~]` 进行中。
 
 ## 当前阶段
+
+### 当前任务：0.3.3-dev（独立桌面清理 + 悬浮窗任务级常驻 + Work 专用节点 + 视频设置）
+
+- [x] 独立桌面生命周期：从「电脑操控模式」切回当前桌面（保存设置时）→ 关闭 `CubexAgent` 隔离桌面并停止镜像；操控任务结束（线程 idle 且无 pending/question/queue）→ 同样关闭隔离桌面与镜像，不再残留黑屏桌面。运行态 `controlThreadId` 与持久化设置分离。
+- [x] 悬浮窗任务级常驻：第一次真实浏览器/电脑操控弹出后不再随单次工具结束收起，直到用户手动关闭（关闭后该任务内不再自动弹出，手动重开解除抑制）或任务结束自动关闭；仅搜索/生图等后台操作不触发弹窗（排除 `正在生成图片：` 前缀的 computer 回调）。
+- [x] Work 模式新增节点类型 `response`（模型回复）、`image`（图片生成）、`video`（视频生成）：schema 枚举、画布 kindMeta 图标标签、`composeNodeInstruction`/`kindHints` 专用指令提示均已接入。
+- [x] 设置新增「视频生成 · 提供商」分组（`settings.video`：providerId / modelId / size / seconds），位于生图配置之后；schema 迁移 `mergeGroup(videoSettingsSchema, …)` 兼容旧 state.json，非法单项丢弃不重置整组。
+- [x] 队列消息溢出：`.queue-item` 补 `min-width: 0`，内容不再撑破容器。
+- [x] 内置技能 `builtin:work-builder`（生成 Work 工作流）：输入自然语言需求 → 输出严格 JSON（nodes/kinds/edges + 校验规则），指导在 Work 画布建节点连线；`/生成` 可在对话中调用。
+- [x] 英文词条：视频设置、Work 新节点、技能说明共 20+ 条已登记进 phrases。
+- [x] 校验：typecheck 通过、lint 0 error（既有 9 条 hooks warning）、测试 172 passed / 4 skipped（新增视频设置迁移 + Work 节点类型回归）。
+- [x] 打包 `release\Cubex Setup 0.3.3-dev.exe`（112,775,718 B，SHA256 F1208F06BE964798D108774B52526E9172D5D419F59E38209E2D0E94FD9A00B5）；首次 dist 因残留 Cubex.exe 占用 win-unpacked 失败（Access is denied），清进程后重跑成功；打包版桌面冒烟通过（smoke-ready）。
 
 ### 当前任务：0.3.2-dev 修补（滑条不可拖动 + 色彩条不完整）
 

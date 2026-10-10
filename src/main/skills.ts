@@ -59,6 +59,28 @@ const builtinSkills: SkillDetail[] = [
       '4. 给出一次示例调用与预期 stdout，并提示插件以用户权限运行本机命令、破坏性操作要走审批或自行确认。',
     ].join('\n'),
   },
+  {
+    id: 'builtin:work-builder',
+    name: '生成 Work 工作流',
+    description: '根据自然语言需求拆解并生成可执行的 Work 模式工作流',
+    builtin: true,
+    content: [
+      '请把用户的需求转换为 Cubex Work 模式画布工作流。先询问影响节点类型、工具权限或外部副作用的关键信息；其余细节使用合理默认值。',
+      '',
+      '输出严格 JSON，不要使用 Markdown 围栏：',
+      '{"name":"工作流名称","nodes":[{"title":"节点标题","kind":"task|response|image|video|check|review|note|computer|browser|launch|command|search|file|git|plugin|mcp|wait|ask","prompt":"该节点的具体指令"}],"edges":[{"from":0,"to":1}]}',
+      '',
+      '规则：',
+      '- 节点数不超过 20；edges 的 from/to 是 nodes 的从 0 开始序号。',
+      '- 将用户目标拆成有清晰输入和产出的步骤，添加验证步骤；仅需给最终文字时使用 response。',
+      '- 生图用 image，生视频用 video；不要把它们伪装成通用 task。提示词写明产出规格。',
+      '- 涉及电脑、浏览器、命令、文件写入、Git 推送或外部服务等副作用时，明确标出并安排必要确认。',
+      '- 不需要执行的上下文写入 note 节点；不要创建空指令。',
+      '- 输出前检查节点引用、连线无环、所有节点 prompt 非空。',
+      '',
+      '生成 JSON 后，说明如何按顺序在 Work 画布中建立节点并连线。',
+    ].join('\n'),
+  },
 ]
 
 function slugify(name: string): string {

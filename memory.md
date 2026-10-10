@@ -1,8 +1,16 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.2-dev：滑条可拖动 + 色彩条完整修复）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev：独立桌面生命周期 + 任务级悬浮窗 + Work 专用节点 + 视频设置）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 2026-10-10 独立桌面生命周期 / 任务级悬浮窗 / Work 专用节点
+
+- **独立桌面清理时机**：`saveSettings` 里比较保存前后的 `computer.mode`，从 `isolated` 切走 → `closeIsolatedDesktop` + `stopDesktopMirror`；`publish()` 的 setImmediate 回调里检查 `controlThreadId` 对应线程 `status === 'idle'` 且无 pending/question/queue → 同样清理。运行态跟踪（`controlThreadId`/`floatingSuppressedThreadId`）与持久化设置彻底分离，重启后不残留。
+- **悬浮窗任务级常驻**：`onControl` 的 `{active:false}` 不再触发收起；只按线程结束判定收起。用户手动关闭（`closeFloatingWindow` IPC）记录 `floatingSuppressedThreadId`，同任务后续工具不再自动弹出；手动重开（force）清除抑制。触发判定 `isInteractiveControl`：`kind === 'browser'` 或非「正在生成图片：」前缀的 computer 回调——扩展层把生图也走 computer 通道，靠 label 前缀排除，这是脆弱耦合，若 extensions.ts 改 label 需同步。
+- **Work 新节点**：`workflowNodeKinds` 增加 `response`/`image`/`video`（位于 task 之后）；WorkflowCanvas kindMeta 用 lucide `Image`/`Video` 图标（注意别与 DOM Image 冲突）；`kindHints` 提供专用指令提示。视频生成目前只到「配置 + 节点提示」层，未接真实视频 API（无统一协议），节点执行时模型按提示词编排。
+- **settings.video 迁移**：仿 image 用 `mergeGroup(videoSettingsSchema, defaults.video, legacy.video)`，旧 state.json 无该键时安全补默认值；测试在 settings.test.ts 与 p9.test.ts 各加断言。
+- **打包坑**：dist 清空 `release\win-unpacked` 报 Access is denied = 上一轮冒烟/实测的 Cubex.exe 还在跑，`Get-Process Cubex | Stop-Process -Force` 后重跑即可。另：dist 脚本是 `typecheck && electron-vite build && electron-builder`，electron-builder 读 package.json 在 vite build 之后，中途改版本号来得及（本次 0.3.2→0.3.3 即如此）。
 
 ## 技术栈与约定
 

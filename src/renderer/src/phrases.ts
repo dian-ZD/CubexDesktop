@@ -1057,6 +1057,12 @@ const skillPhrases: Record<string, string> = {
 }
 
 const workflowPhrases: Record<string, string> = {
+  '模型回复': 'Model response',
+  '让模型生成最终给用户看的文字回复': 'Generate the final text response for the user',
+  '图片生成': 'Image generation',
+  '使用已配置的图片模型生成图片': 'Generate an image with the configured image model',
+  '视频生成': 'Video generation',
+  '使用已配置的视频模型生成视频': 'Generate a video with the configured video model',
   '工作流进度': 'Workflow progress',
   '运行中': 'Running',
   '已暂停': 'Paused',
@@ -1082,6 +1088,23 @@ const betaPhrases: Record<string, string> = {
 
 // 零散补充词条：逐个功能轮次新增的文案统一放这里，避免回头改前面的 Record。
 const miscPhrases: Record<string, string> = {
+  '视频生成 · 提供商': 'Video generation · Provider',
+  '配置视频模型的提供商与模型参数，供 Work 模式的视频生成模块使用': 'Configure the provider and model parameters used by the Work mode video generation module',
+  '视频生成提供商': 'Video generation provider',
+  '视频生成模型 ID': 'Video generation model ID',
+  '视频模型名称，例如 sora、veo 或服务商提供的模型 ID': 'Video model name, such as sora, veo, or a model ID from your provider',
+  '视频默认画幅': 'Default video aspect size',
+  'Work 模式视频生成模块的默认画幅': 'Default frame size for the Work mode video generation module',
+  '默认画幅': 'Default frame size',
+  '视频默认时长': 'Default video duration',
+  'Work 模式视频生成模块的默认时长，1–60 秒': 'Default duration for the Work mode video generation module, 1–60 seconds',
+  '默认时长': 'Default duration',
+  '秒': 'sec',
+  '模型回复步骤：根据输入要求生成最终给用户看的文字回复，不要修改文件或调用无关工具。': 'Model response step: generate the final user-facing text from the input without modifying files or calling unrelated tools.',
+  '图片生成步骤：使用已配置的图片模型生成图片；提示词应包含主体、风格、构图与用途。': 'Image generation step: use the configured image model; include subject, style, composition, and intended use in the prompt.',
+  '视频生成步骤：使用已配置的视频模型生成视频；提示词应包含主体动作、镜头、时长、画幅和风格。': 'Video generation step: use the configured video model; include subject motion, camera, duration, frame size, and style in the prompt.',
+  '生成 Work 工作流': 'Generate Work workflow',
+  '根据自然语言需求拆解并生成可执行的 Work 模式工作流': 'Break down a natural-language request into an executable Work mode workflow',
   '读取 {path}': 'Read {path}',
   '列出 {path}': 'List {path}',
   '搜索 {pattern}': 'Search {pattern}',

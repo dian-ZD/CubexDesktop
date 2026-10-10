@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Archive, ArchiveRestore, ArrowLeft, BookOpen, Check, ChevronDown, ChevronRight, CloudUpload, Copy, Cpu, FlaskConical, FolderOpen, GitBranch, Globe, Info, KeyRound, Keyboard, LoaderCircle, MonitorCog, PictureInPicture, Play, PlugZap, Plus, Puzzle, RefreshCw, Search, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, Star, Timer, Trash2, Upload, X } from 'lucide-react'
 import {
-  accents, approvalLabels, approvalModes, computerModes, densities, fontFamilies, imageSizes, languages, providerKinds, providerLabels, responseStyles, searchEngines, sendKeys, settingsSchema, shells, speechDownloadHostLabels, speechDownloadSourceLabels, speechDownloadSources, speechModels, thinkingLevelLabels, themes, uiLanguages,
+  accents, approvalLabels, approvalModes, computerModes, densities, fontFamilies, imageSizes, languages, providerKinds, providerLabels, responseStyles, searchEngines, sendKeys, settingsSchema, shells, speechDownloadHostLabels, speechDownloadSourceLabels, speechDownloadSources, speechModels, thinkingLevelLabels, themes, uiLanguages, videoSizes,
   type Automation, type ConnectionTest, type CrawlMode, type DiscoveredModelInfo, type McpServer, type McpStatus, type ModelConfig, type ModelParams, type PluginInfo, type Project, type ProviderConfig, type SearchEngine, type Settings, type SkillMeta, type Workflow as WorkflowType,
 } from '../../shared/schema'
 import { nextRunAt, weekdayNames } from '../../shared/schedule'
@@ -141,7 +141,7 @@ const hiddenSections = new Set<SectionId>(sections.filter((item) => item.hidden)
 
 const sectionPrefixes: Partial<Record<SectionId, string[]>> = {
   general: ['general.uiLanguage', 'general.language', 'general.responseStyle', 'general.confirmDelete', 'appearance', 'chat.showUsage', 'chat.expandTools', 'chat.autoScroll', 'chat.notifyOnDone', 'sound', 'speech'],
-  providers: ['providers', 'models', 'defaultModelId', 'modelParams', 'image'],
+  providers: ['providers', 'models', 'defaultModelId', 'modelParams', 'image', 'video'],
   permissions: ['permissions', 'approvalMode'],
   computer: ['computer'],
   floating: ['floating'],
@@ -685,7 +685,7 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
     setDraft(updater)
   }
 
-  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'browser' | 'sound' | 'image' | 'beta'>(group: K, value: Partial<Settings[K]>) =>
+  const patch = <K extends 'general' | 'appearance' | 'modelParams' | 'agent' | 'permissions' | 'chat' | 'github' | 'plugins' | 'work' | 'browser' | 'sound' | 'image' | 'video' | 'beta'>(group: K, value: Partial<Settings[K]>) =>
     edit((current) => ({ ...current, [group]: { ...current[group], ...value } }))
 
   const pickBackground = () => {
@@ -1069,6 +1069,14 @@ export function SettingsPanel({ settings, projects = [], workflows = [], onError
         <p>{tr('接口为 OpenAI 兼容的 POST /images/generations，支持返回 b64_json 或 url 两种格式；可在「插件」分区关闭该功能。')}</p>
       </div>
     ) },
+    { key: 'videoProvider', section: 'providers', label: tr('视频生成 · 提供商'), hint: tr('配置视频模型的提供商与模型参数，供 Work 模式的视频生成模块使用'), keywords: 'video provider 视频 生成 提供商', wide: true, paths: ['video.providerId'], render: () => (
+      <Select className="field-select" label={tr('视频生成提供商')} value={draft.video.providerId}
+        options={draft.providers.length === 0 ? [{ value: '', label: tr('请先在上方添加提供商') }] : [{ value: '', label: tr('未选择') }, ...draft.providers.map((item) => ({ value: item.id, label: item.name }))]}
+        onChange={(providerId) => patch('video', { providerId })} />
+    ) },
+    { key: 'videoModel', section: 'providers', label: tr('视频生成模型 ID'), hint: tr('视频模型名称，例如 sora、veo 或服务商提供的模型 ID'), keywords: 'video model 视频 模型 id', paths: ['video.modelId'], render: () => <input aria-label={tr('视频生成模型 ID')} value={draft.video.modelId} placeholder="sora" spellCheck={false} onChange={(event) => patch('video', { modelId: event.target.value })} /> },
+    { key: 'videoSize', section: 'providers', label: tr('视频默认画幅'), hint: tr('Work 模式视频生成模块的默认画幅'), keywords: 'video size 视频 尺寸 画幅', paths: ['video.size'], render: () => <Select className="field-select" label={tr('默认画幅')} value={draft.video.size} options={videoSizes.map((size) => ({ value: size, label: size === 'auto' ? tr('自动（模型决定）') : size }))} onChange={(size) => patch('video', { size })} /> },
+    { key: 'videoSeconds', section: 'providers', label: tr('视频默认时长'), hint: tr('Work 模式视频生成模块的默认时长，1–60 秒'), keywords: 'video seconds 视频 时长', paths: ['video.seconds'], render: () => <NumberField label={tr('默认时长')} value={draft.video.seconds} min={1} max={60} unit={tr('秒')} onChange={(seconds) => patch('video', { seconds: seconds ?? Number.NaN })} /> },
 
     { key: 'plugins', section: 'plugins', label: tr('已安装插件'), hint: tr('内置浏览器与电脑控制插件，以及插件目录中你自己编写的插件；启用后其工具会提供给模型'), keywords: 'plugin browser computer 浏览器 电脑 控制 插件 扩展', wide: true, render: () => renderPlugins() },
     { key: 'pluginDev', section: 'plugins', label: tr('编写插件'), hint: tr('在插件目录中新建文件夹，放入 plugin.json 与入口脚本即可'), keywords: 'plugin develop 开发 编写 接口 manifest', wide: true, render: () => (

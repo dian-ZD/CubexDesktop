@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type McpServer, type Result, type StreamDelta, type Thread } from '../shared/schema'
 import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
-import { captureIsolatedDesktop, ISOLATED_DESKTOP_NAME } from './computer'
+import { captureIsolatedDesktop, closeIsolatedDesktop, ISOLATED_DESKTOP_NAME } from './computer'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, saveProjectFile, runShellCommand } from './tools'
@@ -29,6 +29,8 @@ const skills = new SkillStore(join(app.getPath('userData'), 'skills'))
 let mainWindow: BrowserWindow | null = null
 let panelWindow: BrowserWindow | null = null
 let floatingWindow: BrowserWindow | null = null
+let controlThreadId: string | null = null
+let floatingSuppressedThreadId: string | null = null
 
 let appIcon: Electron.NativeImage | null = null
 
@@ -85,14 +87,17 @@ const extensions = new ExtensionHost({
     const payload: ControlState = control.active ? control : { active: false }
     controlActive = control.active
     for (const win of liveWindows()) win.webContents.send(channels.control, payload)
-    // 任务开始操控浏览器/电脑（也就是原生视图会盖住应用界面）时弹出右下角悬浮窗，
-    // 让用户既能盯着主界面，也能随时看到进度并插话；操控一结束就收起来，不长期占屏。
+    // 任务第一次操控浏览器/电脑时弹出右下角悬浮窗；同一任务后续工具调用不再闪退。
     if (control.active) {
       const settings = store.get().settings
-      if (settings.floating.autoShow) openFloatingWindow()
-      if (settings.computer.mode === 'isolated' && settings.computer.mirror && !mirrorTimer) startDesktopMirror(ISOLATED_DESKTOP_NAME)
-    } else {
-      releaseControlFloating()
+      const isInteractiveControl = control.kind === 'browser' || (control.kind === 'computer' && !control.label.startsWith('正在生成图片：'))
+      if (settings.floating.autoShow && floatingSuppressedThreadId !== control.threadId && isInteractiveControl) {
+        openFloatingWindow({ threadId: control.threadId })
+      }
+      if (isInteractiveControl) {
+        controlThreadId = control.threadId
+        if (settings.computer.mode === 'isolated' && settings.computer.mirror && !mirrorTimer) startDesktopMirror(ISOLATED_DESKTOP_NAME)
+      }
     }
   },
 })
@@ -191,6 +196,16 @@ function publish() {
     publishPending = false
     // 透明度/主题改动要立刻作用到悬浮窗，否则设置里拖了滑条窗口没反应。
     applyFloatingOpacity()
+    if (controlThreadId) {
+      const thread = store.get().threads.find((item) => item.id === controlThreadId)
+      if (!thread || (thread.status === 'idle' && !thread.pending && !thread.question && !(thread.queue?.length))) {
+        controlThreadId = null
+        floatingSuppressedThreadId = null
+        if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.close()
+        stopDesktopMirror()
+        void closeIsolatedDesktop(ISOLATED_DESKTOP_NAME)
+      }
+    }
     const payload = withKeys(store.get())
     for (const win of liveWindows()) win.webContents.send(channels.state, payload)
   })
@@ -328,21 +343,18 @@ function applyFloatingOpacity(): void {
   floatingWindow.setBackgroundColor(floatingBackgroundColor())
 }
 
-// 悬浮窗与镜像只在「任务正在操控浏览器/电脑（原生视图会盖住应用界面）」期间存在。
+// 操控态按整个 agent 任务跟踪，工具调用之间不收起悬浮窗。
 let controlActive = false
-// 标记悬浮窗是否由「任务正在操控浏览器/电脑」自动弹出：只有这种才在操控结束时自动关闭，
-// 用户手动打开的（force）会保留到他自己关掉。
-let floatingAuto = false
 
-function openFloatingWindow(options: { force?: boolean } = {}): void {
+function openFloatingWindow(options: { force?: boolean; threadId?: string } = {}): void {
   const settings = store.get().settings
   if (!options.force && !settings.floating.autoShow) return
+  if (options.force) floatingSuppressedThreadId = null
   if (floatingWindow && !floatingWindow.isDestroyed()) {
     floatingWindow.showInactive()
     return
   }
   const slot = floatingSlot()
-  floatingAuto = !options.force
   floatingWindow = new BrowserWindow({
     width: FLOATING_WIDTH,
     height: FLOATING_HEIGHT,
@@ -370,19 +382,10 @@ function openFloatingWindow(options: { force?: boolean } = {}): void {
 }
 
 function closeFloatingWindow(): void {
+  if (controlThreadId) floatingSuppressedThreadId = controlThreadId
   if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.close()
   floatingWindow = null
-  floatingAuto = false
   stopDesktopMirror()
-}
-
-/** 任务结束操控浏览器/电脑时收起源自动弹出的悬浮窗与镜像，避免长期占屏。 */
-function releaseControlFloating(): void {
-  stopDesktopMirror()
-  if (!floatingAuto) return
-  floatingAuto = false
-  if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.close()
-  floatingWindow = null
 }
 
 let mirrorTimer: NodeJS.Timeout | null = null
@@ -731,11 +734,16 @@ function registerIpc() {
   handle(channels.saveSettings, async (_event, payload) => {
     const settings = settingsSchema.parse(payload)
     settings.github.hasToken = secrets.has(GITHUB_SECRET)
+    const previousMode = store.get().settings.computer.mode
     await store.update((state) => {
       const previous = new Map(state.settings.automations.map((item) => [item.id, item.lastRun]))
       settings.automations = settings.automations.map((item) => ({ ...item, lastRun: previous.get(item.id) ?? item.lastRun }))
       state.settings = settings
     })
+    if (previousMode === 'isolated' && settings.computer.mode !== 'isolated') {
+      await closeIsolatedDesktop(ISOLATED_DESKTOP_NAME)
+      stopDesktopMirror()
+    }
     await secrets.prune(new Set([...settings.providers.map((provider) => provider.id), GITHUB_SECRET]))
     mcp.sync(await syncAoci())
     browserEngine.setOptions({ allowDownloads: settings.browser.allowDownloads, allowNewWindows: settings.browser.allowNewWindows, userAgent: settings.browser.userAgent, homepage: settings.browser.homepage })

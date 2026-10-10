@@ -3957,6 +3957,7 @@ pre.diff .hunk {
   background: var(--bg-elevated);
   color: var(--text-dim);
   font-size: 13px;
+  min-width: 0;
   animation: rise 160ms ease-out;
 }
 
