@@ -53,7 +53,7 @@ const api: CubexAPI = {
     id: workflow.id,
     projectId: workflow.projectId,
     name: workflow.name,
-    nodes: workflow.nodes.map((node) => ({ id: node.id, title: node.title, prompt: node.prompt, x: node.x, y: node.y, ...(node.kind ? { kind: node.kind } : {}) })),
+    nodes: workflow.nodes.map((node) => ({ id: node.id, title: node.title, prompt: node.prompt, x: node.x, y: node.y, ...(node.kind ? { kind: node.kind } : {}), ...(node.config && Object.values(node.config).some((value) => value.trim()) ? { config: node.config } : {}) })),
     edges: workflow.edges.map((edge) => ({ from: edge.from, to: edge.to })),
     updatedAt: workflow.updatedAt,
   }),

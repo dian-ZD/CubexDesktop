@@ -135,7 +135,7 @@ export class WorkflowRunner {
 
       let outcome: NodeRunOutcome = { ok: false, error: '节点未执行' }
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const instruction = composeNodeInstruction({ workflowName: run.name, index, total, title: node.title, kind: node.kind, prompt: node.prompt, upstream, completed, notes })
+        const instruction = composeNodeInstruction({ workflowName: run.name, index, total, title: node.title, kind: node.kind, prompt: node.prompt, config: node.config, upstream, completed, notes })
         try {
           outcome = await this.runner.runNode(threadId, instruction, {
             index,

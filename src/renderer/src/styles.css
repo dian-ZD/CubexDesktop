@@ -6353,6 +6353,21 @@ textarea:focus-visible {
   font-size: 14px;
 }
 
+/* 节点专属配置区：类型化字段（文本/下拉/多行），与通用指令区分 */
+.work-node-config {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+}
+
+.work-node-config > strong {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
 .work-inspector .field.grow {
   flex: 1;
 }

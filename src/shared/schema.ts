@@ -492,7 +492,85 @@ export const workflowNodeSchema = z.object({
   x: z.number().min(-10_000).max(10_000),
   y: z.number().min(-10_000).max(10_000),
   kind: z.enum(workflowNodeKinds).optional(),
+  config: z.record(z.string().max(60), z.string().max(4000)).optional(),
 })
+
+/** 每种节点类型专属的可配置项（UI 表单与指令拼装共用这一份定义）。值为字符串，select 的取值即 options。 */
+export interface NodeConfigField {
+  key: string
+  label: string
+  type: 'text' | 'textarea' | 'select'
+  placeholder?: string
+  options?: string[]
+  hint?: string
+}
+
+export const nodeConfigFields: Record<WorkflowNodeKind, NodeConfigField[]> = {
+  task: [],
+  response: [
+    { key: 'format', label: '输出格式', type: 'select', options: ['自动', 'Markdown', '纯文本', '分点列表', '表格'] },
+    { key: 'audience', label: '面向对象', type: 'text', placeholder: '如：非技术用户 / 团队评审' },
+  ],
+  image: [
+    { key: 'size', label: '图片尺寸', type: 'select', options: ['默认', '1024x1024', '1024x1536', '1536x1024', '512x512', '768x768'] },
+    { key: 'count', label: '生成数量', type: 'text', placeholder: '如 1（默认）' },
+  ],
+  video: [
+    { key: 'size', label: '视频画幅', type: 'select', options: ['默认', '1280x720', '1920x1080', '1024x1024'] },
+    { key: 'seconds', label: '时长（秒）', type: 'text', placeholder: '如 5（默认）' },
+  ],
+  check: [
+    { key: 'command', label: '检查命令', type: 'text', placeholder: '如 npm test / npm run build' },
+    { key: 'onFail', label: '失败时', type: 'select', options: ['修复后继续', '停止工作流', '跳过并继续'] },
+  ],
+  review: [
+    { key: 'focus', label: '审查重点', type: 'textarea', placeholder: '如：正确性、边界条件、安全' },
+    { key: 'scope', label: '审查范围', type: 'text', placeholder: '如：上游步骤改动的文件' },
+  ],
+  note: [],
+  computer: [
+    { key: 'window', label: '目标窗口标题', type: 'text', placeholder: '独立桌面模式下需要' },
+    { key: 'actions', label: '要执行的操作', type: 'textarea', placeholder: '如：点击 (300,400)，输入文字，回车' },
+  ],
+  browser: [
+    { key: 'url', label: '网址', type: 'text', placeholder: 'https://…' },
+    { key: 'extract', label: '要提取的内容', type: 'text', placeholder: '如：商品价格与标题' },
+  ],
+  launch: [
+    { key: 'target', label: '打开目标', type: 'text', placeholder: '应用名 / 文件路径 / 网址' },
+  ],
+  command: [
+    { key: 'command', label: '命令', type: 'text', placeholder: '如 npm run lint' },
+    { key: 'cwd', label: '工作目录', type: 'text', placeholder: '留空为项目根目录' },
+  ],
+  search: [
+    { key: 'query', label: '搜索关键词', type: 'text', placeholder: '如：处理配置的函数' },
+    { key: 'scope', label: '搜索范围', type: 'text', placeholder: '如：src/ 目录' },
+  ],
+  file: [
+    { key: 'path', label: '文件路径', type: 'text', placeholder: '相对项目根目录' },
+    { key: 'action', label: '操作', type: 'select', options: ['自动', '读取', '创建', '编辑'] },
+  ],
+  git: [
+    { key: 'message', label: '提交信息', type: 'text', placeholder: '一句话概括改动' },
+    { key: 'push', label: '是否推送', type: 'select', options: ['提交并推送', '仅提交'] },
+  ],
+  plugin: [
+    { key: 'plugin', label: '插件名称', type: 'text', placeholder: '如：image' },
+    { key: 'tool', label: '工具名称', type: 'text', placeholder: '留空由模型选择' },
+  ],
+  mcp: [
+    { key: 'server', label: 'MCP 服务器', type: 'text', placeholder: '如：aoci' },
+    { key: 'tool', label: '工具名称', type: 'text', placeholder: '留空由模型选择' },
+  ],
+  wait: [
+    { key: 'condition', label: '等待条件', type: 'textarea', placeholder: '如：上一步的构建产物已生成' },
+  ],
+  ask: [
+    { key: 'question', label: '问题', type: 'text', placeholder: '要向用户确认的问题' },
+    { key: 'options', label: '候选选项', type: 'text', placeholder: '用顿号分隔，如：方案A、方案B' },
+  ],
+}
 
 export const workflowSchema = z.object({
   id: identifier,

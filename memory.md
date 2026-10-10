@@ -1,8 +1,15 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第三批：subagent 主动委派提示）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第四批：Work 节点类型专属配置）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 2026-10-10 Work 节点类型专属配置
+
+- **设计**：`nodeConfigFields: Record<WorkflowNodeKind, NodeConfigField[]>` 定义在 `src/shared/schema.ts`（单一来源）；节点带可选 `config: Record<string, string>`（值全字符串，select 的取值即 options 文本，'默认' 等哨兵值存空串省略）。改动新增类型时必须同步补 nodeConfigFields（TS Record 强制，漏了编译不过——这是有意的）。
+- **三处消费**：① WorkflowCanvas 检查器按 fields 画表单（text/textarea/select）；② 画布节点卡片正文显示已填配置摘要；③ `composeNodeInstruction` 注入「## 本步参数（画布配置，必须遵守）」块。AI 生成工作流的 `layout()` 也按 fields 白名单过滤模型输出 config。
+- **preload 序列化**：saveWorkflow 的 nodes map 需要显式透传 config（全空省略）——preload 是手写映射不是 spread，新增节点字段都要在这里加。
+- **教训**：值统一用字符串（而不是 number/boolean）让 schema 最简（`z.record(z.string(), z.string())`），数量/时长等数值由指令层语义传达，不需要类型转换链。
 
 ## 2026-10-10 让 Cubex 学会用 subagent
 

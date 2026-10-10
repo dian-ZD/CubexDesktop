@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SkillStore } from '../src/main/skills'
 import { layout, extractJson } from '../src/main/workflowGenerate'
+import { composeNodeInstruction } from '../src/main/workflow'
 
 describe('SkillStore（Agent Skills 标准目录式）', () => {
   let dir: string
@@ -91,5 +92,26 @@ describe('工作流生成（workflowGenerate）', () => {
     const workflow = layout('p1', { nodes: [{ title: 'a', prompt: 'x', kind: 'bogus' }, { title: 'b', prompt: 'y' }], edges: [{ from: 0, to: 99 }] })
     expect(workflow.nodes[0].kind).toBeUndefined() // 未知类型回落为 task（无 kind 字段）
     expect(workflow.edges).toHaveLength(1) // 0→1 越界被丢弃后自动串链
+  })
+
+  it('layout 保留模型输出的合法 config，丢弃未知字段与空值', () => {
+    const workflow = layout('p1', {
+      nodes: [{ title: '查价', kind: 'browser', prompt: '打开页面查价格', config: { url: ' https://example.com ', extract: '价格', bogus: 'x', other: '  ' } }],
+    })
+    expect(workflow.nodes[0].config).toEqual({ url: 'https://example.com', extract: '价格' })
+  })
+
+  it('composeNodeInstruction 把画布配置作为「本步参数」注入', () => {
+    const instruction = composeNodeInstruction({
+      workflowName: '演示', index: 1, total: 1, title: '查价', kind: 'browser', prompt: '打开页面查价格',
+      config: { url: 'https://example.com', extract: '价格' },
+      upstream: [], completed: [], notes: [],
+    })
+    expect(instruction).toContain('本步参数（画布配置，必须遵守）')
+    expect(instruction).toContain('网址：https://example.com')
+    expect(instruction).toContain('要提取的内容：价格')
+    // 无配置时不出现参数块
+    const bare = composeNodeInstruction({ workflowName: '演示', index: 1, total: 1, title: 'a', prompt: 'x', upstream: [], completed: [], notes: [] })
+    expect(bare).not.toContain('本步参数')
   })
 })

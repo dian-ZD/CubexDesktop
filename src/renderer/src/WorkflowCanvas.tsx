@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, Sparkles, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Project, Settings, Workflow, WorkflowNode, WorkflowNodeKind } from '../../shared/schema'
+import { nodeConfigFields } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
 import { Select, useUi } from './ui'
 import { useI18n } from './i18n'
@@ -574,7 +575,11 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
                         <span className="truncate">{item.title}</span>
                         <Icon size={12} className="work-node-kind" aria-label={tr(kindMeta[kind].label)} />
                       </div>
-                      <p className="work-node-body" onClick={() => setSelected(item.id)}>{item.prompt.trim() || tr('点击填写内容…')}</p>
+                      <p className="work-node-body" onClick={() => setSelected(item.id)}>{(() => {
+                        const filled = nodeConfigFields[kind].filter((field) => (item.config?.[field.key] ?? '').trim())
+                        const summary = filled.length ? filled.map((field) => `${tr(field.label)}：${item.config![field.key]!.trim()}`).join('；') : ''
+                        return summary || item.prompt.trim() || tr('点击填写内容…')
+                      })()}</p>
                       <button type="button" className={`work-port out${linking === item.id ? ' active' : ''}`} aria-label={tr('从 {title} 连线', { title: item.title })} title={tr('拖出连线：点击后再点击目标节点左侧圆点')} onClick={() => setLinking((current) => current === item.id ? null : item.id)} />
                     </div>
                   )
@@ -592,6 +597,36 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
                 </div>
                 <p className="hint">{tr(kindMeta[kindOf(node)].hint)}</p>
                 <label className="field"><span>{tr('标题')}</span><input value={node.title} maxLength={120} onChange={(event) => updateNode(node.id, { title: event.target.value })} /></label>
+                {nodeConfigFields[kindOf(node)].length > 0 && (
+                  <div className="work-node-config">
+                    <strong>{tr('专属配置')}</strong>
+                    {nodeConfigFields[kindOf(node)].map((field) => {
+                      const value = node.config?.[field.key] ?? ''
+                      const setConfig = (next: string) => updateNode(node.id, { config: { ...(node.config ?? {}), [field.key]: next } })
+                      if (field.type === 'select') {
+                        return (
+                          <label className="field" key={field.key}><span>{tr(field.label)}</span>
+                            <Select className="field-select" label={tr(field.label)} value={value}
+                              options={field.options!.map((option) => ({ value: option, label: tr(option) }))}
+                              onChange={(option) => { snapshot(); setConfig(option === tr('默认') || option === '默认' ? '' : option) }} />
+                          </label>
+                        )
+                      }
+                      if (field.type === 'textarea') {
+                        return (
+                          <label className="field" key={field.key}><span>{tr(field.label)}</span>
+                            <textarea value={value} maxLength={4000} placeholder={field.placeholder ? tr(field.placeholder) : undefined} onChange={(event) => setConfig(event.target.value)} />
+                          </label>
+                        )
+                      }
+                      return (
+                        <label className="field" key={field.key}><span>{tr(field.label)}</span>
+                          <input value={value} maxLength={4000} placeholder={field.placeholder ? tr(field.placeholder) : undefined} onChange={(event) => setConfig(event.target.value)} />
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
                 <label className="field grow"><span>{kindOf(node) === 'note' ? tr('备注内容') : tr('指令')}</span><textarea value={node.prompt} maxLength={8000} placeholder={kindOf(node) === 'note' ? tr('写下要让 Cubex 参考的背景信息…') : tr('描述这一步要让 Cubex 完成什么…')} onChange={(event) => updateNode(node.id, { prompt: event.target.value })} /></label>
                 <div className="work-node-actions">
                   <button className="btn-secondary" onClick={() => duplicateNode(node.id)} disabled={draft.nodes.length >= 20}><Copy size={14} />{tr('复制')}</button>

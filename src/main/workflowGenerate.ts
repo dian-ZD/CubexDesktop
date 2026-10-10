@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { workflowNodeKinds, workflowSchema, type Message, type Settings, type Workflow, type WorkflowNodeKind } from '../shared/schema'
+import { workflowNodeKinds, nodeConfigFields, workflowSchema, type Message, type Settings, type Workflow, type WorkflowNodeKind } from '../shared/schema'
 import { streamChat } from './llm'
 
 /** 让 LLM 把自然语言需求转成 Work 画布工作流的提示词；输出严格 JSON。 */
@@ -7,11 +7,12 @@ const GENERATE_SYSTEM = [
   '你是 CubexDesktop Work 模式的工作流编排器。把用户需求拆解为可依次执行的节点工作流。',
   '',
   '输出严格 JSON，不要任何解释文字、不要 Markdown 围栏：',
-  '{"name":"工作流名称","nodes":[{"title":"节点标题","kind":"task|response|image|video|check|review|note|computer|browser|launch|command|search|file|git|plugin|mcp|wait|ask","prompt":"该节点的具体指令"}],"edges":[{"from":0,"to":1}]}',
+  '{"name":"工作流名称","nodes":[{"title":"节点标题","kind":"task|response|image|video|check|review|note|computer|browser|launch|command|search|file|git|plugin|mcp|wait|ask","prompt":"该节点的具体指令","config":{}}],"edges":[{"from":0,"to":1}]}',
   '',
   '规则：',
   '- 节点数 1–20；edges 的 from/to 是 nodes 从 0 开始的序号；连线不得成环。',
   '- 每个节点 prompt 非空且自包含（写清输入、动作与期望产出）。',
+  '- config 是节点类型的专属参数（可选）：browser 填 url/extract；command 填 command；git 填 message/push；search 填 query/scope；file 填 path/action；image 填 size/count；video 填 size/seconds；check 填 command/onFail；ask 填 question/options；launch 填 target；其余类型可留空对象。确定的具体参数放 config 而不是 prompt。',
   '- 把目标拆成有清晰输入与产出的步骤，并在关键改动后安排 check/review 验证步骤。',
   '- 只需要产出最终给用户看的文字时用 response；生图用 image；生视频用 video，不要伪装成 task。',
   '- 涉及电脑、浏览器、命令、文件写入、Git 推送等副作用时用对应专用类型，prompt 中写明确认与安全要求。',
@@ -35,14 +36,22 @@ export function layout(projectId: string, generated: { name?: unknown; nodes?: u
   if (!Array.isArray(generated.nodes) || generated.nodes.length === 0) throw new Error('生成的工作流没有任何节点')
   if (generated.nodes.length > 20) throw new Error('生成的工作流超过 20 个节点，请简化需求')
   const nodes = generated.nodes.map((raw, index) => {
-    const item = raw as { title?: unknown; kind?: unknown; prompt?: unknown }
+    const item = raw as { title?: unknown; kind?: unknown; prompt?: unknown; config?: unknown }
     const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim().slice(0, 60) : `步骤 ${index + 1}`
     const prompt = typeof item.prompt === 'string' ? item.prompt.trim().slice(0, 8000) : ''
     if (!prompt) throw new Error(`节点「${title}」没有填写指令，请重试生成`)
     const kind = typeof item.kind === 'string' && allowedKinds.has(item.kind) ? item.kind as WorkflowNodeKind : 'task'
+    // config：只保留该类型已定义字段里的非空字符串值
+    const config: Record<string, string> = {}
+    if (item.config && typeof item.config === 'object' && !Array.isArray(item.config)) {
+      for (const field of nodeConfigFields[kind]) {
+        const value = (item.config as Record<string, unknown>)[field.key]
+        if (typeof value === 'string' && value.trim()) config[field.key] = value.trim().slice(0, 4000)
+      }
+    }
     const x = 80 + Math.floor(index / 4) * 300
     const y = 80 + (index % 4) * 160
-    return { id: `node-${randomUUID().slice(0, 8)}`, title, prompt, x, y, ...(kind !== 'task' ? { kind } : {}) }
+    return { id: `node-${randomUUID().slice(0, 8)}`, title, prompt, x, y, ...(kind !== 'task' ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
   })
   const edges = (Array.isArray(generated.edges) ? generated.edges : [])
     .map((raw) => {

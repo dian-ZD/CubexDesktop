@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowNode, WorkflowNodeKind } from '../shared/schema'
+import { nodeConfigFields } from '../shared/schema'
 
 export function orderWorkflowNodes(workflow: Workflow): WorkflowNode[] {
   const ids = new Set(workflow.nodes.map((node) => node.id))
@@ -90,6 +91,7 @@ export interface NodeInstructionInput {
   title: string
   kind?: WorkflowNodeKind
   prompt: string
+  config?: Record<string, string>
   upstream: Array<{ title: string; output: string }>
   completed: Array<{ title: string; status: string }>
   notes: Array<{ title: string; prompt: string }>
@@ -101,6 +103,13 @@ export function composeNodeInstruction(input: NodeInstructionInput): string {
   const blocks: string[] = [`【工作流「${input.workflowName}」第 ${input.index}/${input.total} 步：${input.title}】`]
   const hint = input.kind ? kindHints[input.kind] : undefined
   if (hint) blocks.push(hint)
+  // 节点专属配置项（画布上按类型单独配置的参数，直接作为本步的明确参数，优先级高于指令里的模糊描述）。
+  const fields = input.kind ? nodeConfigFields[input.kind] : []
+  const config = input.config ?? {}
+  const filled = fields.filter((field) => (config[field.key] ?? '').trim().length > 0)
+  if (filled.length) {
+    blocks.push(`## 本步参数（画布配置，必须遵守）\n${filled.map((field) => `- ${field.label}：${config[field.key]!.trim()}`).join('\n')}`)
+  }
   // 通用提醒：多而独立的子工作应委派子智能体并行完成（Work 节点通常覆盖多个文件/事项）。
   blocks.push('本步若包含多个互不相干、可并行的独立子工作（多文件同类修改、并行调研、独立复查），优先用 delegate 把它们拆成子任务并行委派：每个子任务的 instruction 必须完整自包含（目标、负责文件、约束、验收标准），修改同一文件的子任务串行安排；子任务返回后核对结果再汇总为本步产出。')
   if (input.notes.length) {

@@ -6,6 +6,17 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.3-dev 第四批（Work 节点类型专属配置项）
+
+用户反馈：所有 Work 节点的可配置项都只有一个「指令」，类型形同虚设。
+
+- [x] schema：`workflowNodeSchema` 新增可选 `config: Record<string, string>`；新增 `nodeConfigFields`（shared 定义一份，UI 表单与指令拼装共用）。各类型专属字段：response（输出格式/面向对象）、image（尺寸/数量）、video（画幅/时长）、check（检查命令/失败策略）、review（审查重点/范围）、computer（目标窗口/操作）、browser（网址/提取内容）、launch（打开目标）、command（命令/工作目录）、search（关键词/范围）、file（路径/操作）、git（提交信息/是否推送）、plugin（插件/工具）、mcp（服务器/工具）、wait（等待条件）、ask（问题/候选选项）；task/note 无专属项（纯指令）。
+- [x] 画布检查器：按当前类型渲染专属配置表单（text/textarea/select 三种控件），类型切换即换字段；画布节点卡片正文优先显示已填配置摘要（`标签：值；…`），无配置回落指令。
+- [x] 执行链路：`composeNodeInstruction` 把已填配置注入为「## 本步参数（画布配置，必须遵守）」块（位于 hint 之后、指令之前，优先级高于模糊描述）；`workflowRunner` 透传 node.config。
+- [x] AI 生成工作流：GENERATE_SYSTEM 要求把确定参数放 config（并给出各类型可用字段），`layout()` 白名单过滤（只保留该类型已定义字段的非空值）。
+- [x] 持久化：preload saveWorkflow 透传 config（全空则省略）；旧工作流无 config 完全兼容。
+- [x] 英文词条 60+ 条；校验 typecheck / lint 0 error / 180 passed + 4 skipped / 打包冒烟通过；重打 `release\Cubex Setup 0.3.3-dev.exe`（112,780,416 B）。
+
 ### 当前任务：0.3.3-dev 第三批（让 Cubex 主动用 subagent）
 
 用户反馈：Cubex 不会主动用 delegate 委派子智能体。根因：subagent 机制完整（delegate 工具、并发执行、角色、profiles、审批隔离都在），但系统提示只是「顺带提了一句」，模型缺乏何时该用的明确判据。本批只改提示层，不动执行引擎。
