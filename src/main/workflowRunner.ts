@@ -148,6 +148,8 @@ export class WorkflowRunner {
           outcome = { ok: false, error: describeError(error) }
         }
         if (outcome.ok || outcome.cancelled) break
+        // 瞬时错误（如会话状态未落定）立即重试只会连续失败；加短退避再试（保持总时长可控）
+        if (attempt < MAX_RETRIES) await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
       }
 
       if (outcome.cancelled) {

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { StringDecoder } from 'node:string_decoder'
 import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { ToolCall, ToolName, ToolResult } from '../shared/schema'
@@ -209,6 +210,7 @@ async function searchTool(root: string, pattern: string, path: string, glob: str
   const dir = await resolveInside(root, path)
   const hits: string[] = []
   let scanned = 0
+  let scanCapped = false
   const walk = async (current: string, level: number) => {
     if (level > 10 || hits.length >= 300 || signal.aborted) return
     let entries
@@ -222,7 +224,7 @@ async function searchTool(root: string, pattern: string, path: string, glob: str
         continue
       }
       if (!entry.isFile() || SENSITIVE.test(entry.name) || (glob && !entry.name.endsWith(glob))) continue
-      if (++scanned > 5000) return
+      if (++scanned > 5000) { scanCapped = true; return }
       const info = await lstat(full)
       if (info.size > MAX_READ_BYTES) continue
       const text = await readFile(full, 'utf8').catch(() => '')
@@ -234,7 +236,8 @@ async function searchTool(root: string, pattern: string, path: string, glob: str
     }
   }
   await walk(dir, 0)
-  return clip(hits.length ? hits.join('\n') + (hits.length >= 300 ? '\n…（结果过多，已截断）' : '') : '没有匹配结果')
+  const tail = hits.length >= 300 ? '\n…（结果过多，已截断）' : scanCapped ? '\n…（扫描文件数达到上限，结果可能不完整；请缩小搜索范围重试）' : ''
+  return clip(hits.length ? hits.join('\n') + tail : '没有匹配结果' + (scanCapped ? '（注意：扫描文件数已达上限，结果可能不完整）' : ''))
 }
 
 async function writeTool(root: string, path: string, content: string): Promise<{ output: string; diff: string }> {
@@ -359,12 +362,15 @@ function commandTool(root: string, command: string, timeoutMs: number | undefine
     const child = spawn(file, args, { cwd: root, windowsHide: true, env, detached: spawnDetached, windowsVerbatimArguments: file === 'cmd.exe' })
     let output = ''
     let truncated = false
-    const push = (chunk: Buffer) => {
+    // 多字节 UTF-8 字符可能被切在 chunk 边界上，用 StringDecoder 缓冲不完整的字节序列（中文 Windows 下 PowerShell 输出必现）
+    const stdoutDecoder = new StringDecoder('utf8')
+    const stderrDecoder = new StringDecoder('utf8')
+    const push = (chunk: Buffer, decoder: StringDecoder) => {
       if (output.length >= MAX_OUTPUT) { truncated = true; return }
-      output += chunk.toString('utf8')
+      output += decoder.write(chunk)
     }
-    child.stdout?.on('data', push)
-    child.stderr?.on('data', push)
+    child.stdout?.on('data', (chunk: Buffer) => push(chunk, stdoutDecoder))
+    child.stderr?.on('data', (chunk: Buffer) => push(chunk, stderrDecoder))
     let finished = false
     let fallback: NodeJS.Timeout | undefined
     const kill = () => {
@@ -381,6 +387,8 @@ function commandTool(root: string, command: string, timeoutMs: number | undefine
       clearTimeout(timer)
       clearTimeout(fallback)
       signal.removeEventListener('abort', onAbort)
+      // 把 decoder 中残留的不完整字节也冲出来
+      output += stdoutDecoder.end() + stderrDecoder.end()
       child.stdout?.destroy()
       child.stderr?.destroy()
       const body = clip(output.slice(0, MAX_OUTPUT)) + (truncated ? '\n…（输出已截断）' : '')

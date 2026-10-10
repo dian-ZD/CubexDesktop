@@ -198,7 +198,10 @@ export class SkillStore {
     const skillDir = join(this.dir, dirName)
     await mkdir(skillDir, { recursive: true })
     const description = (parsed.description || deriveDescription(parsed.content)).replace(/\n/g, ' ')
-    const doc = `---\nname: ${name}\ndescription: ${description}\n---\n\n${parsed.content}\n`
+    // frontmatter 是「key: value」平文本：name/description 若含换行或行首 --- 会破坏结构，甚至注入任意字段
+    const safeName = name.replace(/[\r\n]+/g, ' ').replace(/^\s*-{3,}\s*$/gm, '—').trim()
+    const safeDescription = description.replace(/[\r\n]+/g, ' ').replace(/^\s*-{3,}\s*$/gm, '—').trim()
+    const doc = `---\nname: ${safeName}\ndescription: ${safeDescription}\n---\n\n${parsed.content}\n`
     await writeFile(join(skillDir, 'SKILL.md'), doc, 'utf8')
     for (const file of parsed.extra ?? []) {
       const safe = file.name.replace(/[/\\]/g, '-').replace(/[\u0000-\u001f]/g, '') // eslint-disable-line no-control-regex -- 清洗 zip 条目名中的控制字符

@@ -181,14 +181,14 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
     setFuture([])
   }, [project?.id, own])
 
+  // 记录「改动前的 draft」到撤销栈。用 ref 读当前值而不是在 setState updater 里嵌套 setState（StrictMode 下 updater 会被双调用导致重复入栈）
+  const draftRef = useRef<Workflow | null>(null)
+  draftRef.current = draft
   const snapshot = () => {
-    setDraft((current) => {
-      if (current) {
-        setPast((stack) => [...stack.slice(-49), current])
-        setFuture([])
-      }
-      return current
-    })
+    const current = draftRef.current
+    if (!current) return
+    setPast((stack) => [...stack.slice(-49), current])
+    setFuture([])
   }
 
   const undo = () => {
@@ -376,6 +376,8 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
     const container = canvasRef.current
     if (!container) return
     pan.current = { x: event.clientX, y: event.clientY, left: container.scrollLeft, top: container.scrollTop }
+    // 捕获指针：拖动中划出画布边界不会丢平移，直到 pointerup（onPointerLeave 只对未捕获的 pan 兜底）
+    container.setPointerCapture(event.pointerId)
     setSelected(null)
     setLinking(null)
   }
@@ -545,7 +547,7 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
         </div>
       ) : (
         <div className="work-body">
-          <div ref={canvasRef} className={`work-canvas${linking ? ' linking' : ''}${pan.current ? ' panning' : ''}`} onWheel={onWheel} onScroll={checkVisibility} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerLeave={endDrag} onPointerDown={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('work-surface') || (event.target as HTMLElement).classList.contains('work-scale')) startPan(event) }}>
+          <div ref={canvasRef} className={`work-canvas${linking ? ' linking' : ''}${pan.current ? ' panning' : ''}`} onWheel={onWheel} onScroll={checkVisibility} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerLeave={endDrag} onPointerCancel={endDrag} onPointerDown={(event) => { if (event.target === event.currentTarget || (event.target as HTMLElement).classList.contains('work-surface') || (event.target as HTMLElement).classList.contains('work-scale')) startPan(event) }}>
             <div className="work-scale" style={{ width: CANVAS_W * zoom, height: CANVAS_H * zoom }}>
               <div className="work-surface" style={{ width: CANVAS_W, height: CANVAS_H, transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
                 <svg className="work-edges" width={CANVAS_W} height={CANVAS_H} aria-hidden="true">
@@ -606,9 +608,10 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
                       if (field.type === 'select') {
                         return (
                           <label className="field" key={field.key}><span>{tr(field.label)}</span>
+                            {/* 空串 = 未指定（默认），注入哨兵选项让 Select 能正确回显，而不是显示「未选择」 */}
                             <Select className="field-select" label={tr(field.label)} value={value}
-                              options={field.options!.map((option) => ({ value: option, label: tr(option) }))}
-                              onChange={(option) => { snapshot(); setConfig(option === tr('默认') || option === '默认' ? '' : option) }} />
+                              options={[{ value: '', label: tr('默认') }, ...field.options!.filter((option) => option !== '默认').map((option) => ({ value: option, label: tr(option) }))]}
+                              onChange={(option) => { snapshot(); setConfig(option) }} />
                           </label>
                         )
                       }

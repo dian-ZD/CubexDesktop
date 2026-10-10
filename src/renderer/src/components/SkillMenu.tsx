@@ -25,10 +25,13 @@ export function SkillMenu({ skills, query, onPick, onClose }: SkillMenuProps) {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (filtered.length === 0) { if (event.key === 'Escape') onClose(); return }
+      if (filtered.length === 0) { if (event.key === 'Escape') onClose(); return } // 无匹配时不拦截其它按键，让输入框正常发送/换行
       if (event.key === 'ArrowDown') { event.preventDefault(); setActive((value) => (value + 1) % filtered.length) }
       else if (event.key === 'ArrowUp') { event.preventDefault(); setActive((value) => (value - 1 + filtered.length) % filtered.length) }
-      else if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); onPick(filtered[active]) }
+      else if (event.key === 'Enter' || event.key === 'Tab') {
+        const pick = filtered[active]
+        if (pick) { event.preventDefault(); onPick(pick) }
+      }
       else if (event.key === 'Escape') { event.preventDefault(); onClose() }
     }
     window.addEventListener('keydown', handler, true)

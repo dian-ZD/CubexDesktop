@@ -680,7 +680,8 @@ async function anthropicChat(request: ChatRequest): Promise<ChatTurn> {
     stream: true,
     system: request.system,
     messages: toAnthropicMessages(request.messages),
-    ...(request.temperature !== undefined ? { temperature: Math.min(request.temperature, 1) } : {}),
+    // Anthropic extended thinking 只允许 temperature=1，与其同发会 400；开 thinking 时不带 temperature
+    ...(request.temperature !== undefined && thinkingBudget <= 0 ? { temperature: Math.min(request.temperature, 1) } : {}),
     ...(request.tools.length ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })) } : {}),
     ...(thinkingBudget > 0 ? { thinking: { type: 'enabled', budget_tokens: Math.min(thinkingBudget, resolveMaxTokens(request) - 1) } } : {}),
   }

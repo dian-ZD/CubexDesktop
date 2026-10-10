@@ -228,8 +228,9 @@ export class AgentRunner {
     for (const message of messages) {
       if (message.role === 'user') lines.push(`用户：${message.content.slice(0, 4000)}`)
       else if (message.role === 'assistant') {
-        const calls = message.toolCalls.map((call) => call.name).join('、')
-        lines.push(`助手：${message.content.slice(0, 4000)}${calls ? `（调用工具：${calls}）` : ''}`)
+        // 助手行带上工具的参数摘要（路径/命令等），read_file 等工具结果的首行是内容而非路径，摘要模型需要知道操作对象
+        const calls = message.toolCalls.map((call) => summarizeCall(call)).join('、')
+        lines.push(`助手：${message.content.slice(0, 4000)}${calls ? `（调用：${calls}）` : ''}`)
       } else if (message.role === 'tool') {
         // 分层摘要：每个工具结果只保留首行结论与关键状态，避免摘要请求本身把旧上下文原样重放一遍
         const out = message.results.map((result) => {
@@ -315,7 +316,8 @@ export class AgentRunner {
       const target = draft.threads.find((item) => item.id === threadId)
       if (target) { target.status = 'idle'; target.pending = undefined; target.question = undefined; target.updatedAt = new Date().toISOString() }
     })
-    if (!failed && !signal.aborted && this.pendingSteering(threadId)) {
+    if (!failed && !signal.aborted && !this.find(threadId).workflowRun?.status && this.pendingSteering(threadId)) {
+      // 工作流运行期间不自动 resume：下一节点会再次 runNode → start，此时 runs 里已有 run 会抛「会话正在运行」误失败
       await this.resume(threadId).catch(() => undefined)
       return
     }
@@ -507,6 +509,7 @@ export class AgentRunner {
           step--
           continue
         }
+        // 压缩失败（如摘要请求瞬时异常）：本轮跳过继续，不推进计数，上下文继续增长时仍会再次尝试
         autoCompactions = 3
       }
       const steeringSeen = new Set(thread.messages.filter((item) => item.role === 'user' && item.steering).map((item) => item.id))
@@ -521,7 +524,7 @@ export class AgentRunner {
       const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles), mode: thread.mode })
       // 上下文预算仪表：让模型知道还剩多少空间，主动控制输出与探索范围
       const usedTokens = historyTokens(thread.messages)
-      const budget = model.contextWindow ?? 128_000
+      const budget = model.contextWindow || 128_000
       const gauge = `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round((usedTokens / budget) * 100)}%）。${usedTokens / budget > 0.7 ? '接近上限：避免输出冗长内容、不要重复读取已读过的文件，尽快收敛到结论。' : '正常：可正常探索，但避免重复读取与冗长输出。'}`
       const extraParts = [
         `## 上下文预算\n${gauge}`,
@@ -591,6 +594,8 @@ export class AgentRunner {
         target.updatedAt = new Date().toISOString()
       })
       if (turn.content.trim()) run.outcome.lastText = turn.content
+      // 与存储一致：只执行被保留的 toolCalls，避免第 21+ 个调用的结果因无对应 toolCall 被下一轮清洗丢弃
+      turn.toolCalls = turn.toolCalls.slice(0, 20)
       if (turn.usage) void this.onUsage({ input: turn.usage.input, output: turn.usage.output, modelId: model.id }).catch(() => undefined)
       if (turn.toolCalls.length === 0) {
         if (turn.truncated && !signal.aborted && continuations < MAX_CONTINUATIONS) {
@@ -624,20 +629,22 @@ export class AgentRunner {
       const results: ToolResult[] = []
       let blockedCount = 0
       // 并行分组：同一批里相互独立的只读工具并行执行，其余（写操作、命令、审批、交互）保持串行。
-      const readOnly = new Set(['read_file', 'list_directory', 'search_files', 'browser_open', 'web_search'])
+      // 只列主进程内置工具；browser/web_search 属扩展工具（需审批语义），不进并行组。
+      const readOnly = new Set(['read_file', 'list_directory', 'search_files'])
       const parallelCalls = turn.toolCalls.filter((call) => !extensionToolNames.has(call.name) && !interactiveTools.has(call.name) && !todoTools.has(call.name) && !delegateTools.has(call.name) && readOnly.has(call.name) && typeof call.args.__raw !== 'string')
       const sequentialCalls = turn.toolCalls.filter((call) => !parallelCalls.includes(call))
       const signatureOf = (call: ToolCall) => `${call.name}:${JSON.stringify(call.args)}`
       const guardAndRun = async (call: ToolCall): Promise<ToolResult | null> => {
+        if (typeof call.args.__raw === 'string') {
+          // 参数截断不属于「重复空转」，不占用重复计数
+          return { callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' }
+        }
         const signature = signatureOf(call)
         const seen = (callCounts.get(signature) ?? 0) + 1
         callCounts.set(signature, seen)
         if (seen > 3) {
           blockedCount++
           return { callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与参数已执行多次，本次已拦截。请更换方法或直接给出结论。' }
-        }
-        if (typeof call.args.__raw === 'string') {
-          return { callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' }
         }
         return null
       }
@@ -997,9 +1004,16 @@ export class AgentRunner {
       const lines = result.output.split('\n')
       // read_file 本身有 400 行/2000 行上限，只处理超过 250 行的大读取
       if (lines.length > 250) {
+        // 尾部说明行（…共 N 行，已显示到第 X 行）不参与首尾裁剪，且保留它以传达完整行数
+        let end = lines.length
+        let trailer: string | undefined
+        if (lines[end - 1]?.startsWith('…（')) { end--; trailer = lines[end] }
         const head = lines.slice(0, 150)
-        const tail = lines.slice(-60)
-        result.output = `${head.join('\n')}\n…（中间 ${lines.length - 210} 行已省略）\n${tail.join('\n')}`
+        const tail = lines.slice(Math.max(0, end - 60), end)
+        const firstKept = 150 + 1 // read_file 输出行号从 1 开始（1-indexed）
+        const lastKept = end - 60 + 1
+        const note = `…（第 ${firstKept}–${lastKept - 1} 行已省略）`
+        result.output = `${head.join('\n')}\n${note}\n${tail.join('\n')}${trailer ? `\n${trailer}` : ''}`
       }
     }
     return result

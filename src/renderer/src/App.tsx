@@ -455,7 +455,7 @@ export function App() {
     const bottom = node.scrollHeight - node.scrollTop - node.clientHeight > 1
     setDotsFade((prev) => (prev.top === top && prev.bottom === bottom ? prev : { top, bottom }))
   }, [])
-  useEffect(() => { updateDotsFade() }, [updateDotsFade, userDots.length])
+  useEffect(() => { updateDotsFade() }, [updateDotsFade, userDots.length, thread?.messages.length, thread?.id])
   const showDotLabel = useCallback((target: HTMLElement, text: string) => {
     const wrap = dotsRef.current?.parentElement
     if (!wrap) return
@@ -652,11 +652,18 @@ export function App() {
   }, [])
 
   const queue = useCallback(async () => {
-    const content = skillPending ? skillPending.content : input.trim()
+    // 与 send 一致：技能内容一次性消费，失败路径放回输入框
+    const pendingSkill = skillPending
+    if (pendingSkill) setSkillPending(null)
+    const content = pendingSkill ? pendingSkill.content : input.trim()
     const attached = images
-    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
+    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) {
+      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+      return
+    }
     if (!modelId) {
       setError(tr('请先在设置中添加提供商与模型。'))
+      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
       return
     }
     actionLock.current = true
@@ -666,20 +673,20 @@ export function App() {
       let target = thread
       if (!target) {
         const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
-        if (!created.ok) { setError(created.error); return }
+        if (!created.ok) { setError(created.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content); return }
         target = created.data
         setThreadId(target.id)
       }
       const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
-      if (!result.ok) setError(result.error)
+      if (!result.ok) { setError(result.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content) }
       else {
         setInput('')
         setImages([])
-        if (skillPending) setSkillPending(null)
         ui.toast(tr('已加入队列，当前回复结束后自动发送'), 'success')
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
+      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
     } finally {
       actionLock.current = false
       setBusy(false)
@@ -687,9 +694,16 @@ export function App() {
   }, [project, input, images, loaded, thread, modelId, ui, view, skillPending])
 
   const send = useCallback(async () => {
-    const content = skillPending ? skillPending.content : input.trim()
+    // 技能内容一次性消费：读取后立即清空，任何提前返回/失败路径都不会把旧技能内容劫持到用户下一次手动发送
+    const pendingSkill = skillPending
+    if (pendingSkill) setSkillPending(null)
+    const content = pendingSkill ? pendingSkill.content : input.trim()
     const attached = images
-    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
+    if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) {
+      // 消费时机太早（有发送进行中）：把技能内容放回输入框而不是静默丢弃
+      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
+      return
+    }
     if (!modelId) {
       setError(tr('请先在设置中添加提供商与模型。'))
       return
@@ -705,7 +719,7 @@ export function App() {
       let target = thread
       if (!target) {
         const created = await api.createThread({ projectId: project.id, modelId, ...(view === 'browser' ? { mode: 'browser' as const } : {}) })
-        if (!created.ok) { setError(created.error); return }
+        if (!created.ok) { setError(created.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content); return }
         target = created.data
         setThreadId(target.id)
       }
@@ -723,14 +737,14 @@ export function App() {
       setHistoryEndId(null)
       setVisibleCount(MESSAGE_PAGE)
       const result = await api.sendMessage({ threadId: target.id, content, modelId, ...(attached.length ? { images: attached } : {}) })
-      if (!result.ok) setError(result.error)
+      if (!result.ok) { setError(result.error); if (pendingSkill && !input.trim()) setInput(pendingSkill.content) }
       else {
         setInput('')
         setImages([])
-        if (skillPending) setSkillPending(null)
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
+      if (pendingSkill && !input.trim()) setInput(pendingSkill.content)
     } finally {
       actionLock.current = false
       setBusy(false)

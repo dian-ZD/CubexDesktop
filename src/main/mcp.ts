@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { killTree } from './platform/proc'
 import type { McpServer, McpStatus } from '../shared/schema'
 
 const PROTOCOL_VERSION = '2024-11-05'
@@ -131,7 +132,8 @@ export class McpClient {
     this.rejectAll(new Error('MCP 服务器已停止'))
     if (child && child.exitCode === null) {
       child.stdin.end()
-      child.kill()
+      // Windows 下 shell:true 会产生 cmd.exe 包装进程，必须杀整棵进程树，否则真正的 MCP server 成为孤儿
+      killTree(child)
     }
   }
 

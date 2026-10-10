@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createInitialState, migrateState, stateSchema, type AppState } from '../shared/schema'
 
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
 const PERSIST_DELAY_MS = 250
 
 export class StateStore {
@@ -116,7 +118,11 @@ export class StateStore {
         await writeFile(tmp, snapshot, 'utf8')
         await rename(tmp, this.filePath)
       })
-      .catch(() => undefined)
+      .catch((error: unknown) => {
+        // 写盘失败必须恢复 dirty，否则期间崩溃 = 静默丢数据（磁盘满/杀软锁文件等）
+        this.dirty = true
+        console.error('[cubex] 状态保存失败：', message(error))
+      })
     return this.queue
   }
 

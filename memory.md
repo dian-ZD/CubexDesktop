@@ -1,8 +1,18 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第五批：agent 能力优化）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第六批：全库审查修复）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 已知未修问题（第六批审查发现，低风险待观察）
+
+- `index.ts` before-quit：`void terminateAll()` 异步未等待就 flushSync，最后一批消息可能丢。修法需 preventDefault + will-quit 收尾，动退出流程故暂缓。
+- `store.load()` 状态文件超限（threads>200 等）会整体重置为空状态而非裁剪保底——灾难性但触发条件苛刻（需旧版本写入超限数据）。
+- aoci 条目按 name 匹配且随项目切换改写 args → MCP server 反复重建（killTree 已修孤儿进程，重建开销仍在）。
+- `computer.ts` PowerShell 脚本多个 throw 路径漏 CloseDesktop（句柄泄漏到进程退出）；`captureIsolatedDesktop` 中途失败泄漏临时 PNG。
+- `images.ts` downloadImage 不受生成超时控制；`desktop-smoke.mjs` 无 spawn error 处理。
+- `tests/tools.test.ts` 部分用例只断言 ok 不校验内容；`tests/computer.test.ts` 非 Windows 平台空断言。
+- MCP `quoteArg` 用 POSIX 风格 `\"` 转义，Windows 下含引号/%VAR% 的 args 可能出错——正确修法是放弃 shell:true 直接 spawn（需处理 PATH 上 .cmd 的解析），改动大暂缓。
 
 ## 2026-10-10 agent 能力优化（第五批）
 

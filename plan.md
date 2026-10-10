@@ -6,6 +6,37 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.3-dev 第六批（全代码库审查修复）
+
+三个并行审查覆盖主进程核心 / 外围 / 渲染层+测试，确认修复以下问题（高→中→低）：
+
+- [x] 【高】skillPending 失败路径不清理 → 劫持下一次手动发送。改为一次性消费 + 失败时把技能内容放回输入框（send/queue 两条路径）。
+- [x] 【高】MCP kill 未杀进程树（shell:true 产生 cmd.exe 包装）→ 孤儿进程泄漏。改用 killTree。
+- [x] 【高】技能 zip 导入无解压上限（zip bomb OOM）。unzip 加 20MB 解压上限（头部声明预检 + maxOutputLength 双保险）。
+- [x] 【中】工作流运行期间 finish→resume 与下一节点竞态 → 「会话正在运行」误失败。finish 的自动 resume 加 workflowRun 检查。
+- [x] 【中】Anthropic thinking 与 temperature≠1 同发 400。开 thinking 时不带 temperature。
+- [x] 【中】toolCalls 存储截断 20 与全量执行不一致 → 多余结果被 sanitizeHistory 丢弃。执行前统一截断。
+- [x] 【中】renderTranscript 助手行丢工具参数（read_file 首行是代码不是路径）。改用 summarizeCall。
+- [x] 【中】store.flush 写盘失败被吞且 dirty 已清零 → 静默丢数据。失败恢复 dirty + console.error。
+- [x] 【中】SKILL.md frontmatter 未转义（name 可注入换行/---）。写入前清洗。
+- [x] 【中】browser settle 的 abort 监听器永不移除。finally 中 removeEventListener。
+- [x] 【中】config select 存空串显示「未选择」而非「默认」。注入 `{value:'',label:默认}` 哨兵选项。
+- [x] 【中】snapshot 在 setState updater 内嵌套 setState（StrictMode 双调用 undo 栈重复）。改用 draftRef。
+- [x] 【中】画布平移无 pointer capture，指针划出即断。startPan 加 setPointerCapture。
+- [x] 【低】命令输出跨 chunk UTF-8 乱码。StringDecoder（中文 Windows 必现）。
+- [x] 【低】search 达 5000 文件扫描上限静默返回。附「可能不完整」提示。
+- [x] 【低】contextWindow=0 时 gauge NaN。`||` 替代 `??`。
+- [x] 【低】压缩瞬时失败一次即永久禁用自动压缩。removed=0 不推进计数。
+- [x] 【低】__raw 非法调用计入重复空转计数。__raw 检查提前、不计数。
+- [x] 【低】readOnly 集合含扩展工具名但被过滤条件排除（死代码误导）。移除。
+- [x] 【低】read_file 裁剪把尾部说明行计入 tail、省略段无行号。剥出 trailer + 标注省略行号范围。
+- [x] 【低】workflowRunner 重试无退避。加 300ms×(attempt+1) 退避（原 0 退避会立即连试）。
+- [x] 【低】无匹配技能时 Enter 被吞。空列表不拦截其它按键。
+- [x] 【低】SkillMenu active 越界 onPick(undefined)。空值防御。
+- [x] 【低】updateDotsFade 依赖不全（流式更新不刷新）。补 thread.messages.length 依赖。
+
+未修（记录在 memory.md 待观察）：before-quit 异步 terminateAll 未等待、状态超限整体重置、aoci 项目切换反复重建、computer 桌面句柄泄漏路径、images 下载无超时、desktop-smoke spawn error、测试空洞断言。typecheck / lint 0 error / 187 passed。
+
 ### 当前任务：0.3.3-dev 第五批（agent 能力优化一轮）
 
 - [x] 计划复盘：主循环从第 3 步起每 4 步注入一次轻量自查提示（随请求发送，不写入历史），抑制无效探索/跑偏。

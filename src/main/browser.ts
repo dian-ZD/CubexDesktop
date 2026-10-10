@@ -663,14 +663,16 @@ export class BrowserEngine {
   private async settle(wc: Electron.WebContents, signal?: AbortSignal): Promise<void> {
     const loaded = this.onceLoaded(wc)
     if (signal) {
-      await Promise.race([
-        loaded,
-        new Promise<never>((_, reject) => {
-          const onAbort = () => reject(new Error('已取消'))
-          if (signal.aborted) onAbort()
-          else signal.addEventListener('abort', onAbort, { once: true })
-        }),
-      ])
+      let rejectAbort: (error: Error) => void = () => undefined
+      const abortPromise = new Promise<never>((_, reject) => { rejectAbort = reject })
+      const listener = () => rejectAbort(new Error('已取消'))
+      if (signal.aborted) { void loaded.catch(() => undefined); throw new Error('已取消') }
+      signal.addEventListener('abort', listener, { once: true })
+      try {
+        await Promise.race([loaded, abortPromise])
+      } finally {
+        signal.removeEventListener('abort', listener)
+      }
     } else {
       await loaded
     }
