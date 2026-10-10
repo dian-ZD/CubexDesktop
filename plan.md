@@ -17,6 +17,9 @@
 - [x] 英文词条：视频设置、Work 新节点、技能说明共 20+ 条已登记进 phrases。
 - [x] 校验：typecheck 通过、lint 0 error（既有 9 条 hooks warning）、测试 172 passed / 4 skipped（新增视频设置迁移 + Work 节点类型回归）。
 - [x] 打包 `release\Cubex Setup 0.3.3-dev.exe`（112,775,718 B，SHA256 F1208F06BE964798D108774B52526E9172D5D419F59E38209E2D0E94FD9A00B5）；首次 dist 因残留 Cubex.exe 占用 win-unpacked 失败（Access is denied），清进程后重跑成功；打包版桌面冒烟通过（smoke-ready）。
+- [~] 已提交本地 `609ab1d`（14 文件）；push 到 origin/main 暂时失败（github.com:443 连不上，连续两次超时），网络恢复后重试 `git push origin main` 并用 `git ls-remote` 核对。
+
+下一步第一件事：网络恢复后推送 `609ab1d`；等用户安装 `release\Cubex Setup 0.3.3-dev.exe` 实测（独立桌面切换/任务结束后的清理、悬浮窗常驻与手动关闭、Work 新节点、视频设置、/生成 工作流技能）。
 
 ### 当前任务：0.3.2-dev 修补（滑条不可拖动 + 色彩条不完整）
 
