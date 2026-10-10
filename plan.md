@@ -17,7 +17,7 @@
 - [x] toolNames 新增 load_skill/create_workflow；工具图标映射补齐。
 - [x] Linux 适配验证：新增功能均为平台无关纯逻辑；独立桌面/电脑操控非 win32 已有 supported:false 门，无需改动。
 - [x] 校验 typecheck / lint / 187 passed。
-- [ ] 打包 0.3.6-dev + 冒烟 + 推送 + 打 tag。
+- [x] 打包 0.3.6-dev + 冒烟 + 推送 + 打 tag（main 强推归一到 1bb61b9，tag v0.3.6-dev 已推，Actions 构建中）。
 
 ### 当前任务：0.3.5-dev（技能消息改图标+名称占位）
 
