@@ -8,6 +8,15 @@
 
 ### 当前任务：0.3.3-dev 第七批（性能与加载速度）
 
+复审修复（评审发现 2 bug + 2 加固）：
+- [x] 【高】registerIpc 原在 createWindow 之后——渲染层首帧 invoke 会撞「No handler registered」掉错误屏。提前到建窗之前（getState 有 barrier 门，其余 handler 在 loaded 前不可达）。
+- [x] 【中高】createWindow 在 load 前读 store.get() 拿到默认 browser 设置，磁盘真实设置被忽略。抽 applyBrowserOptions()，store.load 完成后补应用（saveSettings 处也复用）。
+- [x] 【中】store.load 快速路径结构检查加厚：thread 补查 title/status/createdAt/updatedAt（updatedAt 被 aociProjectPath 的 localeCompare 直接用）、每 message 查 role、settings 补查 providers/models/general——坏数据否则会因每次启动都命中快速路径而永不触发回落校验。
+- [x] 【低】barrier 兜底：Promise.all().finally() 释放，load/secrets 异常时 getState 不永久挂起；loadEnglishPhrases 补 .catch。
+- [x] zod chunk 注释修正（实际在首帧静态依赖图内，拆分只为长期缓存，不在 -54% 贡献里）。
+
+其余核查结论（无问题）：快速路径不丢 .default()（migrateState 的 mergeGroup 已按组补默认值）；phrasesReady 触发整棵 App 重渲染覆盖提前 return 分支；骨架屏被 React 18 createRoot 正常替换；extensions/mcp/automation 均在 load 之后启动。
+
 - [x] 主进程启动顺序：`createWindow()` 提前到 `store.load()/secrets.load()` 之前（窗口创建不依赖状态），渲染层 JS 加载与磁盘读并行；首个 `getState` 加 storeReadyBarrier 门，保证渲染层拿到完整状态而非空状态（`src/main/index.ts`）。
 - [x] store.load 快速路径：state.json 只由本应用写入（上次已过全量校验），改为轻量结构检查（version/threads/projects/settings + 每 thread 有 id/messages），失败才回落全量 zod safeParse——大会话（数千条消息）省数百 ms 且原本串行阻塞建窗。
 - [x] 英文词典按需加载：phrases.ts（89KB，zh→en 词典）从主 bundle 拆出，由 phrases-en.ts 动态 import + 注册（`App.tsx` 按 uiLang 触发，`phrasesReady` state 强制重渲染）；zh-CN 用户零加载。渲染层首帧关键 JS 324KB → 150KB（-54%）。

@@ -24,16 +24,22 @@ export class StateStore {
       const raw = await readFile(this.filePath, 'utf8')
       const migrated = migrateState(JSON.parse(raw)) as Record<string, unknown> | null
       // 快速路径：state.json 只由本应用写入，磁盘上的数据上次已通过全量校验。
-      // 重跑完整 zod 校验在大会话（数千条消息）上要数百毫秒，且阻塞首帧。改为轻量结构检查，
-      // 失败才回落到全量 safeParse（保住既有容错语义）。
+      // 重跑完整 zod 校验在大会话（数千条消息）上要数百毫秒。结构检查必须足够厚：
+      // 漏检的坏字段会因每次启动都命中快速路径而永远不触发回落校验。
       const looksValid = typeof migrated?.version === 'number'
         && Array.isArray(migrated.threads)
         && Array.isArray(migrated.projects)
         && typeof migrated.settings === 'object' && migrated.settings !== null
         && migrated.threads.every((thread: unknown) => {
-          const item = thread as { id?: unknown; messages?: unknown }
-          return typeof item?.id === 'string' && Array.isArray(item?.messages)
+          const item = thread as { id?: unknown; title?: unknown; status?: unknown; createdAt?: unknown; updatedAt?: unknown; messages?: unknown }
+          if (typeof item?.id !== 'string' || !Array.isArray(item?.messages)) return false
+          // updatedAt 会被 aociProjectPath 的 localeCompare 直接用，缺了会抛错
+          return typeof item.title === 'string' && typeof item.status === 'string' && typeof item.createdAt === 'string' && typeof item.updatedAt === 'string'
+            && item.messages.every((message: unknown) => typeof (message as { role?: unknown })?.role === 'string')
         })
+        && Array.isArray((migrated.settings as { providers?: unknown }).providers)
+        && Array.isArray((migrated.settings as { models?: unknown }).models)
+        && typeof (migrated.settings as { general?: unknown }).general === 'object' && (migrated.settings as { general?: unknown }).general !== null
       if (looksValid) {
         this.state = migrated as AppState
       } else {

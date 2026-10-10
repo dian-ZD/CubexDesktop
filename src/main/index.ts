@@ -423,6 +423,12 @@ export function startDesktopMirror(name: string, intervalMs = 1200): void {
   mirrorTimer = setInterval(() => void tick(), intervalMs)
 }
 
+/** 把当前 store 里的浏览器设置应用到 browserEngine（建窗时与 store.load 完成后各调用一次，后者才是磁盘真实设置） */
+function applyBrowserOptions() {
+  const browser = store.get().settings.browser
+  browserEngine.setOptions({ allowDownloads: browser.allowDownloads, allowNewWindows: browser.allowNewWindows, userAgent: browser.userAgent, homepage: browser.homepage })
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -442,10 +448,7 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', broadcastWindowState)
   guardNavigation(mainWindow)
   browserEngine.setWindow(mainWindow)
-  {
-    const browser = store.get().settings.browser
-    browserEngine.setOptions({ allowDownloads: browser.allowDownloads, allowNewWindows: browser.allowNewWindows, userAgent: browser.userAgent, homepage: browser.homepage })
-  }
+  applyBrowserOptions()
   mainWindow.on('closed', () => {
     browserEngine.setWindow(null)
     mainWindow = null
@@ -750,7 +753,7 @@ function registerIpc() {
     }
     await secrets.prune(new Set([...settings.providers.map((provider) => provider.id), GITHUB_SECRET]))
     mcp.sync(await syncAoci())
-    browserEngine.setOptions({ allowDownloads: settings.browser.allowDownloads, allowNewWindows: settings.browser.allowNewWindows, userAgent: settings.browser.userAgent, homepage: settings.browser.homepage })
+    applyBrowserOptions()
     publish()
   })
 
@@ -956,15 +959,21 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(async () => {
   hardenSession()
+  // IPC 先于建窗注册：窗口一创建渲染层就开始加载并发起 invoke，晚注册会让首个 getState 撞上
+  // 「No handler registered」直接掉进错误屏。getState 自身有 storeReadyBarrier 门，其余 handler
+  // 在 barrier 释放前实际不可达（渲染层 loaded 门控）。
+  registerIpc()
   // store.load 只影响 IPC 响应内容，不阻塞窗口创建：先建窗让渲染层尽早开始加载，store 与密钥并行就绪
   createWindow()
-  await Promise.all([store.load(), secrets.load()])
-  releaseStoreBarrier()
+  await Promise.all([store.load(), secrets.load()]).finally(() => {
+    releaseStoreBarrier()
+    // createWindow 在 load 前执行时读到的是初始默认值；这里补上磁盘真实设置
+    applyBrowserOptions()
+  })
   if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
     await store.update((state) => { state.notice = [state.notice, '当前系统无可用密钥环（gnome-keyring/kwallet），API Key 仅弱加密存储，建议启用系统密钥环'].filter(Boolean).join('；') })
   }
   store.subscribe(publish)
-  registerIpc()
   void buildAppIcon().then(() => {
     if (appIcon && !appIcon.isEmpty()) for (const win of liveWindows()) win.setIcon(appIcon)
   }).catch(() => { /* 图标构建失败不阻塞启动 */ })

@@ -28,7 +28,7 @@ export default defineConfig({
         output: {
           manualChunks: (id) => {
             if (id.includes('node_modules/react') || id.includes('node_modules/scheduler')) return 'react'
-            // zod 独立成块：只在设置校验路径用到，与业务代码分开利于缓存
+            // zod 独立成块：虽在首帧静态依赖图内（经 shared/schema 被入口引用），但独立 chunk 长期缓存更优
             if (id.includes('node_modules/zod')) return 'zod'
             return undefined
           },

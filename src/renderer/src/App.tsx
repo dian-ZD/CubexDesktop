@@ -323,7 +323,7 @@ export function App() {
   // 英文词典按需加载：zh-CN 零开销，切到 en 时动态拉取注册（重渲染由 lang state 变化自然触发）
   useEffect(() => {
     if (uiLang !== 'en') return
-    void loadEnglishPhrases().then(() => setPhrasesReady((version) => version + 1))
+    void loadEnglishPhrases().then(() => setPhrasesReady((version) => version + 1)).catch(() => { /* 词典加载失败回退 zh 源文案显示，不打断使用 */ })
   }, [uiLang])
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(uiLang, key, vars), [uiLang])
   const tr = useCallback((zhText: string, vars?: Record<string, string | number>) => trBase(uiLang, zhText, vars), [uiLang])

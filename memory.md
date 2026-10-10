@@ -8,8 +8,8 @@
 
 - **打包 files 排除了 node_modules**（`"!node_modules"`），因此主进程必须保持 `externalizeDeps: false`（全内联 bundle）——外置后 dev/冒烟能过（走源码 node_modules）但打包产物 require 不到 zod 会崩。若要外置必须同时把 files 改成含 node_modules（安装包体积会涨）。
 - **英文词典是动态 chunk**：phrases.ts 只导出 `phraseGroups`，无模块级副作用；注册入口在 phrases-en.ts（`import('./phrases')` 动态导入）。给 phrases.ts 加新词条照常加，但必须放进 `phraseGroups` 数组里的分组，否则不会被注册。
-- **store.load 快速路径**：只做轻量结构检查（version/threads/projects/settings、每 thread id+messages），不跑全量 zod。写坏的字段值不会被启动校验拦住——由各写入路径的 zod 校验兜底；结构检查失败仍回落全量 safeParse + .corrupt 备份。
-- **getState 就绪门**：`storeReadyBarrier`（src/main/index.ts 顶部）在 createWindow 之前挂起、store.load 完成后 release；只有 channels.getState 等它，其它 IPC 不等。改启动顺序时不要把 registerIpc 挪到 barrier 定义之前。
+- **store.load 快速路径**：只做较厚的结构检查（version/threads/projects/settings.providers/models/general、每 thread 的 id/title/status/createdAt/updatedAt/messages、每 message 的 role），不跑全量 zod。**检查必须足够厚**：快速路径每次启动都命中，漏检的坏字段永不触发回落校验。结构检查失败仍回落全量 safeParse + .corrupt 备份。
+- **getState 就绪门**：`storeReadyBarrier`（src/main/index.ts 顶部）由 `Promise.all([store.load(), secrets.load()]).finally` 释放（异常也释放，防 getState 永久挂起）；只有 channels.getState 等它，其它 IPC 不等。**registerIpc 必须在 createWindow 之前**（渲染层首帧就 invoke，晚注册会掉错误屏）；createWindow 在 load 前读 store 拿的是默认值，磁盘真实 browser 设置靠 load 后的 `applyBrowserOptions()` 补应用——新增「建窗时读 store」的代码要注意同样问题。
 - **未做的性能项**：getState 全量消息瘦身/增量推送（消息被历史分页、token 统计、FloatingPanel 等多处假设全量存在，改动面大）；透明窗口改不透明（圆角设计需要）。
 
 ## 已知未修问题（第六批审查发现，低风险待观察）
