@@ -101,6 +101,8 @@ export function composeNodeInstruction(input: NodeInstructionInput): string {
   const blocks: string[] = [`【工作流「${input.workflowName}」第 ${input.index}/${input.total} 步：${input.title}】`]
   const hint = input.kind ? kindHints[input.kind] : undefined
   if (hint) blocks.push(hint)
+  // 通用提醒：多而独立的子工作应委派子智能体并行完成（Work 节点通常覆盖多个文件/事项）。
+  blocks.push('本步若包含多个互不相干、可并行的独立子工作（多文件同类修改、并行调研、独立复查），优先用 delegate 把它们拆成子任务并行委派：每个子任务的 instruction 必须完整自包含（目标、负责文件、约束、验收标准），修改同一文件的子任务串行安排；子任务返回后核对结果再汇总为本步产出。')
   if (input.notes.length) {
     const notes = input.notes.map((note) => `- ${note.title}：${note.prompt.trim().slice(0, NOTE_LIMIT)}`).join('\n')
     blocks.push(`## 背景信息（工作流备注，仅供参考，不需要执行）\n${notes}`)

@@ -1,8 +1,16 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第二批：Skill 标准化 + Work AI 生成）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第三批：subagent 主动委派提示）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 2026-10-10 让 Cubex 学会用 subagent
+
+- **现状**：delegate 执行引擎早已完整（`agent.ts` delegate/runSubAgent：1–32 任务/批、maxConcurrentSubagents 并发 worker、4 角色、profileId、readTools 白名单、审批走 authorize 队列、结果合并回主循环），问题只在系统提示太弱——模型不知道「什么时候该用」。
+- **修法（纯提示层）**：CORE 工作方式 + 会话规则 + delegate 工具 description 三处一致给出 4 个触发判据（≥3 互不相干文件同类操作 / 调研+编码并行 / reviewer 独立复查 / 大范围搜索分区），并强调 instruction 自包含（子智能体看不到主对话）与同文件禁并行。三处措辞保持同步，改一处要看另两处。
+- **runSubAgent 角色注入**：按 role 追加职责句（coder 改+验证 / researcher 只读 / reviewer 给通过与否结论），与 readTools 硬约束互补。
+- **Work 链路**：`composeNodeInstruction` 对所有节点统一追加 delegate 提醒（不只 task 节点）；生成器 GENERATE_SYSTEM 也加规则。
+- **教训**：这类「行为引导」改动无法单测，只能靠提示措辞 + 实测；若实测仍不触发，下一步是硬路径（如检测到 N 个文件的 edit_file 序列时主动建议 delegate）。
 
 ## 2026-10-10 Skill 标准化 + Work 画布 AI 生成
 

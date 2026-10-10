@@ -6,6 +6,18 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.3-dev 第三批（让 Cubex 主动用 subagent）
+
+用户反馈：Cubex 不会主动用 delegate 委派子智能体。根因：subagent 机制完整（delegate 工具、并发执行、角色、profiles、审批隔离都在），但系统提示只是「顺带提了一句」，模型缺乏何时该用的明确判据。本批只改提示层，不动执行引擎。
+
+- [x] `prompt.ts` CORE「工作方式」新增「善用 delegate 并行推进」条目：4 个明确触发条件（≥3 个互不相干文件的同类操作 / 调研+编码并行（researcher 只读）/ 改动后独立复查（reviewer）/ 大范围搜索分区并行）+ instruction 必须自包含 + 同文件禁止并行。
+- [x] 会话规则 delegate 条目从平铺描述改为「委派优先」：命中 4 条件必须优先用 delegate；profiles 存在时补充 role 枚举说明（general/researcher/coder/reviewer 及只读约束）。
+- [x] `tools.ts` delegate 工具 description 同步「应优先使用」+ 4 场景；instruction 参数描述强调「子智能体看不到当前对话，必须写全背景」。
+- [x] `agent.ts` runSubAgent 系统提示按角色注入职责说明：coder（改文件+验证）/ researcher（只读调研）/ reviewer（复查+明确通过/不通过结论）。
+- [x] Work 链路：`composeNodeInstruction` 每个节点通用追加「多而独立的子工作优先 delegate 并行，结果核对后汇总」；`workflowGenerate.ts` GENERATE_SYSTEM 增加对应规则，生成的工作流会在 prompt 中说明委派。
+- [x] 校验：typecheck / lint 0 error（9 既有 warning）/ 178 passed + 4 skipped / 打包版冒烟通过；重打 `release\Cubex Setup 0.3.3-dev.exe`（112,777,969 B，SHA256 6D7D6175FB9411E3B7A55A960AC9B1D92B554F772E896F0A8C28EA7FD9C4B6AA）。
+- 注意：效果依赖模型对提示的遵循度，建议实测「给 5 个文件补注释」「调研 X 并实现 Y」类任务观察是否触发 delegate；不触发再考虑加自动拆分逻辑。
+
 ### 当前任务：0.3.3-dev 第二批（Skill 标准化 + Work 画布 AI 生成工作流）
 
 用户反馈：① skill 只是粘贴进输入框，不符合 Codex 等惯例；② 要标准 skill 格式；③ Work 工作流生成要真正生成到画布。
