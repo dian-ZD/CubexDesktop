@@ -59,6 +59,7 @@ const api: CubexAPI = {
   }),
   deleteWorkflow: (input) => ipcRenderer.invoke(channels.deleteWorkflow, { workflowId: input.workflowId }),
   runWorkflow: (input) => ipcRenderer.invoke(channels.runWorkflow, { workflowId: input.workflowId }),
+  generateWorkflow: (input) => ipcRenderer.invoke(channels.generateWorkflow, { projectId: input.projectId, request: input.request, ...(input.modelId ? { modelId: input.modelId } : {}) }),
   runAutomation: (input) => ipcRenderer.invoke(channels.runAutomation, { automationId: input.automationId }),
   browserBounds: (input) => ipcRenderer.invoke(channels.browserBounds, { threadId: input.threadId, x: input.x, y: input.y, width: input.width, height: input.height }),
   browserHide: (input) => ipcRenderer.invoke(channels.browserHide, { threadId: input.threadId }),

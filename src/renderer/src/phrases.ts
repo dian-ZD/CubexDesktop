@@ -1057,6 +1057,12 @@ const skillPhrases: Record<string, string> = {
 }
 
 const workflowPhrases: Record<string, string> = {
+  'AI 生成工作流…': 'Generate workflow with AI…',
+  '用一句话描述你想让工作流完成什么，Cubex 会自动拆解成画布节点。': 'Describe what you want the workflow to do in one sentence; Cubex will break it down into canvas nodes.',
+  '例如：搜索某主题的资料并整理成报告配一张插图': 'e.g. research a topic and turn it into a report with an illustration',
+  '生成': 'Generate',
+  '工作流已生成到画布，检查后可保存': 'Workflow generated on the canvas — review and save',
+  '生成工作流失败，请重试。': 'Failed to generate workflow, please retry.',
   '模型回复': 'Model response',
   '让模型生成最终给用户看的文字回复': 'Generate the final text response for the user',
   '图片生成': 'Image generation',
@@ -1088,6 +1094,7 @@ const betaPhrases: Record<string, string> = {
 
 // 零散补充词条：逐个功能轮次新增的文案统一放这里，避免回头改前面的 Record。
 const miscPhrases: Record<string, string> = {
+  '已加入队列，当前回复结束后自动发送': 'Queued — will send when the current reply finishes',
   '视频生成 · 提供商': 'Video generation · Provider',
   '配置视频模型的提供商与模型参数，供 Work 模式的视频生成模块使用': 'Configure the provider and model parameters used by the Work mode video generation module',
   '视频生成提供商': 'Video generation provider',

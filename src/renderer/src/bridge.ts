@@ -91,6 +91,7 @@ const previewApi: CubexAPI = {
     return Promise.resolve({ ok: true, data: undefined })
   },
   runWorkflow: () => unavailable('运行工作流'),
+  generateWorkflow: () => unavailable('生成工作流'),
   runAutomation: () => unavailable('运行自动化'),
   browserBounds: () => unavailable('浏览器画面'),
   browserHide: () => unavailable('浏览器画面'),

@@ -268,6 +268,7 @@ export function App() {
   }, [])
   const [skills, setSkills] = useState<SkillMeta[]>([])
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
+  const [skillPending, setSkillPending] = useState<{ skillName: string; content: string } | null>(null)
   const reloadSkills = useCallback(() => { void api.listSkills().then((result) => { if (result.ok) setSkills(result.data) }) }, [])
   useEffect(() => { reloadSkills() }, [reloadSkills])
   const onInputChange = useCallback((value: string) => {
@@ -275,14 +276,19 @@ export function App() {
     const match = /^\/([^\s/]*)$/.exec(value)
     setSkillQuery(match ? match[1] : null)
   }, [])
+  // Codex/Claude Code 惯例的斜杠命令：选中技能 = 以技能内容为指令立即发送一条用户消息；
+  // 输入框里已有的补充文字（/命令之外键入的）拼接在技能内容之后，而不是把全文塞回输入框。
   const pickSkill = useCallback((skill: SkillMeta) => {
     setSkillQuery(null)
-    void api.readSkill({ id: skill.id }).then((result) => {
+    void api.readSkill({ id: skill.id }).then(async (result) => {
       if (!result.ok) { setError(result.error); return }
-      setInput((current) => (/^\/[^\s/]*$/.test(current) ? '' : current) + result.data.content)
-      requestAnimationFrame(() => { const node = inputRef.current; if (node) { node.focus(); node.setSelectionRange(node.value.length, node.value.length) } })
+      const supplement = input.replace(/^\/[^\s/]*\s?/, '').trim()
+      const content = [result.data.content.trim(), supplement].filter(Boolean).join('\n\n')
+      if (!content) return
+      setInput('')
+      setSkillPending({ skillName: skill.name, content })
     })
-  }, [])
+  }, [input])
   const detachedThreadId = useMemo(panelThreadId, [])
   const floatingMode = useMemo(() => /^#floating/.test(window.location.hash), [])
   useEffect(() => api.onWindowState((next) => {
@@ -646,7 +652,7 @@ export function App() {
   }, [])
 
   const queue = useCallback(async () => {
-    const content = input.trim()
+    const content = skillPending ? skillPending.content : input.trim()
     const attached = images
     if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
     if (!modelId) {
@@ -669,6 +675,7 @@ export function App() {
       else {
         setInput('')
         setImages([])
+        if (skillPending) setSkillPending(null)
         ui.toast(tr('已加入队列，当前回复结束后自动发送'), 'success')
       }
     } catch {
@@ -677,10 +684,10 @@ export function App() {
       actionLock.current = false
       setBusy(false)
     }
-  }, [project, input, images, loaded, thread, modelId, ui, view])
+  }, [project, input, images, loaded, thread, modelId, ui, view, skillPending])
 
   const send = useCallback(async () => {
-    const content = input.trim()
+    const content = skillPending ? skillPending.content : input.trim()
     const attached = images
     if (!project || !isDesktop || !loaded || (!content && attached.length === 0) || actionLock.current) return
     if (!modelId) {
@@ -720,6 +727,7 @@ export function App() {
       else {
         setInput('')
         setImages([])
+        if (skillPending) setSkillPending(null)
       }
     } catch {
       setError(tr('消息未能发送，请重试。'))
@@ -727,7 +735,15 @@ export function App() {
       actionLock.current = false
       setBusy(false)
     }
-  }, [project, input, images, loaded, thread, modelId, isActive, ui, view, model, queue])
+  }, [project, input, images, loaded, thread, modelId, isActive, ui, view, model, queue, skillPending])
+
+  // 选中的技能内容已就绪 → 立即作为用户消息发送（或运行中时入队）。
+  const sendRef = useRef(send)
+  sendRef.current = send
+  useEffect(() => {
+    if (!skillPending) return
+    void sendRef.current()
+  }, [skillPending])
 
   const [continuedErrorKey, setContinuedErrorKey] = useState<string | null>(null)
   const continueAfterError = useCallback(async (messageId: string) => {

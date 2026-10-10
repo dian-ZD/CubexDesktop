@@ -3,10 +3,15 @@ import { mkdir, readdir, readFile, writeFile, rm, stat } from 'node:fs/promises'
 import type { SkillMeta, SkillDetail } from '../shared/schema'
 import { unzip } from './unzip'
 
+// Agent Skills 标准（兼容 Anthropic skills）：每个技能是 skills/ 下一个目录，
+// 内含 SKILL.md（YAML frontmatter：name / description）与可选附加上下文文件。
+// 单文件与 zip 导入时自动转换为该标准结构。
 const allowExt = new Set(['.md', '.markdown', '.txt', '.mdx', '.zip'])
 const maxBytes = 5 * 1024 * 1024
 const skillDocNames = ['skill.md', 'skill.markdown', 'readme.md']
+const maxContextBytes = 200_000
 
+/** 内置技能（随应用分发，只读；work-builder 之类生成型入口不在这里，见 Work 画布）。 */
 const builtinSkills: SkillDetail[] = [
   {
     id: 'builtin:review',
@@ -59,28 +64,6 @@ const builtinSkills: SkillDetail[] = [
       '4. 给出一次示例调用与预期 stdout，并提示插件以用户权限运行本机命令、破坏性操作要走审批或自行确认。',
     ].join('\n'),
   },
-  {
-    id: 'builtin:work-builder',
-    name: '生成 Work 工作流',
-    description: '根据自然语言需求拆解并生成可执行的 Work 模式工作流',
-    builtin: true,
-    content: [
-      '请把用户的需求转换为 Cubex Work 模式画布工作流。先询问影响节点类型、工具权限或外部副作用的关键信息；其余细节使用合理默认值。',
-      '',
-      '输出严格 JSON，不要使用 Markdown 围栏：',
-      '{"name":"工作流名称","nodes":[{"title":"节点标题","kind":"task|response|image|video|check|review|note|computer|browser|launch|command|search|file|git|plugin|mcp|wait|ask","prompt":"该节点的具体指令"}],"edges":[{"from":0,"to":1}]}',
-      '',
-      '规则：',
-      '- 节点数不超过 20；edges 的 from/to 是 nodes 的从 0 开始序号。',
-      '- 将用户目标拆成有清晰输入和产出的步骤，添加验证步骤；仅需给最终文字时使用 response。',
-      '- 生图用 image，生视频用 video；不要把它们伪装成通用 task。提示词写明产出规格。',
-      '- 涉及电脑、浏览器、命令、文件写入、Git 推送或外部服务等副作用时，明确标出并安排必要确认。',
-      '- 不需要执行的上下文写入 note 节点；不要创建空指令。',
-      '- 输出前检查节点引用、连线无环、所有节点 prompt 非空。',
-      '',
-      '生成 JSON 后，说明如何按顺序在 Work 画布中建立节点并连线。',
-    ].join('\n'),
-  },
 ]
 
 function slugify(name: string): string {
@@ -114,15 +97,15 @@ function parseSkillFile(fileName: string, raw: string): { name: string; descript
   return { name, description, content: parsed.body.trim() }
 }
 
-function parseSkillPackage(fallbackName: string, entries: { name: string; data: Buffer }[]): { name: string; description: string; content: string } {
-  const files = entries.map((entry) => ({ path: entry.name.replace(/\\/g, '/'), base: basename(entry.name).toLowerCase(), text: () => entry.data.toString('utf8') }))
+function parseSkillPackage(fallbackName: string, entries: { name: string; data: Buffer }[]): { name: string; description: string; content: string; extra: Array<{ name: string; data: Buffer }> } {
+  const files = entries.map((entry) => ({ path: entry.name.replace(/\\/g, '/'), base: basename(entry.name).toLowerCase(), text: () => entry.data.toString('utf8'), data: entry.data }))
   const manifest = files.find((file) => file.base === 'manifest.json' || file.base === 'skill.json')
   if (manifest) {
     try {
       const meta = JSON.parse(manifest.text()) as { name?: string; description?: string; content?: string; entry?: string; instructions?: string }
       let content = typeof meta.content === 'string' ? meta.content : typeof meta.instructions === 'string' ? meta.instructions : ''
       if (!content && meta.entry) {
-        const target = files.find((file) => file.path.endsWith(meta.entry as string) || file.base === basename(meta.entry as string).toLowerCase())
+        const target = files.find((file) => file.path.endsWith(meta.entry as string) || file.base === (meta.entry as string).split('/').pop()!.toLowerCase())
         if (target) content = parseFrontmatter(target.text()).body
       }
       if (!content) {
@@ -131,14 +114,17 @@ function parseSkillPackage(fallbackName: string, entries: { name: string; data: 
       }
       const name = meta.name || fallbackName
       const description = meta.description || deriveDescription(content)
-      return { name, description, content: content.trim() }
+      const extra = files.filter((file) => file.data.length <= maxContextBytes && !skillDocNames.includes(file.base) && file.base !== 'manifest.json' && file.base !== 'skill.json' && /\.(md|markdown|txt|json|csv|ya?ml)$/i.test(file.base)).map((file) => ({ name: file.base, data: file.data }))
+      return { name, description, content: content.trim(), extra }
     } catch {
       /* fall through to SKILL.md */
     }
   }
   const doc = files.find((file) => skillDocNames.includes(file.base)) ?? files.find((file) => file.base.endsWith('.md'))
-  if (doc) return parseSkillFile(doc.base, doc.text())
-  throw new Error('zip 包内未找到 SKILL.md 或 manifest.json')
+  if (!doc) throw new Error('zip 包内未找到 SKILL.md 或 manifest.json')
+  const parsed = parseSkillFile(doc.base, doc.text())
+  const extra = files.filter((file) => file !== doc && file.data.length <= maxContextBytes && /\.(md|markdown|txt|json|csv|ya?ml)$/i.test(file.base)).map((file) => ({ name: file.base, data: file.data }))
+  return { ...parsed, extra }
 }
 
 export class SkillStore {
@@ -148,49 +134,78 @@ export class SkillStore {
     await mkdir(this.dir, { recursive: true })
   }
 
-  private idFor(fileName: string): string {
-    return `file:${fileName}`
+  private idFor(dirName: string): string {
+    return `skill:${dirName}`
   }
 
   private safeName(id: string): string {
-    if (!id.startsWith('file:')) throw new Error('技能不存在')
-    const fileName = id.slice('file:'.length)
-    if (fileName.includes('/') || fileName.includes('\\') || fileName.includes('..')) throw new Error('非法技能路径')
-    return fileName
+    if (!id.startsWith('skill:')) throw new Error('技能不存在')
+    const dirName = id.slice('skill:'.length)
+    if (!/^[\w\u4e00-\u9fa5.-]+$/.test(dirName) || dirName.includes('..')) throw new Error('非法技能路径')
+    return dirName
   }
 
+  /** 列出技能目录下的标准 skill 目录（每个含 SKILL.md）。 */
   async list(): Promise<SkillMeta[]> {
     await this.ensureDir()
-    const entries = await readdir(this.dir).catch(() => [] as string[])
+    const entries = await readdir(this.dir, { withFileTypes: true }).catch(() => [] as Array<{ isDirectory: () => boolean; name: string }>)
     const files: SkillMeta[] = []
-    for (const fileName of entries) {
-      if (!['.md', '.markdown', '.txt', '.mdx'].includes(extname(fileName).toLowerCase())) continue
-      const raw = await readFile(join(this.dir, fileName), 'utf8').catch(() => '')
-      const parsed = parseSkillFile(fileName, raw)
-      files.push({ id: this.idFor(fileName), name: parsed.name, description: parsed.description, builtin: false, fileName })
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const skillDir = join(this.dir, entry.name)
+      const docPath = join(skillDir, 'SKILL.md')
+      const raw = await readFile(docPath, 'utf8').catch(() => '')
+      if (!raw) continue // 不含 SKILL.md 的目录不是技能，跳过
+      const parsed = parseFrontmatter(raw)
+      const name = parsed.name || entry.name
+      files.push({ id: this.idFor(entry.name), name, description: parsed.description || deriveDescription(parsed.body), builtin: false, fileName: entry.name })
     }
     files.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
     const builtin: SkillMeta[] = builtinSkills.map((skill) => ({ id: skill.id, name: skill.name, description: skill.description, builtin: skill.builtin }))
     return [...builtin, ...files]
   }
 
+  /** 读取技能正文（SKILL.md body）+ 附加上下文文件（Agent Skills 渐进式披露：正文先给，需要时模型可再要参考文件）。 */
   async read(id: string): Promise<SkillDetail> {
     const builtin = builtinSkills.find((skill) => skill.id === id)
     if (builtin) return builtin
-    const fileName = this.safeName(id)
-    const raw = await readFile(join(this.dir, fileName), 'utf8')
-    const parsed = parseSkillFile(fileName, raw)
-    return { id, name: parsed.name, description: parsed.description, builtin: false, fileName, content: parsed.content }
+    const dirName = this.safeName(id)
+    const skillDir = join(this.dir, dirName)
+    const raw = await readFile(join(skillDir, 'SKILL.md'), 'utf8')
+    const parsed = parseFrontmatter(raw)
+    let content = parsed.body.trim()
+    // 附加上下文文件追加为参考附录；保持上限避免撑爆上下文。
+    const extras: string[] = []
+    const entries = await readdir(skillDir).catch(() => [] as string[])
+    for (const name of entries) {
+      if (name === 'SKILL.md' || !/\.(md|markdown|txt|json|csv|ya?ml)$/i.test(name)) continue
+      const info = await stat(join(skillDir, name)).catch(() => null)
+      if (!info || info.size > maxContextBytes) continue
+      const text = await readFile(join(skillDir, name), 'utf8').catch(() => '')
+      if (text) extras.push(`## 参考文件：${name}\n${text}`)
+    }
+    if (extras.length) content = `${content}\n\n---\n\n${extras.join('\n\n---\n\n')}`
+    return { id, name: parsed.name || dirName, description: parsed.description || deriveDescription(parsed.body), builtin: false, fileName: dirName, content }
   }
 
-  private async writeSkill(name: string, content: string): Promise<{ fileName: string }> {
+  /** 按标准结构落盘：skills/<slug>/SKILL.md（frontmatter）+ 附加上下文文件。 */
+  private async writeSkill(name: string, parsed: { name: string; description?: string; content: string; extra?: Array<{ name: string; data: Buffer }> }): Promise<{ dirName: string }> {
+    await this.ensureDir()
     const existing = new Set(await readdir(this.dir).catch(() => [] as string[]))
-    let fileName = `${slugify(name)}.md`
+    let dirName = slugify(name)
     let counter = 1
-    while (existing.has(fileName)) fileName = `${slugify(name)}-${counter++}.md`
-    const doc = `---\nname: ${name}\ndescription: ${deriveDescription(content).replace(/\n/g, ' ')}\n---\n\n${content}\n`
-    await writeFile(join(this.dir, fileName), doc, 'utf8')
-    return { fileName }
+    while (existing.has(dirName)) dirName = `${slugify(name)}-${counter++}`
+    const skillDir = join(this.dir, dirName)
+    await mkdir(skillDir, { recursive: true })
+    const description = (parsed.description || deriveDescription(parsed.content)).replace(/\n/g, ' ')
+    const doc = `---\nname: ${name}\ndescription: ${description}\n---\n\n${parsed.content}\n`
+    await writeFile(join(skillDir, 'SKILL.md'), doc, 'utf8')
+    for (const file of parsed.extra ?? []) {
+      const safe = file.name.replace(/[/\\]/g, '-').replace(/[\u0000-\u001f]/g, '') // eslint-disable-line no-control-regex -- 清洗 zip 条目名中的控制字符
+      if (!safe || safe === 'SKILL.md') continue
+      await writeFile(join(skillDir, safe), file.data)
+    }
+    return { dirName }
   }
 
   async import(paths: string[]): Promise<SkillMeta[]> {
@@ -201,23 +216,24 @@ export class SkillStore {
       if (!allowExt.has(ext)) throw new Error(`支持 ${[...allowExt].join(' / ')} 格式的技能`)
       const info = await stat(source)
       if (info.size > maxBytes) throw new Error(`技能文件过大（上限 ${Math.round(maxBytes / 1024)} KB）`)
-      let parsed: { name: string; description: string; content: string }
+      let parsed: { name: string; description?: string; content: string; extra?: Array<{ name: string; data: Buffer }> }
       if (ext === '.zip') {
         const entries = unzip(await readFile(source))
         parsed = parseSkillPackage(basename(source, ext), entries)
       } else {
-        parsed = parseSkillFile(basename(source), await readFile(source, 'utf8'))
+        const single = parseSkillFile(basename(source, ext), await readFile(source, 'utf8'))
+        parsed = single
       }
       if (!parsed.content) throw new Error('技能内容为空')
-      const { fileName } = await this.writeSkill(parsed.name, parsed.content)
-      imported.push({ id: this.idFor(fileName), name: parsed.name, description: parsed.description, builtin: false, fileName })
+      const { dirName } = await this.writeSkill(parsed.name, parsed)
+      imported.push({ id: this.idFor(dirName), name: parsed.name, description: parsed.description || deriveDescription(parsed.content), builtin: false, fileName: dirName })
     }
     return imported
   }
 
   async remove(id: string): Promise<void> {
-    if (!id.startsWith('file:')) throw new Error('内置技能不可删除')
-    const fileName = this.safeName(id)
-    await rm(join(this.dir, fileName), { force: true })
+    if (!id.startsWith('skill:')) throw new Error('内置技能不可删除')
+    const dirName = this.safeName(id)
+    await rm(join(this.dir, dirName), { recursive: true, force: true })
   }
 }

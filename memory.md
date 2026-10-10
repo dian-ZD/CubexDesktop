@@ -1,8 +1,15 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev：独立桌面生命周期 + 任务级悬浮窗 + Work 专用节点 + 视频设置）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第二批：Skill 标准化 + Work AI 生成）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 2026-10-10 Skill 标准化 + Work 画布 AI 生成
+
+- **Skill 调用（Codex 惯例）**：斜杠命令 = 技能内容展开为一条用户消息**直接发送**（不是填输入框）；用户在 `/命令` 后键入的补充文字拼在技能内容之后。实现：`pickSkill` 置 `skillPending`，`send/queue` 读 `skillPending ? content : input`，effect 监听自动触发 sendRef；天然复用排队/建线程/压缩逻辑。
+- **Agent Skills 标准存储**：`skills/<dir>/SKILL.md`（frontmatter）+ 附加上下文文件；`SkillStore.list` 只认含 SKILL.md 的目录；`read` 把参考文件以 `## 参考文件：name` 附录拼进内容（渐进式披露的简化版）。id 变为 `skill:<dir>`，旧 `file:` 平铺文件不再列出——**无自动迁移**，用户重新导入即可。
+- **Work AI 生成**：`workflowGenerate.ts` 用 `streamChat`（无工具）让模型输出严格 JSON；`extractJson` 容忍围栏/前后噪声；`layout()` 负责坐标排布（每列 4 个、列距 300）、未知 kind 回落 task、越界/自环边丢弃、无边自动串链、zod 校验兜底。生成结果是**未保存草稿**铺到画布，用户检查后手动保存——不做静默持久化。
+- **ui.prompt** 返回 `string | null`，支持 placeholder/maxLength，是轻量单输入弹窗；复杂输入要自己开 dialog。
 
 ## 2026-10-10 独立桌面生命周期 / 任务级悬浮窗 / Work 专用节点
 

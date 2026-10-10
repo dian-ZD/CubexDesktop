@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
+import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, Sparkles, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Project, Settings, Workflow, WorkflowNode, WorkflowNodeKind } from '../../shared/schema'
 import { api, isDesktop } from './bridge'
@@ -429,6 +429,21 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
     try { if (await persist()) ui.toast(tr('工作流已保存'), 'success') } catch { onError(tr('保存工作流失败，请重试。')) } finally { setBusy(null) }
   }
 
+  // AI 生成工作流：描述需求 → 主进程调模型生成节点/连线 → 直接铺到画布（未保存，用户可检查编辑后保存）。
+  const generateFromPrompt = async () => {
+    if (!project) return
+    if (!(await confirmDiscard())) return
+    const request = await ui.prompt({ title: tr('AI 生成工作流'), message: tr('用一句话描述你想让工作流完成什么，Cubex 会自动拆解成画布节点。'), placeholder: tr('例如：搜索某主题的资料并整理成报告配一张插图'), confirmLabel: tr('生成'), maxLength: 2000 })
+    if (!request || !request.trim()) return
+    setBusy('run')
+    try {
+      const result = await api.generateWorkflow({ projectId: project.id, request, ...(settings.defaultModelId ? { modelId: settings.defaultModelId } : {}) })
+      if (!result.ok) { onError(result.error); return }
+      activate(result.data, true)
+      ui.toast(tr('工作流已生成到画布，检查后可保存'), 'success')
+    } catch { onError(tr('生成工作流失败，请重试。')) } finally { setBusy(null) }
+  }
+
   const run = async () => {
     if (!draft) return
     const runnable = draft.nodes.filter((node) => kindOf(node) !== 'note')
@@ -460,6 +475,7 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
   const openCreateMenu = (anchor: HTMLElement) => {
     void ui.openMenu(anchor, [
       { label: tr('空白工作流'), icon: Plus, onSelect: () => void create() },
+      { label: tr('AI 生成工作流…'), icon: Sparkles, onSelect: () => void generateFromPrompt() },
       'separator',
       ...templates.map((template) => ({ label: tr('模板：{name}', { name: tr(template.name) }), icon: WorkflowIcon, onSelect: () => void create(template) })),
     ])

@@ -556,6 +556,7 @@ export const githubTokenInputSchema = z.object({ token: z.string().trim().max(40
 export const githubPushInputSchema = z.object({ projectId: identifier, message: z.string().trim().max(500).optional() }).strict()
 export const saveWorkflowInputSchema = workflowSchema.strict()
 export const workflowInputSchema = z.object({ workflowId: identifier }).strict()
+export const generateWorkflowInputSchema = z.object({ projectId: identifier, request: z.string().trim().min(1, '请描述你想要的工作流').max(4000), modelId: z.string().max(100).optional() }).strict()
 export const workflowControlInputSchema = z.object({
   threadId: identifier,
   action: z.enum(['pause', 'resume', 'retry-node', 'skip-node']),
@@ -675,6 +676,7 @@ export interface CubexAPI {
   listMcp: () => Promise<Result<McpStatus[]>>
   testMcp: (input: { server: McpServer }) => Promise<Result<McpStatus>>
   saveWorkflow: (workflow: Workflow) => Promise<Result<void>>
+  generateWorkflow: (input: { projectId: string; request: string; modelId?: string }) => Promise<Result<Workflow>>
   deleteWorkflow: (input: { workflowId: string }) => Promise<Result<void>>
   runWorkflow: (input: { workflowId: string }) => Promise<Result<Thread>>
   runAutomation: (input: { automationId: string }) => Promise<Result<void>>

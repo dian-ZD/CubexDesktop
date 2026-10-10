@@ -53,6 +53,7 @@ export const channels = {
   saveWorkflow: 'cubex:save-workflow',
   deleteWorkflow: 'cubex:delete-workflow',
   runWorkflow: 'cubex:run-workflow',
+  generateWorkflow: 'cubex:generate-workflow',
   runAutomation: 'cubex:run-automation',
   browserBounds: 'cubex:browser-bounds',
   browserHide: 'cubex:browser-hide',

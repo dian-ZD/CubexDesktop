@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeIm
 import { join, basename, relative, isAbsolute, sep } from 'node:path'
 import { realpath, readFile, rm, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type McpServer, type Result, type StreamDelta, type Thread } from '../shared/schema'
+import { answerInputSchema, approvalInputSchema, automationInputSchema, browserBoundsInputSchema, browserNavigateInputSchema, browserTabInputSchema, channels, createThreadInputSchema, dequeueInputSchema, deleteMessageInputSchema, exportTextInputSchema, generateWorkflowInputSchema, githubPushInputSchema, githubTokenInputSchema, mcpTestInputSchema, openExternalInputSchema, panelWindowInputSchema, projectInputSchema, projectPathInputSchema, listProviderModelsInputSchema, probeContextWindowInputSchema, providerKeyInputSchema, regenerateMessageInputSchema, rollbackMessageInputSchema, runShellInputSchema, saveWorkflowInputSchema, sendMessageInputSchema, settingsSchema, steerInputSchema, testConnectionInputSchema, threadInputSchema, threadInputSchema as browserThreadInputSchema, updateProjectInputSchema, updateThreadInputSchema, windowActionSchema, workflowControlInputSchema, workflowInputSchema, type AgentActivity, type AppState, type Automation, type BrowserState, type ControlState, type McpServer, type Result, type StreamDelta, type Thread } from '../shared/schema'
 import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
 import { captureIsolatedDesktop, closeIsolatedDesktop, ISOLATED_DESKTOP_NAME } from './computer'
@@ -17,6 +17,7 @@ import { ExtensionHost } from './extensions'
 import { McpManager } from './mcp'
 import { SkillStore } from './skills'
 import { WorkflowRunner } from './workflowRunner'
+import { generateWorkflowWithModel } from './workflowGenerate'
 import { dueAutomations } from './workflow'
 
 const GITHUB_SECRET = 'github'
@@ -866,6 +867,13 @@ function registerIpc() {
     const thread = await agent.createThread(workflow.projectId, state.settings.defaultModelId)
     await workflowRunner.start(thread.id, workflow)
     return store.get().threads.find((item) => item.id === thread.id) ?? thread
+  })
+
+  // Work 画布「AI 生成工作流」：调 LLM 把自然语言需求转成画布上的节点（生成后由用户检查/保存）。
+  handle(channels.generateWorkflow, async (_event, payload) => {
+    const input = generateWorkflowInputSchema.parse(payload)
+    findProject(input.projectId)
+    return generateWorkflowWithModel({ settings: store.get().settings, secrets: { get: (id) => secrets.get(id) }, projectId: input.projectId, request: input.request, ...(input.modelId ? { modelId: input.modelId } : {}) })
   })
 
   handle(channels.workflowControl, async (_event, payload) => {
