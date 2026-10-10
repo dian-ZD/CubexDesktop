@@ -231,7 +231,13 @@ export class AgentRunner {
         const calls = message.toolCalls.map((call) => call.name).join('、')
         lines.push(`助手：${message.content.slice(0, 4000)}${calls ? `（调用工具：${calls}）` : ''}`)
       } else if (message.role === 'tool') {
-        const out = message.results.map((result) => `- ${result.name} ${result.ok ? '成功' : '失败'}：${result.output.slice(0, 800)}`).join('\n')
+        // 分层摘要：每个工具结果只保留首行结论与关键状态，避免摘要请求本身把旧上下文原样重放一遍
+        const out = message.results.map((result) => {
+          const firstLine = result.output.split('\n').find((line) => line.trim())?.slice(0, 200) ?? ''
+          const extra = result.ok ? '' : ' [失败]'
+          const diffNote = result.diff ? ` [改动：${result.diff.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++')).length} 行新增 / ${result.diff.split('\n').filter((line) => line.startsWith('-') && !line.startsWith('---')).length} 行删除]` : ''
+          return `- ${result.name}${extra}${diffNote}：${firstLine}`
+        }).join('\n')
         if (out) lines.push(`工具结果：\n${out}`)
       } else if (message.role === 'system') {
         lines.push(`系统：${message.content.slice(0, 1000)}`)
@@ -475,6 +481,7 @@ export class AgentRunner {
     let noToolCount = 0
     let pendingNudge = ''
     const callCounts = new Map<string, number>()
+    const failureCounts = new Map<string, number>()
     let blockedStreak = 0
     for (let step = 0; step < maxSteps && !signal.aborted; step++) {
       const state = this.store.get()
@@ -503,18 +510,28 @@ export class AgentRunner {
         autoCompactions = 3
       }
       const steeringSeen = new Set(thread.messages.filter((item) => item.role === 'user' && item.steering).map((item) => item.id))
+      // 计划复盘：从第 3 步起偶尔注入一句轻量自查，抑制无效探索/跑偏（随请求发送，不写入历史）。
+      let retrospective = ''
+      if (step >= 2 && step % 4 === 2) {
+        retrospective = '自查：目前完成了什么、与目标还差什么？是否存在在重复读取或偏离计划的步骤？接下来用最少步骤推进到目标；若目标已达成，直接给出结论并结束，不要再调用无关工具。'
+      }
 
       const messageId = randomUUID()
       const projectFiles = await readProjectFiles(project.path)
       const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles), mode: thread.mode })
+      // 上下文预算仪表：让模型知道还剩多少空间，主动控制输出与探索范围
+      const usedTokens = historyTokens(thread.messages)
+      const budget = model.contextWindow ?? 128_000
+      const gauge = `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round((usedTokens / budget) * 100)}%）。${usedTokens / budget > 0.7 ? '接近上限：避免输出冗长内容、不要重复读取已读过的文件，尽快收敛到结论。' : '正常：可正常探索，但避免重复读取与冗长输出。'}`
       const extraParts = [
+        `## 上下文预算\n${gauge}`,
         thread.todos && thread.todos.length > 0 ? `## 当前任务待办（这份清单始终可见，即使历史被裁剪也不会丢失，请据此判断做到哪一步、还剩什么，并及时用 manage_todos 更新状态）\n${renderTodos(thread.todos)}` : '',
         model.systemPromptExtra?.trim() ? `## 模型专属提示\n${model.systemPromptExtra.trim()}` : '',
       ].filter(Boolean)
       const system = extraParts.length ? `${baseSystem}\n\n${extraParts.join('\n\n')}` : baseSystem
       const reserve = estimateTokens(system) + (modelParams.maxTokens || 16_000) + 1_500
       const { messages: fitted } = fitContext(thread.messages, { contextWindow: model.contextWindow, reserve, limit: modelParams.historyLimit })
-      const history = pendingNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: pendingNudge }] : fitted
+      const history = pendingNudge ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: pendingNudge }] : retrospective ? [...fitted, { id: randomUUID(), role: 'user' as const, time: new Date().toISOString(), content: retrospective }] : fitted
       const placeholder: AssistantMessage = { id: messageId, role: 'assistant', time: new Date().toISOString(), content: '', toolCalls: [], modelId: model.id }
       await this.store.update((draft) => {
         const target = draft.threads.find((item) => item.id === threadId)!
@@ -606,47 +623,79 @@ export class AgentRunner {
 
       const results: ToolResult[] = []
       let blockedCount = 0
-      for (const call of turn.toolCalls) {
-        if (signal.aborted) return
-        const signature = `${call.name}:${JSON.stringify(call.args)}`
+      // 并行分组：同一批里相互独立的只读工具并行执行，其余（写操作、命令、审批、交互）保持串行。
+      const readOnly = new Set(['read_file', 'list_directory', 'search_files', 'browser_open', 'web_search'])
+      const parallelCalls = turn.toolCalls.filter((call) => !extensionToolNames.has(call.name) && !interactiveTools.has(call.name) && !todoTools.has(call.name) && !delegateTools.has(call.name) && readOnly.has(call.name) && typeof call.args.__raw !== 'string')
+      const sequentialCalls = turn.toolCalls.filter((call) => !parallelCalls.includes(call))
+      const signatureOf = (call: ToolCall) => `${call.name}:${JSON.stringify(call.args)}`
+      const guardAndRun = async (call: ToolCall): Promise<ToolResult | null> => {
+        const signature = signatureOf(call)
         const seen = (callCounts.get(signature) ?? 0) + 1
         callCounts.set(signature, seen)
         if (seen > 3) {
           blockedCount++
-          results.push({ callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与参数已执行多次，本次已拦截。请更换方法或直接给出结论。' })
-          continue
+          return { callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与参数已执行多次，本次已拦截。请更换方法或直接给出结论。' }
         }
         if (typeof call.args.__raw === 'string') {
-          results.push({ callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' })
-          continue
+          return { callId: call.id, name: call.name, ok: false, output: '工具参数不是合法 JSON（可能因输出过长被截断），未执行。请重新调用该工具并提供完整参数。' }
         }
+        return null
+      }
+      // 先跑可并行的只读组
+      if (parallelCalls.length > 1) this.activity(threadId, 'tool', `并行执行 ${parallelCalls.length} 个只读工具…`, { step: step + 1 })
+      const parallelResults = await Promise.all(parallelCalls.map(async (call) => {
+        const blocked = await guardAndRun(call)
+        if (blocked) return blocked
+        if (signal.aborted) return { callId: call.id, name: call.name, ok: false, output: '本轮已停止' } as ToolResult
+        return this.condenseResult(call, await runTool(call, { root: project.path, signal, commandTimeoutMs: agent.commandTimeoutSec * 1000, shell: agent.shell, sandbox: { enabled: state.settings.permissions.sandbox, allowNetwork: state.settings.permissions.sandboxNetwork } }))
+      }))
+      // 其余按原顺序串行（保持审批、delegate、交互等原有语义）
+      const sequentialResults: ToolResult[] = []
+      for (const call of sequentialCalls) {
+        if (signal.aborted) { sequentialResults.push({ callId: call.id, name: call.name, ok: false, output: '本轮已停止' }); continue }
+        const blocked = await guardAndRun(call)
+        if (blocked) { sequentialResults.push(blocked); continue }
         if (call.name === 'delegate') {
           this.activity(threadId, 'delegating', '正在协调子智能体…', { step: step + 1, detail: summarizeCall(call) })
-        } else if (!interactiveTools.has(call.name) && !todoTools.has(call.name)) {
-          this.activity(threadId, 'tool', summarizeCall(call), { step: step + 1 })
+          sequentialResults.push(await this.delegate(threadId, run, call, step + 1))
+          continue
         }
         if (interactiveTools.has(call.name)) {
-          results.push(await this.askUser(threadId, run, call))
+          sequentialResults.push(await this.askUser(threadId, run, call))
           continue
         }
         if (todoTools.has(call.name)) {
-          results.push(await this.manageTodos(threadId, call))
-          continue
-        }
-        if (delegateTools.has(call.name)) {
-          results.push(await this.delegate(threadId, run, call, step + 1))
+          sequentialResults.push(await this.manageTodos(threadId, call))
           continue
         }
         const decision = await this.authorize(threadId, run, call)
         if (!decision.approved) {
-          results.push({ callId: call.id, name: call.name, ok: false, denied: true, output: decision.reason ?? '用户拒绝了此操作。' })
+          sequentialResults.push({ callId: call.id, name: call.name, ok: false, denied: true, output: decision.reason ?? '用户拒绝了此操作。' })
           continue
         }
         if (extensionToolNames.has(call.name)) {
-          results.push(await this.runExtension(call, project.path, signal, threadId))
+          sequentialResults.push(await this.runExtension(call, project.path, signal, threadId))
           continue
         }
-        results.push(await runTool(call, { root: project.path, signal, commandTimeoutMs: agent.commandTimeoutSec * 1000, shell: agent.shell, sandbox: { enabled: state.settings.permissions.sandbox, allowNetwork: state.settings.permissions.sandboxNetwork } }))
+        const executed = await runTool(call, { root: project.path, signal, commandTimeoutMs: agent.commandTimeoutSec * 1000, shell: agent.shell, sandbox: { enabled: state.settings.permissions.sandbox, allowNetwork: state.settings.permissions.sandboxNetwork } })
+        // 失败根因反馈：同一工具连续失败时附带提示，避免模型反复撞同一堵墙
+        if (!executed.ok) {
+          const failKey = `${call.name}:${call.args.path ?? call.args.command ?? call.args.pattern ?? ''}`
+          const failCount = (failureCounts.get(failKey) ?? 0) + 1
+          failureCounts.set(failKey, failCount)
+          if (failCount >= 2) {
+            executed.output += `\n提示：该工具已连续失败 ${failCount} 次（相同目标）。请先分析失败原因，换一种方法（如先 list_directory 确认路径、用 search_files 定位、修改参数后重试），不要原样重复同一调用。`
+          }
+        } else {
+          failureCounts.delete(`${call.name}:${call.args.path ?? call.args.command ?? call.args.pattern ?? ''}`)
+        }
+        sequentialResults.push(this.condenseResult(call, executed))
+      }
+      // 按模型原始调用顺序回填结果（provider 严格要求 callId 对应）
+      const resultByCallId = new Map([...parallelResults, ...sequentialResults].map((result) => [result.callId, result]))
+      for (const call of turn.toolCalls) {
+        const result = resultByCallId.get(call.id)
+        if (result) results.push(result)
       }
       if (signal.aborted) return
       // 空转治理：若整步工具调用都因重复被拦截，连续两次则中止本轮
@@ -918,6 +967,42 @@ export class AgentRunner {
     } catch (error) {
       return { name: task.name, ok: false, summary: `执行失败：${error instanceof Error ? error.message : String(error)}` }
     }
+  }
+
+  /**
+   * 工具结果智能裁剪：按工具类型收紧送回模型的内容，同样的上下文预算装更多有效信息。
+   * list_directory 只留前 60 个条目；search_files 每个文件只留前 3 条命中；read_file 大结果砍半保留首尾。
+   */
+  private condenseResult(call: ToolCall, result: ToolResult): ToolResult {
+    if (!result.ok || !result.output) return result
+    const clipNote = (kept: string, total: number) => `${kept}\n…（其余 ${total - kept.split('\n').length} 行已省略；如需完整内容请用更精确的参数重试）`
+    if (call.name === 'list_directory') {
+      const lines = result.output.split('\n')
+      if (lines.length > 60) result.output = clipNote(lines.slice(0, 60).join('\n'), lines.length)
+    } else if (call.name === 'search_files') {
+      const lines = result.output.split('\n')
+      const perFile = new Map<string, number>()
+      const kept: string[] = []
+      let dropped = 0
+      for (const line of lines) {
+        if (line.startsWith('…（')) { kept.push(line); continue }
+        const file = line.split(':')[0] ?? ''
+        const count = perFile.get(file) ?? 0
+        if (count >= 3) { dropped++; continue }
+        perFile.set(file, count + 1)
+        kept.push(line)
+      }
+      if (dropped > 0) result.output = `${kept.join('\n')}\n…（另有 ${dropped} 条同文件命中已省略）`
+    } else if (call.name === 'read_file') {
+      const lines = result.output.split('\n')
+      // read_file 本身有 400 行/2000 行上限，只处理超过 250 行的大读取
+      if (lines.length > 250) {
+        const head = lines.slice(0, 150)
+        const tail = lines.slice(-60)
+        result.output = `${head.join('\n')}\n…（中间 ${lines.length - 210} 行已省略）\n${tail.join('\n')}`
+      }
+    }
+    return result
   }
 
   private async runExtension(call: ToolCall, root: string, signal: AbortSignal, threadId: string): Promise<ToolResult> {

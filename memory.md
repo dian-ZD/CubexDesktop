@@ -1,8 +1,16 @@
 # 记忆
 
-> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第四批：Work 节点类型专属配置）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.3-dev 第五批：agent 能力优化）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
+
+## 2026-10-10 agent 能力优化（第五批）
+
+- **并行只读组**：`readOnly = new Set(['read_file','list_directory','search_files','browser_open','web_search'])`；主循环把同一步的 toolCalls 拆成 parallel/sequential 两组，parallel 走 Promise.all，最终按模型原始调用顺序回填结果（provider 要求 callId 对应）。扩展工具、delegate、交互（ask_user/ui.prompt）、manage_todos、审批类一律走串行组，语义不变。重复调用拦截（callCounts >3）与 __raw 守卫抽成 guardAndRun 复用。
+- **condenseResult 是在 runTool 之后做的**，不影响工具内部行为；失败结果与被拒结果不裁剪。
+- **失败根因计数按 run 生命周期**（loop 局部 Map），key 是 `name:path|command|pattern`；阈值 ≥2 才提示，成功即清除。
+- **token 仪表**：用 estimateTokens 粗估（非 provider usage），>70% 警戒文案在 system 的「上下文预算」块里；每步重算。
+- **教训**：私有方法逻辑要单测时，用「语义约定测试」复制核心算法验证格式约定，而不是硬拆 private（避免脆弱耦合）；Message 类型的 assistant 分支必填 modelId。
 
 ## 2026-10-10 Work 节点类型专属配置
 

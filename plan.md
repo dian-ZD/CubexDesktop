@@ -6,6 +6,16 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.3-dev 第五批（agent 能力优化一轮）
+
+- [x] 计划复盘：主循环从第 3 步起每 4 步注入一次轻量自查提示（随请求发送，不写入历史），抑制无效探索/跑偏。
+- [x] 工具结果智能裁剪 `condenseResult`：list_directory >60 条截断；search_files 每文件只留前 3 条命中；read_file >250 行保留首 150/尾 60。
+- [x] 失败根因反馈：同一工具+目标连续失败 ≥2 次时在结果里附「换方法」提示，成功后清除计数。
+- [x] 上下文预算仪表：每步 system 注入「上下文用量约 Xk/Yk（Z%）」，>70% 提示收敛。
+- [x] 并行只读工具：同一步内 read_file/list_directory/search_files/browser_open/web_search 多个调用 Promise.all 并行，结果按原始顺序回填；写操作/审批/delegate/交互保持串行。
+- [x] 分层摘要压缩：renderTranscript 的工具结果只保留首行结论 + diff 新增/删除行数统计，不再重放 800 字符全量输出。
+- [x] 新增 tests/agentOptimize.test.ts（7 用例）；typecheck / lint 0 error / 187 passed + 4 skipped。
+
 ### 当前任务：0.3.3-dev 第四批（Work 节点类型专属配置项）
 
 用户反馈：所有 Work 节点的可配置项都只有一个「指令」，类型形同虚设。
