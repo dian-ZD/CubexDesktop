@@ -9,7 +9,7 @@
 1. 先读 `goal.md`（要做成什么、验收标准、边界）。
 2. 再读 `plan.md`（步骤清单与「当前进行到的精确位置 / 下一步第一件事」）。
 3. 再读 `memory.md`（技术栈、决策、坑、命令结果、待确认项）。
-4. 读完后的第一件事：核对 `plan.md` 文首当前任务和「下一步第一件事」。当前版本为 **0.3.1-dev**（已开放 HTTP 模型端点，版权 HIGHLIGHT STUDIO）。本轮修完：CSS 六个未定义变量导致的悬浮窗/弹层透明、无边框窗口圆角灰尖、悬浮窗不可拖动、思考强度刻度与滑块错位、模型按钮描边、设置滑条端点留白、`shell.openPath` 的 `Failed to open path` 报错、语音下载源（auto/官方/镜像）、i18n 词条 0 缺失（`miscPhrases`）。171 passed / 4 skipped，typecheck、lint（0 error / 9 既有 warning）、dist 与打包版隔离冒烟通过；悬浮窗、模型选择器、滑条、设置分类均在打包版实测。按用户指示已 commit 并 push 到 origin/main（push 后核对 hash，见 plan.md），安装包 `release\Cubex Setup 0.3.1-dev.exe`（112,773,865 B，NotSigned）。中文语音真实效果与 VocoType（FunASR）是否接入待用户反馈。
+4. 读完后的第一件事：核对 `plan.md` 文首当前任务和「下一步第一件事」。当前版本为 **0.3.2-dev**（已开放 HTTP 模型端点，版权 HIGHLIGHT STUDIO）。上一轮 0.3.1-dev 修完透明度/圆角/拖动/对齐/报错并推送；用户实测后反馈「滑条拖动不了、色彩条不完整」，本轮定位为 `.volume-row .slider` 丢失弹性宽度（实测滑条宽 0）与填充条左端缺口，已修复并用真实鼠标事件在打包版复验（透明度 31→63 连续拖动、音量 50→100）。171 passed / 4 skipped，typecheck、lint（0 error / 9 既有 warning）、dist 与打包版桌面冒烟通过。安装包 `release\Cubex Setup 0.3.2-dev.exe`（112,773,932 B，SHA256 A3B6FB6C…，NotSigned）等用户安装包确认后仍需 commit/push。中文语音真实效果与 VocoType（FunASR）是否接入待用户反馈。
 
 ## 工作时的行为准则
 
@@ -48,6 +48,6 @@
 - [ ] `plan.md` 的「下一步第一件事」具体到可直接执行。
 - [ ] `memory.md`「未解决问题 / 待确认」已更新。
 - [ ] 代码改动已过 typecheck + lint（0 error）+ `npm test`（当前基线 171 passed / 4 skipped）。
-- [ ] 若打包，核对 `release\Cubex Setup <version>.exe`（当前 **0.3.1-dev**，112,773,865 B）的版本、版权、大小及实际签名状态（当前 NotSigned）。
+- [ ] 若打包，核对 `release\Cubex Setup <version>.exe`（当前 **0.3.2-dev**，112,773,932 B）的版本、版权、大小及实际签名状态（当前 NotSigned）。
 - [ ] 若涉及 git：仅在用户明确要求时 commit/push；push 后核对目标分支/commit hash。
 - [ ] 无遗留占用进程（`Get-Process -Name Cubex` 为空）。

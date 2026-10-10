@@ -258,7 +258,7 @@ function Slider({ value, min, max, step = 1, label, onChange }: { value: number;
         if (event.key === 'ArrowRight' || event.key === 'ArrowUp') { event.preventDefault(); onChange(Math.min(max, value + step)) }
       }}
     >
-      <span className="slider-fill" style={{ width: `calc(${ratio} * (100% - ${SLIDER_THUMB * 2}px))` }} />
+      <span className="slider-fill" style={{ width: ratio > 0 ? `calc(${SLIDER_THUMB}px + ${ratio} * (100% - ${SLIDER_THUMB * 2}px))` : '0px' }} />
       <span className="slider-thumb" style={{ left: `calc(${SLIDER_THUMB}px + ${ratio} * (100% - ${SLIDER_THUMB * 2}px))` }} />
     </div>
   )

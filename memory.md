@@ -1,6 +1,6 @@
 # 记忆
 
-> 最后更新时间：2026-10-09 ｜ 更新者：AI Agent（0.3.1-dev：透明度/圆角/拖动/对齐/报错修复）
+> 最后更新时间：2026-10-10 ｜ 更新者：AI Agent（0.3.2-dev：滑条可拖动 + 色彩条完整修复）
 >
 > 记录项目中长期有效的事实与本轮任务的过程细节。任务目标见 goal.md，步骤进度见 plan.md，此处不重复大段步骤说明。
 
@@ -15,6 +15,13 @@
 - **思考强度**：`modelParams.thinkingLevel`（off/low/medium/high，默认 null）经 `mergeModelParams` 支持单模型覆盖；OpenAI 兼容走 `reasoning_effort`，Anthropic 走 `thinking.budget_tokens`。是否支持用 `supportsThinkingLevel(modelId)` 按已知推理/普通模型名单判断，未知型号按支持处理并在 UI 标注。
 - **语音输入**：打包后渲染页在 app.asar 内 file://，里面 `new Worker(url, {type:'module'})` 能构造但起不来（worker 里 sandboxed_renderer bundle 报 `binding.startupData` 为 null），表现为状态卡在「正在识别」。改为渲染进程主线程动态 `import('@xenova/transformers')`（whisper-tiny + onnxruntime-web，wasmPaths 显式指向 jsdelivr）。`src/renderer/index.html` 的 CSP meta 必须放行 `script-src 'wasm-unsafe-eval'` 与 `connect-src https://huggingface.co https://*.hf.co https://cdn.jsdelivr.net`，否则 wasm 编译和模型下载都会被拦。
 - **复制**：`navigator.clipboard.writeText` 在窗口未聚焦时直接抛 `NotAllowedError: Document is not focused`（实测），点「复制」恰恰常发生在焦点切换后。所有复制改走主进程 `clipboard.writeText`（新增 `copyText` IPC），浏览器预览模式回退到 `navigator.clipboard`。
+### 2026-10-10 0.3.2-dev：自绘滑条两级回归修复
+
+- **`.volume-row .slider` 丢了弹性宽度**：上一轮把 `.volume-row input[type='range']` 换成自绘 `.slider` 的脚本里，那条 `replace` 静默失败（同一次只有另一处插入成功，脚本用「整体有变化」判成功），滑条 `flex: 0 1 auto` + 无内容 → **实测宽度 0**，看不见也拖不动。已显式写 `.volume-row .slider { flex: 1 1 0%; min-width: 0 }`。**教训：批量替换 CSS 的脚本必须逐条断言命中，不能只看 `t !== before`。**
+- **合成事件测不出「点不到」**：上一轮用 `dispatchEvent(new PointerEvent(...))` 量到 gap=-8 就以为是测量时机问题，其实是元素宽 0。这类交互一定要用 CDP `Input.dispatchMouseEvent` 真实输入事件验证；并且目标必须在视口内（先 `scrollIntoView`，探针量到 y=1816 时 press 落在空白处，一度误判成不生效）。
+- **填充条几何**：色彩条从 `left: 0` 起、宽度 `calc(半径 + 比例 * (100% - 2*半径))`，末端正好落在滑块中心；比例 0 时 JS 直接给 `0px`，避免关闭档出现小凸起。设置滑条（`SLIDER_THUMB=8`）与思考强度滑条（`THUMB=10`）同一套写法。
+- 版本线：0.2.2-dev → 0.3.1-dev → **0.3.2-dev**；0.3.1-dev 已推送，因滑条属明显回归故升修订号，不是用户改主意。
+
 ### 2026-10-09 0.3.1-dev 修复轮（透明度/圆角/拖动/对齐/报错）
 
 - **CSS 变量缺失是多个「透明/无边框」现象的共同根因**：`styles.css` 用了 `--bg-panel`、`--accent`、`--surface`、`--border`、`--text-secondary`、`--matcha-dim` 六个变量，但全文件从未 `:define`，深浅主题都没有。未定义变量在 `color-mix()` 与 `background` 里会让整条声明失效 → 背景变全透明、边框消失。已补齐并保留原配色语义（`--accent` 取原 accent 蓝，`--bg-panel` 深 #23252a / 浅 #ffffff）。**教训：新增 CSS 变量必须同时加进 `:root` 与 `[data-theme='light']` 两处。**

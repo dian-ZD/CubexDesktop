@@ -112,7 +112,7 @@ export function ModelPicker({ models, value, fallbackParams, compact = false, cl
                     if (event.key === 'ArrowRight' || event.key === 'ArrowUp') { event.preventDefault(); pick(index + 1) }
                   }}
                 >
-                  <span className="model-picker-fill" style={{ width: `calc(${ratio} * (100% - ${THUMB * 2}px))` }} />
+                  <span className="model-picker-fill" style={{ width: ratio > 0 ? `calc(${THUMB}px + ${ratio} * (100% - ${THUMB * 2}px))` : '0px' }} />
                   {thinkingLevels.map((item, position) => (
                     <span key={item} className={`model-picker-stop${position <= index ? ' on' : ''}`} style={{ left: `calc(${THUMB}px + ${position / (thinkingLevels.length - 1)} * (100% - ${THUMB * 2}px))` }}>
                       <i />

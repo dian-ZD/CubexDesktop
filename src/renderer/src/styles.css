@@ -4539,6 +4539,12 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
+/* 自绘滑条必须显式给弹性宽度，否则 flex-basis: auto + 无内容会把宽度算成 0（看不见也拖不动）。 */
+.volume-row .slider {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
 .volume-row .unit {
   min-width: 42px;
   text-align: right;
@@ -7394,7 +7400,8 @@ textarea:focus-visible {
   position: absolute;
   top: 3px;
   bottom: 3px;
-  left: 10px;
+  /* 与设置滑条一致：从轨道最左端延伸到滑块中心，左端不留缺口。 */
+  left: 0;
   border-radius: 999px;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #fff), #4aa3f0);
   opacity: 0.9;
@@ -7676,8 +7683,8 @@ textarea:focus-visible {
   position: absolute;
   top: 8px;
   bottom: 8px;
-  /* 与滑块中心对齐：起点在半个滑块半径处，长度按同一套内缩公式计算。 */
-  left: 8px;
+  /* 色彩条从轨道最左端一直延伸到滑块中心（宽度由 JS 按「滑块半径 + 比例」算出），不出现左端缺口。 */
+  left: 0;
   border-radius: 999px;
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 60%, #fff), var(--accent));
   transition: width 180ms cubic-bezier(0.34, 1.45, 0.64, 1);
