@@ -1,5 +1,5 @@
-import { registerPhrases } from './i18n'
-
+// 词条定义（zh 源文案 → 英文）。zh-CN 界面直接用源文案，这份词典只在英文界面用：
+// 由 phrases-en.ts 在切到英文时动态 import 并注册，避免 89KB 词典进主 bundle 拖慢首帧。
 const phrases: Record<string, string> = {
   '读取目录失败，请重试。': 'Could not read the directory. Please retry.',
   '等待响应或连续无数据的时限；持续收到数据会续期，不改变服务端超时。': 'Timeout for waiting for a response or receiving no data. Incoming data resets it; server-side timeouts are unaffected.',
@@ -1227,14 +1227,6 @@ const miscPhrases: Record<string, string> = {
   '已添加': 'Added',
 }
 
-registerPhrases(miscPhrases)
-registerPhrases(phrases)
-registerPhrases(settingsPhrases)
-registerPhrases(appPhrases)
-registerPhrases(morePhrases)
-registerPhrases(settingsPhrases2)
-registerPhrases(skillPhrases)
-registerPhrases(workflowPhrases)
-registerPhrases(betaPhrases)
+export const phraseGroups = [phrases, settingsPhrases, appPhrases, morePhrases, settingsPhrases2, skillPhrases, workflowPhrases, betaPhrases, miscPhrases]
 
 export {}

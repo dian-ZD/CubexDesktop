@@ -22,13 +22,29 @@ export class StateStore {
     let notice: string | undefined
     try {
       const raw = await readFile(this.filePath, 'utf8')
-      const parsed = stateSchema.safeParse(migrateState(JSON.parse(raw)))
-      if (parsed.success) {
-        this.state = parsed.data
+      const migrated = migrateState(JSON.parse(raw)) as Record<string, unknown> | null
+      // 快速路径：state.json 只由本应用写入，磁盘上的数据上次已通过全量校验。
+      // 重跑完整 zod 校验在大会话（数千条消息）上要数百毫秒，且阻塞首帧。改为轻量结构检查，
+      // 失败才回落到全量 safeParse（保住既有容错语义）。
+      const looksValid = typeof migrated?.version === 'number'
+        && Array.isArray(migrated.threads)
+        && Array.isArray(migrated.projects)
+        && typeof migrated.settings === 'object' && migrated.settings !== null
+        && migrated.threads.every((thread: unknown) => {
+          const item = thread as { id?: unknown; messages?: unknown }
+          return typeof item?.id === 'string' && Array.isArray(item?.messages)
+        })
+      if (looksValid) {
+        this.state = migrated as AppState
       } else {
-        notice = '状态文件校验失败，已重置为初始状态；原文件保留为 .corrupt 备份'
-        await rename(this.filePath, `${this.filePath}.corrupt`).catch(() => undefined)
-        this.state = createInitialState()
+        const parsed = stateSchema.safeParse(migrated)
+        if (parsed.success) {
+          this.state = parsed.data
+        } else {
+          notice = '状态文件校验失败，已重置为初始状态；原文件保留为 .corrupt 备份'
+          await rename(this.filePath, `${this.filePath}.corrupt`).catch(() => undefined)
+          this.state = createInitialState()
+        }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

@@ -477,9 +477,12 @@ function hardenPreviewSession() {
   preview.setPermissionCheckHandler((_wc, permission) => permission === 'media')
 }
 
-function registerIpc() {
-  handle(channels.getState, async () => withKeys(store.get()))
+// store 就绪门：窗口先建、store.load 后完成，首个 getState 必须等真实状态，否则渲染层拿到空状态
+let releaseStoreBarrier: () => void = () => undefined
+const storeReadyBarrier = new Promise<void>((resolve) => { releaseStoreBarrier = resolve })
 
+function registerIpc() {
+  handle(channels.getState, async () => { await storeReadyBarrier; return withKeys(store.get()) })
   handle(channels.selectProject, async () => {
     if (!mainWindow) throw new Error('窗口不可用')
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: '选择项目目录' })
@@ -953,13 +956,15 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(async () => {
   hardenSession()
+  // store.load 只影响 IPC 响应内容，不阻塞窗口创建：先建窗让渲染层尽早开始加载，store 与密钥并行就绪
+  createWindow()
   await Promise.all([store.load(), secrets.load()])
+  releaseStoreBarrier()
   if (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text') {
     await store.update((state) => { state.notice = [state.notice, '当前系统无可用密钥环（gnome-keyring/kwallet），API Key 仅弱加密存储，建议启用系统密钥环'].filter(Boolean).join('；') })
   }
   store.subscribe(publish)
   registerIpc()
-  createWindow()
   void buildAppIcon().then(() => {
     if (appIcon && !appIcon.isEmpty()) for (const win of liveWindows()) win.setIcon(appIcon)
   }).catch(() => { /* 图标构建失败不阻塞启动 */ })

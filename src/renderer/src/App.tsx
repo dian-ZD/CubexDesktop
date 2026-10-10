@@ -3,6 +3,7 @@ import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, Chevr
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ThinkingLevel, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
+import { loadEnglishPhrases } from './phrases-en'
 import { Logo } from './components/Logo'
 import { Markdown, OpenTargetContext, type OpenTarget } from './components/Markdown'
 import type { OpenRequest } from './RightPanel'
@@ -142,6 +143,7 @@ function playCue(kind: 'done' | 'approval' | 'question', volume: number) {
 export function App() {
   const [state, setState] = useState<AppState>(() => createInitialState())
   const [loaded, setLoaded] = useState(false)
+  const [phrasesReady, setPhrasesReady] = useState(0) // 英文词典加载完成后 +1，强制重渲染刷新文案
   const [view, setView] = useState<'chat' | 'settings' | 'work' | 'browser' | 'automation'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>()
   const [projectId, setProjectId] = useState<string | null>(null)
@@ -318,6 +320,11 @@ export function App() {
   const isActive = thread?.status !== undefined && thread.status !== 'idle'
   const { appearance, chat, general, sound, work } = state.settings
   const uiLang = general.uiLanguage
+  // 英文词典按需加载：zh-CN 零开销，切到 en 时动态拉取注册（重渲染由 lang state 变化自然触发）
+  useEffect(() => {
+    if (uiLang !== 'en') return
+    void loadEnglishPhrases().then(() => setPhrasesReady((version) => version + 1))
+  }, [uiLang])
   const t = useCallback((key: string, vars?: Record<string, string | number>) => translate(uiLang, key, vars), [uiLang])
   const tr = useCallback((zhText: string, vars?: Record<string, string | number>) => trBase(uiLang, zhText, vars), [uiLang])
   const panelFallback = <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在加载…')}</div>
@@ -1148,7 +1155,7 @@ export function App() {
   return (
     <LanguageContext.Provider value={uiLang}>
     <OpenTargetContext.Provider value={requestOpen}>
-    <div className={`shell${showSidebar ? '' : ' sidebar-collapsed'}${maximized ? ' maximized' : ''}${focused ? '' : ' blurred'}`} style={{ ...(sideWidth ? { ['--side-col' as string]: `${sideWidth}px` } : {}), ...(rightWidth ? { ['--right-col' as string]: `${rightWidth}px` } : {}) }}>
+    <div data-phrases-ready={phrasesReady} className={`shell${showSidebar ? '' : ' sidebar-collapsed'}${maximized ? ' maximized' : ''}${focused ? '' : ' blurred'}`} style={{ ...(sideWidth ? { ['--side-col' as string]: `${sideWidth}px` } : {}), ...(rightWidth ? { ['--right-col' as string]: `${rightWidth}px` } : {}) }}>
       {showSidebar && (
         <aside className="sidebar" aria-label={tr('工作区导航')}>
           <div className="sidebar-brand">

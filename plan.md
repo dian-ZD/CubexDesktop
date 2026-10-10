@@ -6,6 +6,16 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.3-dev 第七批（性能与加载速度）
+
+- [x] 主进程启动顺序：`createWindow()` 提前到 `store.load()/secrets.load()` 之前（窗口创建不依赖状态），渲染层 JS 加载与磁盘读并行；首个 `getState` 加 storeReadyBarrier 门，保证渲染层拿到完整状态而非空状态（`src/main/index.ts`）。
+- [x] store.load 快速路径：state.json 只由本应用写入（上次已过全量校验），改为轻量结构检查（version/threads/projects/settings + 每 thread 有 id/messages），失败才回落全量 zod safeParse——大会话（数千条消息）省数百 ms 且原本串行阻塞建窗。
+- [x] 英文词典按需加载：phrases.ts（89KB，zh→en 词典）从主 bundle 拆出，由 phrases-en.ts 动态 import + 注册（`App.tsx` 按 uiLang 触发，`phrasesReady` state 强制重渲染）；zh-CN 用户零加载。渲染层首帧关键 JS 324KB → 150KB（-54%）。
+- [x] zod 拆独立 chunk（93KB，主要被主进程与设置路径用）。
+- [x] index.html 内联启动骨架屏（spinner + keyframes），JS 解析期间有视觉反馈，消除白屏。
+- [x] 评估后未做：主进程 externalizeDeps（files 排除了 node_modules，外置会让打包产物缺 zod 依赖——dev 冒烟测不出，已回退）；getState 瘦身/增量（消息被历史分页、token 统计等多处假设全量存在，改动面大，记录待办）；透明窗口改不透明（设计需要圆角）。
+- [x] 校验：typecheck / lint 0 error / 187 passed + 4 skipped / 打包冒烟通过。
+
 ### 当前任务：0.3.3-dev 第六批（全代码库审查修复）
 
 三个并行审查覆盖主进程核心 / 外围 / 渲染层+测试，确认修复以下问题（高→中→低）：
