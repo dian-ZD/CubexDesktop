@@ -196,12 +196,35 @@ if (-not [Launch]::CreateProcess(${NULL_DEVICE}, $cmd, [IntPtr]::Zero, [IntPtr]:
 Write-Output $pi.dwProcessId
 `
 
-/** 在独立桌面上启动程序（例如浏览器、记事本），返回进程 ID */
+/** 在独立桌面上启动程序（例如浏览器、记事本），返回进程 ID。
+ * 注意：单实例应用（浏览器等）检测到已有实例会把窗口开到那个实例所在桌面（当前桌面），
+ * 因此桌面创建后建议先由会话层驻留一个 explorer 壳进程。 */
 export async function launchOnIsolatedDesktop(command: string, args = '', name = ISOLATED_DESKTOP_NAME): Promise<number> {
   const cleaned = args.replace(/"/g, '').trim()
   const commandLine = cleaned ? `${command} "${cleaned}"` : command
   const output = await ps(launchScript(name, commandLine), 30_000)
   return Number(output.trim().split('\n').pop()) || 0
+}
+
+// 独立桌面的 explorer 壳进程：保持桌面会话有效，并让单实例应用把窗口开到独立桌面
+let shellPid = 0
+
+export async function ensureIsolatedShell(name = ISOLATED_DESKTOP_NAME): Promise<number> {
+  if (shellPid) {
+    const alive = await ps(`(Get-Process -Id ${shellPid} -ErrorAction SilentlyContinue) -ne $null`, 10_000).catch(() => 'False')
+    if (alive.trim().toLowerCase() === 'true') return shellPid
+    shellPid = 0
+  }
+  shellPid = await launchOnIsolatedDesktop('explorer.exe', '', name)
+  // explorer 在新桌面初始化较慢，等它就绪再返回
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  return shellPid
+}
+
+export async function closeIsolatedShell(): Promise<void> {
+  if (!shellPid) return
+  await ps(`Stop-Process -Id ${shellPid} -Force -ErrorAction SilentlyContinue`, 10_000).catch(() => undefined)
+  shellPid = 0
 }
 
 const KEY_CODES: Record<string, number> = { enter: 13, tab: 9, esc: 27, escape: 27, backspace: 8, delete: 46, space: 32, left: 37, up: 38, right: 39, down: 40, home: 36, end: 35, pageup: 33, pagedown: 34, f5: 116 }

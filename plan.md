@@ -6,6 +6,16 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.9-dev（/ 统一技能+插件 + 插件 slash 配置 + 占位行内显示 + 独立桌面 explorer 壳）
+
+- [x] / 菜单统一技能+插件：新增 SlashEntry 类型与 listSlash IPC；SkillMenu 显示两类条目（Sparkles/Puzzle 图标区分）。
+- [x] 插件协议开放 slash 配置：plugin.json 支持 `slash: true`（插件级开关）与工具级 `slashCommand`（/ 别名）、`slashTemplate`（占位提示模板，{args} 为用户补充）；默认关闭，开发者自行决定是否可被 / 调用。
+- [x] 插件 / 调用：选中后挂占位卡（kind:'plugin'），instruction 指示模型用 plugin_call 调用对应工具、参数从消息推断；回退同技能恢复占位。
+- [x] 占位改行内显示：chip 绝对定位浮在 textarea 首行，textarea 首行 text-indent 让文字跟在 chip 后（不再上方另起一行）。
+- [x] 独立桌面「操作影响双方」根因：单实例应用（浏览器等）在独立桌面启动时检测到已有实例，把窗口开到当前桌面；新增 ensureIsolatedShell 先驻留 explorer 壳进程（实测 explorer 可驻留私有桌面，窗口落在独立桌面），closeIsolatedDesktop 时一并清理。
+- [x] 校验 typecheck / lint 0 error / 187 passed。
+- [ ] 打包 0.3.9-dev + 冒烟 + 推送 + 打 tag。
+
 ### 当前任务：0.3.8-dev（技能不自动发送 + 回退恢复技能占位 + CI 再修）
 
 - [x] 技能仍直接发送：根因是遗留的 useEffect——skillPending 一设置就自动调用 send()；已删除，现在选中技能只挂输入框占位，手动发送。

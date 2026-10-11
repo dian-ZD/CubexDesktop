@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, PictureInPicture, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
-import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageImage, type PendingQuestion, type Project, type Settings, type SkillMeta, type Thread, type ThinkingLevel, type ToolCall, type ToolResult } from '../../shared/schema'
+import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, CloudUpload, Copy, Cpu, Ellipsis, FileCode2, FileDown, Folder, FolderOpen, FolderTree, Globe, Hand, Image, Layers, ListChecks, ListOrdered, LoaderCircle, Maximize2, MessageCircleQuestion, MessageSquare, Mic, MicOff, Minus, Monitor, Moon, OctagonX, Palette, PanelLeft, PanelRight, Paperclip, Pencil, PictureInPicture, Pin, PinOff, PlugZap, Plus, Puzzle, Search, Settings2, ShieldCheck, Sparkles, Square, SquarePen, Sun, Terminal, Timer, Trash2, Workflow, X, Zap } from 'lucide-react'
+import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageCard, type MessageImage, type PendingQuestion, type Project, type Settings, type SlashEntry, type Thread, type ThinkingLevel, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
 import { loadEnglishPhrases } from './phrases-en'
@@ -270,11 +270,11 @@ export function App() {
     setRightPanelOpen(true)
     setOpenRequest({ target, nonce: Date.now() })
   }, [])
-  const [skills, setSkills] = useState<SkillMeta[]>([])
+  const [skills, setSkills] = useState<SlashEntry[]>([])
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
-  const [skillPending, setSkillPending] = useState<{ skillId: string; skillName: string; instruction: string } | null>(null)
+  const [skillPending, setSkillPending] = useState<{ card: Extract<MessageCard, { kind: 'skill' | 'plugin' }>; instruction: string } | null>(null)
   const reloadSkills = useCallback(() => {
-    void api.listSkills().then((result) => {
+    void api.listSlash().then((result) => {
       if (result.ok) setSkills(result.data)
       else setError(result.error)
     })
@@ -286,17 +286,28 @@ export function App() {
     if (match && skills.length === 0) reloadSkills() // 列表为空时输入 /：补拉一次，避免导入技能后 / 菜单仍为空
     setSkillQuery(match ? match[1] : null)
   }, [skills.length, reloadSkills])
-  // Codex/Claude Code 惯例的斜杠命令：选中技能 = 以技能内容为指令立即发送一条用户消息；
-  // 输入框里已有的补充文字（/命令之外键入的）拼接在技能内容之后，而不是把全文塞回输入框。
-  const pickSkill = useCallback((skill: SkillMeta) => {
+  // Codex/Claude Code 惯例的斜杠命令：选中技能/插件 = 图标+名称占位挂到输入框（不自动发送），
+  // 用户补充的文字照常键入，手动发送时全文/插件指令经 instruction 随该次请求发送、不进历史。
+  const pickSkill = useCallback((entry: SlashEntry) => {
     setSkillQuery(null)
-    void api.readSkill({ id: skill.id }).then(async (result) => {
-      if (!result.ok) { setError(result.error); return }
-      // 技能以「图标+名称」占位符挂在输入框上（可移除），用户补充的文字照常键入，手动发送时才发出；
-      // 技能全文经 instruction 随该次请求发送、不进历史
-      setInput(input.replace(/^\/[^\s/]*\s?/, ''))
-      setSkillPending({ skillId: skill.id, skillName: skill.name, instruction: result.data.content })
-    })
+    if (entry.kind === 'skill') {
+      void api.readSkill({ id: entry.id }).then(async (result) => {
+        if (!result.ok) { setError(result.error); return }
+        setInput(input.replace(/^\/[^\s/]*\s?/, ''))
+        setSkillPending({ card: { kind: 'skill', skillId: entry.id, name: entry.name }, instruction: result.data.content })
+      })
+      return
+    }
+    // 插件条目：instruction 指示模型用 plugin_call 调用该插件工具，参数从消息补充文字中推断
+    setInput(input.replace(/^\/[^\s/]*\s?/, ''))
+    const template = entry.template ? entry.template.replace(/\{args\}/g, '').trim() : ''
+    const instruction = [
+      `用户通过 /${entry.name}（插件 ${entry.plugin} 的工具 ${entry.tool}）发起请求。`,
+      entry.description ? `该工具用途：${entry.description}` : '',
+      template ? `使用说明：${template}` : '',
+      `请调用 plugin_call（plugin="${entry.plugin}", tool="${entry.tool}"）完成任务；参数根据下一条用户消息的内容推断，不确定的关键参数先用 ask_user 问清。`,
+    ].filter(Boolean).join('\n')
+    setSkillPending({ card: { kind: 'plugin', plugin: entry.plugin, tool: entry.tool, name: entry.name }, instruction })
   }, [input])
   const detachedThreadId = useMemo(panelThreadId, [])
   const floatingMode = useMemo(() => /^#floating/.test(window.location.hash), [])
@@ -692,9 +703,9 @@ export function App() {
         setThreadId(target.id)
       }
       const result = await api.sendMessage({
-        threadId: target.id, content: content || `/${pendingSkill?.skillName ?? '任务'}`, modelId,
+        threadId: target.id, content: content || `/${skillPending?.card.name ?? '任务'}`, modelId,
         ...(attached.length ? { images: attached } : {}),
-        ...(pendingSkill ? { card: { kind: 'skill' as const, skillId: pendingSkill.skillId, name: pendingSkill.skillName }, instruction: pendingSkill.instruction } : {}),
+        ...(pendingSkill ? { card: pendingSkill.card, instruction: pendingSkill.instruction } : {}),
       })
       if (!result.ok) { setError(result.error); if (pendingSkill) setSkillPending(pendingSkill) }
       else {
@@ -755,9 +766,9 @@ export function App() {
       setHistoryEndId(null)
       setVisibleCount(MESSAGE_PAGE)
       const result = await api.sendMessage({
-        threadId: target.id, content: content || `/${pendingSkill?.skillName ?? '任务'}`, modelId,
+        threadId: target.id, content: content || `/${pendingSkill?.card.name ?? '任务'}`, modelId,
         ...(attached.length ? { images: attached } : {}),
-        ...(pendingSkill ? { card: { kind: 'skill' as const, skillId: pendingSkill.skillId, name: pendingSkill.skillName }, instruction: pendingSkill.instruction } : {}),
+        ...(pendingSkill ? { card: pendingSkill.card, instruction: pendingSkill.instruction } : {}),
       })
       if (!result.ok) { setError(result.error); if (pendingSkill) setSkillPending(pendingSkill) }
       else {
@@ -947,13 +958,23 @@ export function App() {
         const target = thread?.messages.find((item) => item.id === messageId)
         const restored = target?.role === 'user' ? target : null
         if (restored) {
-          const skillCard = restored.card?.kind === 'skill' ? restored.card : null
-          // 技能消息：占位卡回输入框（图标+名称），正文里去掉 /技能名 前缀，只放回用户补充文字
-          if (skillCard) {
-            const detail = await api.readSkill({ id: skillCard.skillId }).catch(() => null)
-            if (detail?.ok) setSkillPending({ skillId: skillCard.skillId, skillName: skillCard.name, instruction: detail.data.content })
-            else setSkillPending({ skillId: skillCard.skillId, skillName: skillCard.name, instruction: '' })
-            const text = restored.content.replace(new RegExp(`^/?${skillCard.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`), '').trim()
+          const card = restored.card && (restored.card.kind === 'skill' || restored.card.kind === 'plugin') ? restored.card : null
+          // 技能/插件消息：占位卡回输入框（图标+名称），正文里去掉 /名称 前缀，只放回用户补充文字
+          if (card) {
+            if (card.kind === 'skill') {
+              const detail = await api.readSkill({ id: card.skillId }).catch(() => null)
+              setSkillPending({ card, instruction: detail?.ok ? detail.data.content : '' })
+            } else {
+              // 插件占位：按条目重建 instruction 说明
+              const entry = skills.find((item) => item.kind === 'plugin' && item.plugin === card.plugin && item.tool === card.tool)
+              const instruction = entry?.kind === 'plugin' ? [
+                `用户通过 /${card.name}（插件 ${card.plugin} 的工具 ${card.tool}）发起请求。`,
+                entry.description ? `该工具用途：${entry.description}` : '',
+                `请调用 plugin_call（plugin="${card.plugin}", tool="${card.tool}"）完成任务；参数根据下一条用户消息的内容推断，不确定的关键参数先用 ask_user 问清。`,
+              ].filter(Boolean).join('\n') : `请调用 plugin_call（plugin="${card.plugin}", tool="${card.tool}"）完成任务。`
+              setSkillPending({ card, instruction })
+            }
+            const text = restored.content.replace(new RegExp(`^/?${card.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`), '').trim()
             if (text) setInput((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text))
           } else {
             setInput((current) => (current.trim() ? `${current.trimEnd()}\n${restored.content}` : restored.content))
@@ -971,7 +992,7 @@ export function App() {
         await call(() => api.deleteMessage({ threadId, messageId }), tr('删除失败，请重试。'), tr('消息已删除'))
       })()
     },
-  }), [threadId, thread, modelOverride, general.confirmDelete, call, ui, tr, setInput, setImages, setSkillPending])
+  }), [threadId, thread, modelOverride, general.confirmDelete, call, ui, tr, setInput, setImages, setSkillPending, skills])
 
   const renameThread = async (item: Thread) => {
     const title = await ui.prompt({ title: tr('重命名任务'), value: item.title, placeholder: tr('任务名称'), confirmLabel: tr('保存'), maxLength: 120 })
@@ -1396,14 +1417,14 @@ export function App() {
                           </div>
                         )}
                         {skillPending && (
-                          <div className="composer-skill" role="status" aria-label={tr('已挂载技能')}>
-                            <Puzzle size={14} />
-                            <span className="truncate">/{skillPending.skillName}</span>
+                          <div className={`composer-skill${input ? ' inline-with-text' : ''}`} role="status" aria-label={tr('已挂载技能')}>
+                            {skillPending.card.kind === 'skill' ? <Sparkles size={14} /> : <Puzzle size={14} />}
+                            <span className="truncate">/{skillPending.card.name}</span>
                             <button type="button" className="composer-skill-remove" aria-label={tr('移除技能')} title={tr('移除技能')} onClick={removeSkillPending}><X size={12} /></button>
                           </div>
                         )}
-                        {skillQuery !== null && <SkillMenu skills={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
-                        <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput}
+                        {skillQuery !== null && <SkillMenu entries={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
+                        <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput} className={skillPending ? ' has-skill' : ''}
                           onPaste={(event) => { const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void addImageFiles(files) } }}
                           onKeyDown={(event) => {
                             if (skillQuery !== null && ['Enter', 'ArrowUp', 'ArrowDown', 'Tab', 'Escape'].includes(event.key)) return
@@ -1738,6 +1759,9 @@ const MessageView = memo(function MessageView({ message, stream, modelName, show
         {message.card ? (
           message.card.kind === 'skill' ? (
             // 技能调用占位：图标+名称（用户补充文字照常显示），技能全文不显示在消息里
+            <div className="msg-card skill-card"><Sparkles size={14} /><div className="msg-card-body"><strong>/{message.card.name}</strong>{message.content && message.content !== `/${message.card.name}` && <span className="muted">{message.content}</span>}</div></div>
+          ) : message.card.kind === 'plugin' ? (
+            // 插件调用占位：同技能样式，Puzzle 图标
             <div className="msg-card skill-card"><Puzzle size={14} /><div className="msg-card-body"><strong>/{message.card.name}</strong>{message.content && message.content !== `/${message.card.name}` && <span className="muted">{message.content}</span>}</div></div>
           ) : (
             <div className="msg-card"><Workflow size={14} /><div className="msg-card-body"><strong>{message.card.name}</strong><span className="muted">{tr('工作流 · 共 {steps} 步', { steps: message.card.steps })}</span></div></div>

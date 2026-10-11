@@ -1,25 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles } from 'lucide-react'
-import type { SkillMeta } from '../../../shared/schema'
+import { Puzzle, Sparkles } from 'lucide-react'
+import type { SlashEntry } from '../../../shared/schema'
 import { useI18n } from '../i18n'
 
 interface SkillMenuProps {
-  skills: SkillMeta[]
+  entries: SlashEntry[]
   query: string
-  onPick: (skill: SkillMeta) => void
+  onPick: (entry: SlashEntry) => void
   onClose: () => void
 }
 
-export function SkillMenu({ skills, query, onPick, onClose }: SkillMenuProps) {
+/** 输入框 / 菜单：技能 + 声明了 slash 的插件工具统一列出 */
+export function SkillMenu({ entries, query, onPick, onClose }: SkillMenuProps) {
   const { tr } = useI18n()
   const [active, setActive] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return skills
-    return skills.filter((skill) => skill.name.toLowerCase().includes(q) || skill.description.toLowerCase().includes(q))
-  }, [skills, query])
+    if (!q) return entries
+    return entries.filter((entry) => entry.name.toLowerCase().includes(q) || entry.description.toLowerCase().includes(q))
+  }, [entries, query])
 
   useEffect(() => { setActive(0) }, [query])
 
@@ -44,14 +45,14 @@ export function SkillMenu({ skills, query, onPick, onClose }: SkillMenuProps) {
   }, [active])
 
   return (
-    <div className="skill-menu" role="listbox" aria-label={tr('技能')} ref={listRef}>
-      <div className="skill-menu-head"><Sparkles size={13} />{tr('技能')}<span className="skill-menu-hint">{tr('↑↓ 选择 · Enter 确认 · Esc 取消')}</span></div>
+    <div className="skill-menu" role="listbox" aria-label={tr('技能与插件')} ref={listRef}>
+      <div className="skill-menu-head"><Sparkles size={13} />{tr('技能与插件')}<span className="skill-menu-hint">{tr('↑↓ 选择 · Enter 确认 · Esc 取消')}</span></div>
       {filtered.length === 0 ? (
-        <div className="skill-menu-empty">{tr('未找到匹配的技能，可在设置中导入')}</div>
+        <div className="skill-menu-empty">{tr('未找到匹配的技能或插件，可在设置中导入')}</div>
       ) : (
         <ul>
-          {filtered.map((skill, index) => (
-            <li key={skill.id}>
+          {filtered.map((entry, index) => (
+            <li key={entry.id}>
               <button
                 type="button"
                 role="option"
@@ -59,10 +60,10 @@ export function SkillMenu({ skills, query, onPick, onClose }: SkillMenuProps) {
                 data-index={index}
                 className={`skill-menu-item${index === active ? ' active' : ''}`}
                 onMouseEnter={() => setActive(index)}
-                onMouseDown={(event) => { event.preventDefault(); onPick(skill) }}
+                onMouseDown={(event) => { event.preventDefault(); onPick(entry) }}
               >
-                <span className="skill-menu-name">/{skill.name}{skill.builtin && <span className="skill-menu-tag">{tr('内置')}</span>}</span>
-                {skill.description && <span className="skill-menu-desc">{skill.description}</span>}
+                <span className="skill-menu-name">{entry.kind === 'skill' ? <Sparkles size={12} className="skill-menu-icon" /> : <Puzzle size={12} className="skill-menu-icon" />}/{entry.name}{entry.kind === 'skill' && entry.builtin && <span className="skill-menu-tag">{tr('内置')}</span>}{entry.kind === 'plugin' && <span className="skill-menu-tag">{tr('插件')}</span>}</span>
+                {entry.description && <span className="skill-menu-desc">{entry.description}</span>}
               </button>
             </li>
           ))}

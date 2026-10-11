@@ -354,8 +354,10 @@ export const toolResultSchema = z.object({
 
 export const messageCardSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('workflow'), workflowId: identifier, name: shortText, steps: z.number().int().nonnegative() }),
-  // 技能调用占位卡：消息正文只显示图标+技能名（+用户补充），技能全文经 sendMessageInput.instruction 随首轮请求发送、不进历史
+  // 技能调用占位卡：消息正文只显示图标+名称（+用户补充），全文经 sendMessageInput.instruction 随首轮请求发送、不进历史
   z.object({ kind: z.literal('skill'), skillId: identifier, name: shortText }),
+  // 插件调用占位卡：同上，instruction 为让模型调用 plugin_call 的指令说明
+  z.object({ kind: z.literal('plugin'), plugin: shortText, tool: shortText, name: shortText }),
 ])
 
 export const messageImageSchema = z.object({
@@ -652,12 +654,18 @@ export const pluginToolSchema = z.object({
   description: z.string().max(1000),
   command: z.string().trim().min(1).max(2000),
   parameters: z.record(z.string(), z.unknown()).optional(),
+  /** 斜杠命令别名（可选）：在输入框 / 菜单中以 /别名 调用该工具；省略时不可通过 / 调用 */
+  slashCommand: z.string().trim().regex(/^[\w\u4e00-\u9fa5-]{1,40}$/, '斜杠别名只能包含中英文、数字、_ -').optional(),
+  /** 选中该工具的 / 命令后放入输入框的占位提示模板（可选）；{args} 会替换为用户补充文字 */
+  slashTemplate: z.string().max(2000).optional(),
 })
 export const pluginManifestSchema = z.object({
   name: z.string().trim().regex(/^[a-z0-9_-]{1,40}$/i, '插件名只能包含字母、数字、_ -'),
   description: z.string().max(1000).default(''),
   version: z.string().max(40).optional(),
   tools: z.array(pluginToolSchema).min(1).max(20),
+  /** 插件整体是否可通过输入框 / 命令调用（默认 false）；工具还需声明 slashCommand 才会出现在 / 菜单 */
+  slash: z.boolean().optional(),
 })
 
 export type Project = z.infer<typeof projectSchema>
@@ -705,6 +713,11 @@ export type GithubPushResult = { repo: string; url: string; branch: string; log:
 export type SkillMeta = { id: string; name: string; description: string; builtin: boolean; fileName?: string }
 export type SkillDetail = SkillMeta & { content: string }
 
+/** 输入框 / 菜单条目：技能或声明了 slash 的插件工具 */
+export type SlashEntry =
+  | { kind: 'skill'; id: string; name: string; description: string; builtin: boolean }
+  | { kind: 'plugin'; id: string; name: string; description: string; plugin: string; tool: string; template?: string }
+
 export interface CubexAPI {
   getState: () => Promise<Result<AppState>>
   selectProject: () => Promise<Result<Project | null>>
@@ -749,6 +762,7 @@ export interface CubexAPI {
   importSkills: () => Promise<Result<SkillMeta[]>>
   deleteSkill: (input: { id: string }) => Promise<Result<void>>
   readSkill: (input: { id: string }) => Promise<Result<SkillDetail>>
+  listSlash: () => Promise<Result<SlashEntry[]>>
   openSkillsDir: () => Promise<Result<void>>
   listMcp: () => Promise<Result<McpStatus[]>>
   testMcp: (input: { server: McpServer }) => Promise<Result<McpStatus>>

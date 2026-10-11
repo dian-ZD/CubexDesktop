@@ -3233,21 +3233,32 @@ textarea {
   color: var(--accent, var(--text));
 }
 
-/* 输入框内已挂载的技能占位 chip：图标 + /名称，可移除 */
+/* 输入框内已挂载的技能/插件占位：浮在 textarea 首行，文字从 chip 之后开始（行内嵌入而非上方另起一行） */
 .composer-skill {
+  position: absolute;
+  z-index: 2;
+  top: 10px;
+  left: 14px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  align-self: flex-start;
-  margin: 8px 12px 0;
-  padding: 4px 6px 4px 9px;
+  padding: 2px 6px 2px 9px;
   border-radius: 999px;
   background: var(--accent-soft, var(--bg-elevated));
   border: 1px solid var(--line);
   font-size: 12.5px;
   color: var(--text);
-  max-width: calc(100% - 24px);
+  max-width: calc(100% - 28px);
+  pointer-events: auto;
 }
+
+/* 有文字时占位保持首行位置，textarea 首行缩进让文字跟在 chip 之后 */
+.composer-skill.inline-with-text {
+  background: transparent;
+  border-color: transparent;
+  pointer-events: none;
+}
+.composer-skill.inline-with-text .composer-skill-remove { pointer-events: auto; }
 
 .composer-skill svg {
   color: var(--accent, var(--text-dim));
@@ -3269,6 +3280,11 @@ textarea {
 }
 
 .composer-skill-remove:hover { background: var(--bg-hover); color: var(--text); }
+
+/* textarea 挂占位时首行缩进，让文字与行内 chip 错开 */
+textarea.has-skill {
+  text-indent: 9.5em;
+}
 
 .msg-toolbar {
   display: flex;

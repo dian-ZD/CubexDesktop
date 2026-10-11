@@ -46,6 +46,7 @@ const api: CubexAPI = {
   importSkills: () => ipcRenderer.invoke(channels.importSkills),
   deleteSkill: (input) => ipcRenderer.invoke(channels.deleteSkill, { id: input.id }),
   readSkill: (input) => ipcRenderer.invoke(channels.readSkill, { id: input.id }),
+  listSlash: () => ipcRenderer.invoke(channels.listSlash),
   openSkillsDir: () => ipcRenderer.invoke(channels.openSkillsDir),
   listMcp: () => ipcRenderer.invoke(channels.listMcp),
   testMcp: (input) => ipcRenderer.invoke(channels.testMcp, { server: input.server }),

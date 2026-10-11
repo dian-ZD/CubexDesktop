@@ -76,6 +76,7 @@ const previewApi: CubexAPI = {
   importSkills: () => unavailable('导入技能'),
   deleteSkill: () => unavailable('删除技能'),
   readSkill: () => unavailable('读取技能'),
+  listSlash: () => Promise.resolve({ ok: true as const, data: [] }),
   openSkillsDir: () => unavailable('打开技能目录'),
   listMcp: () => Promise.resolve({ ok: true, data: [] }),
   testMcp: () => unavailable('测试 MCP 服务器'),

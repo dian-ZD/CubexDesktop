@@ -6,7 +6,7 @@ import { BrowserWindow, desktopCapturer, shell } from 'electron'
 import { buildSearchUrl, pluginManifestSchema, type PluginInfo, type PluginManifest, type Settings, type ToolCall } from '../shared/schema'
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
-import { captureIsolatedDesktop, clickIsolatedDesktop, ISOLATED_DESKTOP_NAME, keyIsolatedDesktop, launchOnIsolatedDesktop, typeIsolatedDesktop, waitForUserIdle } from './computer'
+import { captureIsolatedDesktop, clickIsolatedDesktop, ensureIsolatedShell, ISOLATED_DESKTOP_NAME, keyIsolatedDesktop, launchOnIsolatedDesktop, typeIsolatedDesktop, waitForUserIdle } from './computer'
 import { browserEngine, type BrowserAction } from './browser'
 import { killTree, spawnDetached } from './platform/proc'
 import { desktopCaptureSupported } from './platform/capture'
@@ -444,8 +444,18 @@ export class ExtensionHost {
     }
   }
 
-  private callPlugin(pluginName: string, toolName: string, args: unknown, context: ExtensionContext): Promise<string> {
-    const plugin = this.enabledPlugins().find((item) => item.name === pluginName)
+  /** 插件侧的 / 菜单条目：manifest.slash 为 true 且工具声明了 slashCommand 才出现 */
+  slashEntries(): Array<{ id: string; name: string; description: string; plugin: string; tool: string; template?: string }> {
+    const disabled = new Set(this.deps.getSettings().plugins.disabled)
+    return this.plugins.flatMap((item) => {
+      if (!item.manifest || disabled.has(item.manifest.name) || item.manifest.slash !== true) return []
+      return item.manifest.tools
+        .filter((tool) => typeof tool.slashCommand === 'string' && tool.slashCommand)
+        .map((tool) => ({ id: `plugin:${item.manifest!.name}/${tool.name}`, name: tool.slashCommand!, description: tool.description, plugin: item.manifest!.name, tool: tool.name, ...(tool.slashTemplate ? { template: tool.slashTemplate } : {}) }))
+    })
+  }
+
+  private callPlugin(pluginName: string, toolName: string, args: unknown, context: ExtensionContext): Promise<string> {    const plugin = this.enabledPlugins().find((item) => item.name === pluginName)
     const loaded = this.plugins.find((item) => item.manifest?.name === pluginName)
     if (!plugin || !loaded) throw new Error(`插件「${pluginName}」不存在或已停用`)
     const tool = plugin.tools.find((item) => item.name === toolName)
@@ -904,6 +914,9 @@ export async function computerAction(args: Record<string, unknown>, root: string
       const raw = str(args.target).trim()
       if (!raw) throw new Error('open 需要 target')
       if (isolated) {
+        // 先确保独立桌面有 explorer 壳进程：单实例应用（浏览器等）会把窗口开到已有实例所在桌面，
+        // 没有壳进程时可能落到你的当前桌面上（操作影响双方的主要来源）
+        await ensureIsolatedShell()
         const command = /^https?:\/\//i.test(raw) ? 'msedge' : raw
         const argument = /^https?:\/\//i.test(raw) ? raw : ''
         const pid = await launchOnIsolatedDesktop(command, argument)

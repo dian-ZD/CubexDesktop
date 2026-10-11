@@ -44,6 +44,7 @@ export const channels = {
   listPlugins: 'cubex:list-plugins',
   openPluginsDir: 'cubex:open-plugins-dir',
   listSkills: 'cubex:list-skills',
+  listSlash: 'cubex:list-slash',
   importSkills: 'cubex:import-skills',
   deleteSkill: 'cubex:delete-skill',
   readSkill: 'cubex:read-skill',
