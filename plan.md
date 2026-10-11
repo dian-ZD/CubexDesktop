@@ -6,6 +6,17 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.7-dev（技能列表刷新 + CI 测试修复）
+
+- [x] 技能列表找不到：listSkills 主进程实测正常（磁盘技能都在）；修复渲染层——`/` 菜单在 skills 为空时输入 `/` 自动补拉一次；listSkills 失败不再静默（显示错误）。
+- [x] CI Windows test 失败：tools.test 路径断言改用 realpathSync 两侧归一（CI TEMP 是 8.3 短路径 runner~1）。
+- [x] CI agent.test 超时：全局 testTimeout 30s + 两个审批排队测试补 30s + until 默认 15s。
+- [x] CI Linux 冒烟：xvfb 安装补 libgtk-3/libnss3/libasound2/…，electron 加 --no-sandbox --disable-dev-shm-usage + ELECTRON_DISABLE_SANDBOX。
+- [x] Actions Node20 弃用警告：checkout/setup-node 升 v5。
+- [x] 修复 reloadSkills 单行 eslint parse error（改多行带花括号）。
+- [x] 校验 typecheck / lint 0 error / 187 passed。
+- [ ] 打包 0.3.7-dev + 冒烟 + 推送 + 打 tag。
+
 ### 当前任务：0.3.6-dev（技能占位交互修正 + 技能自选 + create_workflow + 独立桌面/全屏修复）
 
 - [x] 技能改「输入框占位」：/选择技能 → 图标+名称 chip 挂在输入框（可移除），用户继续补字，手动发送时才发出；全文仍走 instruction 不进历史。失败路径恢复 chip。

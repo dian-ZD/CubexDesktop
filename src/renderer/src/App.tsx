@@ -273,13 +273,19 @@ export function App() {
   const [skills, setSkills] = useState<SkillMeta[]>([])
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
   const [skillPending, setSkillPending] = useState<{ skillId: string; skillName: string; instruction: string } | null>(null)
-  const reloadSkills = useCallback(() => { void api.listSkills().then((result) => { if (result.ok) setSkills(result.data) }) }, [])
+  const reloadSkills = useCallback(() => {
+    void api.listSkills().then((result) => {
+      if (result.ok) setSkills(result.data)
+      else setError(result.error)
+    })
+  }, [])
   useEffect(() => { reloadSkills() }, [reloadSkills])
   const onInputChange = useCallback((value: string) => {
     setInput(value)
     const match = /^\/([^\s/]*)$/.exec(value)
+    if (match && skills.length === 0) reloadSkills() // 列表为空时输入 /：补拉一次，避免导入技能后 / 菜单仍为空
     setSkillQuery(match ? match[1] : null)
-  }, [])
+  }, [skills.length, reloadSkills])
   // Codex/Claude Code 惯例的斜杠命令：选中技能 = 以技能内容为指令立即发送一条用户消息；
   // 输入框里已有的补充文字（/命令之外键入的）拼接在技能内容之后，而不是把全文塞回输入框。
   const pickSkill = useCallback((skill: SkillMeta) => {

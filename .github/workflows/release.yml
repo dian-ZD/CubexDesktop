@@ -27,8 +27,8 @@ jobs:
               release/*.deb
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -44,12 +44,12 @@ jobs:
         env:
           # electron-builder 需要在无签名配置时跳过代码签名探测
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      # 桌面冒烟需要显示器；CI 用 xvfb 跑（Windows 直接跑）
+      # 桌面冒烟需要显示器与常用 GUI 库；CI 用 xvfb 跑（Windows 直接跑）
       - name: Smoke test
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y xvfb
-          xvfb-run -a npm run test:desktop
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 libxss1
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" npm run test:desktop
         env:
           CUBEX_SMOKE: '1'
       - name: Smoke test (Windows)

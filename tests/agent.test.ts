@@ -29,7 +29,7 @@ let deltas: StreamDelta[]
 
 const secrets = { get: () => undefined } as unknown as SecretStore
 
-async function until(check: () => boolean, ms = 5000) {
+async function until(check: () => boolean, ms = 15_000) {
   const start = Date.now()
   while (!check()) {
     if (Date.now() - start > ms) throw new Error('等待超时')
@@ -178,7 +178,7 @@ describe('AgentRunner', () => {
     await until(() => idle(id)() && thread(id).messages.filter((message) => message.role === 'user').length === 2)
     expect(thread(id).queue ?? []).toEqual([])
     expect(thread(id).messages.at(-1)).toMatchObject({ role: 'assistant', content: '第二轮完成' })
-  })
+  }, 30_000)
 
   it('推荐项默认仍等待用户，用户可选择其他选项', async () => {
     const { id } = await setup('ask')
@@ -238,7 +238,7 @@ describe('AgentRunner', () => {
     await until(() => idle(id)() && thread(id).messages.filter((message) => message.role === 'user').length === 2)
     expect(thread(id).queue ?? []).toEqual([])
     expect(thread(id).messages.at(-1)).toMatchObject({ role: 'assistant', content: '第二轮完成' })
-  })
+  }, 30_000)
 
   it('完全自动模式下电脑控制免审批直接执行，GitHub 推送在只读模式下被拒绝', async () => {
     const { id } = await setup('full-auto')

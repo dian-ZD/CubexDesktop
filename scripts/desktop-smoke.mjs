@@ -12,8 +12,8 @@ if (!existsSync(entry)) {
   process.exit(1)
 }
 
-const child = spawn(electron, ['.'], {
-  env: { ...process.env, CUBEX_SMOKE: '1', ELECTRON_ENABLE_LOGGING: '1' },
+const child = spawn(electron, ['.', '--no-sandbox', '--disable-dev-shm-usage'], {
+  env: { ...process.env, CUBEX_SMOKE: '1', ELECTRON_ENABLE_LOGGING: '1', ...(process.platform === 'linux' ? { ELECTRON_DISABLE_SANDBOX: '1' } : {}) },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 

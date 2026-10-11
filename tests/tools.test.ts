@@ -124,9 +124,11 @@ describe('run_command', () => {
   })
 
   it('在项目根目录执行并返回退出码', async () => {
-    const result = await run('run_command', { command: 'node -e "process.stdout.write(process.cwd())"' })
+    const result = await run('run_command', { command: 'node -e "process.stdout.write(require(\'fs\').realpathSync(process.cwd()))"' })
     expect(result.ok).toBe(true)
-    expect(result.output.toLowerCase()).toContain(root.toLowerCase())
+    // realpathSync 两侧归一：CI 的 TEMP 可能以 8.3 短路径（runner~1）出现，与长路径字面不等
+    const { realpathSync } = await import('node:fs')
+    expect(result.output.toLowerCase()).toContain(realpathSync(root).toLowerCase())
     expect(result.output).toContain('[退出码 0]')
   }, 20_000)
 
