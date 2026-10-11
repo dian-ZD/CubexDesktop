@@ -20,7 +20,7 @@ jobs:
             files: |
               release/*.exe
               release/*.blockmap
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             script: dist:linux
             files: |
               release/*.AppImage
@@ -59,7 +59,7 @@ jobs:
           CUBEX_SMOKE: '1'
       - name: Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true

@@ -6,6 +6,17 @@
 
 ## 当前阶段
 
+### 当前任务：0.3.8-dev（技能不自动发送 + 回退恢复技能占位 + CI 再修）
+
+- [x] 技能仍直接发送：根因是遗留的 useEffect——skillPending 一设置就自动调用 send()；已删除，现在选中技能只挂输入框占位，手动发送。
+- [x] 回退到技能消息之前：恢复 skill card 占位（图标+名称，重新读技能全文）+ 用户补充文字；不再显示 /技能名 文本。
+- [x] CI tools.test 再失败：CI Windows runner 的 TEMP 是 8.3 短路径，realpathSync 也不展开；改为相对路径写 marker 文件再读取，证明 cwd 在项目根即可，不做路径形态比较。
+- [x] CI agent.test until 超时：until 默认 15s→60s；全局 testTimeout 30s→60s。
+- [x] Node20 警告（gh-release）：softprops/action-gh-release 升 v3（Node24）。
+- [x] ubuntu-latest→Ubuntu26 迁移警告：固定 ubuntu-24.04。
+- [x] 校验 typecheck / lint 0 error / 187 passed。
+- [ ] 打包 0.3.8-dev + 冒烟 + 推送 + 打 tag。
+
 ### 当前任务：0.3.7-dev（技能列表刷新 + CI 测试修复）
 
 - [x] 技能列表找不到：listSkills 主进程实测正常（磁盘技能都在）；修复渲染层——`/` 菜单在 skills 为空时输入 `/` 自动补拉一次；listSkills 失败不再静默（显示错误）。

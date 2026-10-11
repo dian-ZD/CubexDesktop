@@ -124,11 +124,12 @@ describe('run_command', () => {
   })
 
   it('在项目根目录执行并返回退出码', async () => {
-    const result = await run('run_command', { command: 'node -e "process.stdout.write(require(\'fs\').realpathSync(process.cwd()))"' })
+    // 相对路径写 marker 证明命令 cwd 就在项目根目录（路径形态受 8.3/大小写影响，不做字符串比较）
+    const result = await run('run_command', { command: `node -e "require('fs').writeFileSync('cwd-marker.txt', process.cwd())"` })
     expect(result.ok).toBe(true)
-    // realpathSync 两侧归一：CI 的 TEMP 可能以 8.3 短路径（runner~1）出现，与长路径字面不等
-    const { realpathSync } = await import('node:fs')
-    expect(result.output.toLowerCase()).toContain(realpathSync(root).toLowerCase())
+    const marker = await readFile(join(root, 'cwd-marker.txt'), 'utf8')
+    // spawn 的 cwd 即 root 原字符串；marker 能在 root 下读到即证明命令在项目根目录执行（避开 8.3/大小写形态差异）
+    expect(marker.length).toBeGreaterThan(3)
     expect(result.output).toContain('[退出码 0]')
   }, 20_000)
 

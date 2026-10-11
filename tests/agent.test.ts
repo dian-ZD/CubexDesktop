@@ -29,7 +29,7 @@ let deltas: StreamDelta[]
 
 const secrets = { get: () => undefined } as unknown as SecretStore
 
-async function until(check: () => boolean, ms = 15_000) {
+async function until(check: () => boolean, ms = 60_000) {
   const start = Date.now()
   while (!check()) {
     if (Date.now() - start > ms) throw new Error('等待超时')

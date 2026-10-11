@@ -777,10 +777,6 @@ export function App() {
   // 选中的技能内容已就绪 → 立即作为用户消息发送（或运行中时入队）。
   const sendRef = useRef(send)
   sendRef.current = send
-  useEffect(() => {
-    if (!skillPending) return
-    void sendRef.current()
-  }, [skillPending])
 
   const [continuedErrorKey, setContinuedErrorKey] = useState<string | null>(null)
   const continueAfterError = useCallback(async (messageId: string) => {
@@ -951,7 +947,17 @@ export function App() {
         const target = thread?.messages.find((item) => item.id === messageId)
         const restored = target?.role === 'user' ? target : null
         if (restored) {
-          setInput((current) => (current.trim() ? `${current.trimEnd()}\n${restored.content}` : restored.content))
+          const skillCard = restored.card?.kind === 'skill' ? restored.card : null
+          // 技能消息：占位卡回输入框（图标+名称），正文里去掉 /技能名 前缀，只放回用户补充文字
+          if (skillCard) {
+            const detail = await api.readSkill({ id: skillCard.skillId }).catch(() => null)
+            if (detail?.ok) setSkillPending({ skillId: skillCard.skillId, skillName: skillCard.name, instruction: detail.data.content })
+            else setSkillPending({ skillId: skillCard.skillId, skillName: skillCard.name, instruction: '' })
+            const text = restored.content.replace(new RegExp(`^/?${skillCard.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`), '').trim()
+            if (text) setInput((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text))
+          } else {
+            setInput((current) => (current.trim() ? `${current.trimEnd()}\n${restored.content}` : restored.content))
+          }
           if (restored.images?.length) setImages((current) => [...current, ...restored.images!.slice(0, 8 - current.length)])
         }
         const ok = await call(() => api.rollbackMessage({ threadId, messageId }), tr('回退失败，请重试。'))
@@ -965,7 +971,7 @@ export function App() {
         await call(() => api.deleteMessage({ threadId, messageId }), tr('删除失败，请重试。'), tr('消息已删除'))
       })()
     },
-  }), [threadId, thread, modelOverride, general.confirmDelete, call, ui, tr])
+  }), [threadId, thread, modelOverride, general.confirmDelete, call, ui, tr, setInput, setImages, setSkillPending])
 
   const renameThread = async (item: Thread) => {
     const title = await ui.prompt({ title: tr('重命名任务'), value: item.title, placeholder: tr('任务名称'), confirmLabel: tr('保存'), maxLength: 120 })
