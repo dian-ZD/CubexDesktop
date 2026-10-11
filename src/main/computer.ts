@@ -1,4 +1,7 @@
 ﻿import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const psQuote = (text: string) => `'${text.replace(/'/g, "''")}'`
 
@@ -196,9 +199,9 @@ if (-not [Launch]::CreateProcess(${NULL_DEVICE}, $cmd, [IntPtr]::Zero, [IntPtr]:
 Write-Output $pi.dwProcessId
 `
 
-/** 在独立桌面上启动程序（例如浏览器、记事本），返回进程 ID。
+/** 在独立桌面上启动程序：commandLine 为完整命令行（可含引号参数），返回进程 ID。
  * 注意：单实例应用（浏览器等）检测到已有实例会把窗口开到那个实例所在桌面（当前桌面），
- * 因此桌面创建后建议先由会话层驻留一个 explorer 壳进程。 */
+ * 因此桌面创建后建议先由会话层驻留一个 explorer 壳进程；浏览器须用独立 user-data-dir（见 browserLaunchCommand）。 */
 export async function launchOnIsolatedDesktop(command: string, args = '', name = ISOLATED_DESKTOP_NAME): Promise<number> {
   const cleaned = args.replace(/"/g, '').trim()
   const commandLine = cleaned ? `${command} "${cleaned}"` : command
@@ -206,8 +209,41 @@ export async function launchOnIsolatedDesktop(command: string, args = '', name =
   return Number(output.trim().split('\n').pop()) || 0
 }
 
+/** 在独立桌面上以完整命令行启动程序（参数已含引号时使用，如 browserLaunchCommand 的输出） */
+export async function launchIsolatedCommandLine(commandLine: string, name = ISOLATED_DESKTOP_NAME): Promise<number> {
+  const output = await ps(launchScript(name, commandLine), 30_000)
+  return Number(output.trim().split('\n').pop()) || 0
+}
+
 // 独立桌面的 explorer 壳进程：保持桌面会话有效，并让单实例应用把窗口开到独立桌面
 let shellPid = 0
+
+/** 浏览器可执行文件全路径：CreateProcess 不走 PATH 也不解析 App Paths 注册表，
+ * 直接写 'msedge' 会因文件找不到而失败（实测 Win32 错误 2）。
+ * 按 Edge → Chrome 顺序探测常见安装位置，都找不到时退回 'msedge'（万一在 PATH）。 */
+export async function resolveBrowserCommand(): Promise<string> {
+  const candidates = [
+    'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
+    'C:/Program Files/Microsoft/Edge/Application/msedge.exe',
+    process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}/Microsoft/Edge/Application/msedge.exe` : '',
+    'C:/Program Files/Google/Chrome/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
+    process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}/Google/Chrome/Application/chrome.exe` : '',
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate.replace(/\//g, '\\')
+  }
+  return 'msedge'
+}
+
+/** 打开网址的完整命令行：全路径浏览器 + 独立 user-data-dir。
+ * Chromium 单实例机制会把新请求转交给已运行的实例（窗口落到那个实例所在桌面 = 用户当前桌面），
+ * 这是「独立桌面操作影响双方」的根因；独立的 user-data-dir 让独立桌面用一套全新浏览器实例，彻底隔离。 */
+export async function browserLaunchCommand(url: string): Promise<string> {
+  const browser = await resolveBrowserCommand()
+  const profileDir = join(tmpdir(), 'cubex-isolated-browser')
+  return `"${browser}" --user-data-dir="${profileDir}" --no-first-run --no-default-browser-check "${url}"`
+}
 
 export async function ensureIsolatedShell(name = ISOLATED_DESKTOP_NAME): Promise<number> {
   if (shellPid) {

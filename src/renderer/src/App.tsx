@@ -21,6 +21,16 @@ const importBrowserWorkspace = () => import('./BrowserWorkspace')
 const SettingsPanel = lazy(() => importSettingsPanel().then((module) => ({ default: module.SettingsPanel })))
 const RightPanel = lazy(() => importRightPanel().then((module) => ({ default: module.RightPanel })))
 const WorkflowCanvas = lazy(() => importWorkflowCanvas().then((module) => ({ default: module.WorkflowCanvas })))
+/** 把各会话的 workflowRun 按 workflowId 聚合（取最近一次），供 Work 画布渲染节点回复框 */
+const aggregateRuns = (threads: Thread[]) => {
+  const byWorkflow = new Map<string, { steps: Array<{ nodeId: string; status: string; output?: string; error?: string }>; threadId: string; startedAt?: string }>()
+  for (const thread of threads) {
+    const run = thread.workflowRun
+    if (!run) continue
+    byWorkflow.set(run.workflowId, { steps: run.steps.map((step) => ({ nodeId: step.nodeId, status: step.status, output: step.output, error: step.error })), threadId: thread.id, startedAt: run.startedAt })
+  }
+  return byWorkflow
+}
 const BrowserWorkspace = lazy(() => importBrowserWorkspace().then((module) => ({ default: module.BrowserWorkspace })))
 const FloatingPanel = lazy(() => import('./components/FloatingPanel').then((module) => ({ default: module.FloatingPanel })))
 const ModelPicker = lazy(() => import('./components/ModelPicker').then((module) => ({ default: module.ModelPicker })))
@@ -1299,7 +1309,7 @@ export function App() {
         <div className={`workspace${view === 'browser' ? ' is-browser' : ''}${view === 'browser' && !rightPanelOpen ? ' right-collapsed' : ''}`}>
           {view === 'settings' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} initialSection={settingsSection} onClose={() => { setSettingsSection(undefined); setView(returnView.current); reloadSkills() }} /></Suspense>
             : view === 'automation' ? <Suspense fallback={panelFallback}><SettingsPanel settings={state.settings} projects={state.projects} workflows={state.workflows ?? []} onError={setError} page="automation" onClose={() => setView(returnView.current === 'automation' ? 'chat' : returnView.current)} /></Suspense>
-            : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} settings={state.settings} panelOpen={rightPanelOpen && !panelDetached} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
+            : view === 'work' ? <main className="center is-work">{loaded ? <Suspense fallback={panelFallback}><WorkflowCanvas project={project} workflows={state.workflows ?? []} runs={aggregateRuns(state.threads)} settings={state.settings} panelOpen={rightPanelOpen && !panelDetached} onError={setError} onOpenThread={(id) => { setThreadId(id); setModelOverride(''); setView('chat') }} onToggleAutoSwitch={(value) => void call(() => api.saveSettings({ ...state.settings, work: { ...state.settings.work, autoSwitchToChat: value } }), tr('保存设置失败，请重试。'))} /></Suspense> : <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div>}</main> : (
             <main className={`center${thread ? ' has-task' : ' is-home'}`}>
               {!loaded ? <div className="loading-state" role="status"><LoaderCircle size={22} className="spin" />{tr('正在打开工作区…')}</div> : (
                 <>
@@ -1416,15 +1426,16 @@ export function App() {
                             ))}
                           </div>
                         )}
-                        {skillPending && (
-                          <div className={`composer-skill${input ? ' inline-with-text' : ''}`} role="status" aria-label={tr('已挂载技能')}>
-                            {skillPending.card.kind === 'skill' ? <Sparkles size={14} /> : <Puzzle size={14} />}
-                            <span className="truncate">/{skillPending.card.name}</span>
-                            <button type="button" className="composer-skill-remove" aria-label={tr('移除技能')} title={tr('移除技能')} onClick={removeSkillPending}><X size={12} /></button>
-                          </div>
-                        )}
-                        {skillQuery !== null && <SkillMenu entries={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
-                        <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput} className={skillPending ? ' has-skill' : ''}
+                        <div className="composer-line">
+                          {skillPending && (
+                            <div className="composer-skill" role="status" aria-label={tr('已挂载技能')}>
+                              {skillPending.card.kind === 'skill' ? <Sparkles size={14} /> : <Puzzle size={14} />}
+                              <span className="truncate">/{skillPending.card.name}</span>
+                              <button type="button" className="composer-skill-remove" aria-label={tr('移除技能')} title={tr('移除技能')} onClick={removeSkillPending}><X size={12} /></button>
+                            </div>
+                          )}
+                          {skillQuery !== null && <SkillMenu entries={skills} query={skillQuery} onPick={pickSkill} onClose={() => setSkillQuery(null)} />}
+                          <textarea ref={inputRef} aria-label={tr('消息')} aria-describedby="execution-hint" placeholder={project ? (isActive ? tr('继续输入，发送后将排队等待当前回复结束…') : ctrlSend ? tr('描述你想做的事，Ctrl Enter 发送，Enter 换行…') : tr('描述你想做的事，Enter 发送，Shift Enter 换行…') + tr('（输入 / 调用技能）')) : tr('选择项目后开始会话…')} value={input} onChange={(event) => onInputChange(event.target.value)} maxLength={60_000} rows={2} disabled={composerDisabled || awaitingInput}
                           onPaste={(event) => { const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void addImageFiles(files) } }}
                           onKeyDown={(event) => {
                             if (skillQuery !== null && ['Enter', 'ArrowUp', 'ArrowDown', 'Tab', 'Escape'].includes(event.key)) return
@@ -1432,6 +1443,7 @@ export function App() {
                             const modifier = event.ctrlKey || event.metaKey
                             if (ctrlSend ? modifier : !event.shiftKey && !modifier) { event.preventDefault(); void send() }
                           }} />
+                        </div>
                         <div className="composer-toolbar">
                           <button className="composer-project" type="button" onClick={() => void selectProject()} disabled={busy || !isDesktop} title={project?.path ?? (isDesktop ? tr('选择项目 · Ctrl O') : tr('本机目录仅在桌面应用中可用'))}><FolderOpen size={15} /><span className="truncate">{project?.name ?? tr('选择项目')}</span><ChevronDown size={12} /></button>
                           <ModelPicker className="composer-model" label={tr('模型')} models={models} value={modelId} fallbackParams={state.settings.modelParams} compact={view === 'browser'} disabled={models.length === 0}

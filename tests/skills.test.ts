@@ -51,7 +51,7 @@ describe('SkillStore（Agent Skills 标准目录式）', () => {
     const list = await store.list()
     expect(list.some((item) => item.builtin)).toBe(true)
     expect(list.some((item) => item.id === 'builtin:review')).toBe(true)
-    expect(list.some((item) => item.id === 'builtin:work-builder')).toBe(false)
+    expect(list.some((item) => item.id === 'builtin:work-builder')).toBe(true)
     await expect(store.remove('builtin:review')).rejects.toThrow('内置技能不可删除')
     await expect(store.read('skill:../escape')).rejects.toThrow('非法技能路径')
   })

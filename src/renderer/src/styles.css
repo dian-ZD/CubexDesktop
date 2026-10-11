@@ -444,6 +444,9 @@ kbd {
   transition: opacity var(--panel) ease;
 }
 
+/* Win11 上窗口有 DWM 原生圆角，CSS 圆角与之一致；Win10 DWM 失败时 CSS 圆角兜底
+   （四角可能有细微方角，属可接受降级） */
+
 .shell.maximized {
   border-radius: 0;
   border-color: transparent;
@@ -2009,6 +2012,19 @@ kbd {
   transition: border-color var(--fast), box-shadow var(--fast);
 }
 
+/* 输入区行：技能/插件占位 chip 与输入框同行左端并排（行内嵌入而非上方另起一行） */
+.composer-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-line textarea {
+  flex: 1;
+  min-width: 0;
+}
+
 .subagent-panel {
   padding: 14px;
   border-bottom: 1px solid var(--line);
@@ -3233,32 +3249,21 @@ textarea {
   color: var(--accent, var(--text));
 }
 
-/* 输入框内已挂载的技能/插件占位：浮在 textarea 首行，文字从 chip 之后开始（行内嵌入而非上方另起一行） */
+/* 输入框内已挂载的技能/插件占位：与 textarea 同一行左端并排（行内嵌入而非上方另起一行） */
 .composer-skill {
-  position: absolute;
-  z-index: 2;
-  top: 10px;
-  left: 14px;
+  margin-top: 4px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 6px 2px 9px;
+  padding: 3px 6px 3px 9px;
   border-radius: 999px;
   background: var(--accent-soft, var(--bg-elevated));
   border: 1px solid var(--line);
   font-size: 12.5px;
   color: var(--text);
-  max-width: calc(100% - 28px);
-  pointer-events: auto;
+  flex: 0 0 auto;
+  max-width: 45%;
 }
-
-/* 有文字时占位保持首行位置，textarea 首行缩进让文字跟在 chip 之后 */
-.composer-skill.inline-with-text {
-  background: transparent;
-  border-color: transparent;
-  pointer-events: none;
-}
-.composer-skill.inline-with-text .composer-skill-remove { pointer-events: auto; }
 
 .composer-skill svg {
   color: var(--accent, var(--text-dim));
@@ -3280,11 +3285,6 @@ textarea {
 }
 
 .composer-skill-remove:hover { background: var(--bg-hover); color: var(--text); }
-
-/* textarea 挂占位时首行缩进，让文字与行内 chip 错开 */
-textarea.has-skill {
-  text-indent: 9.5em;
-}
 
 .msg-toolbar {
   display: flex;
@@ -6316,6 +6316,65 @@ textarea:focus-visible {
   border-color: var(--amber);
   box-shadow: 0 0 0 3px var(--amber-soft);
 }
+
+/* 回复节点运行后显示在节点卡下方的回复框 */
+.work-reply {
+  margin: 0 10px 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  font-size: 12px;
+  line-height: 1.55;
+  max-height: 150px;
+  overflow-y: auto;
+  user-select: text;
+}
+
+.work-reply.busy {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  max-height: none;
+}
+
+.work-reply.error {
+  color: var(--red, #d64545);
+  max-height: none;
+}
+
+.work-reply-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.work-reply-icon {
+  vertical-align: -2px;
+  margin-right: 5px;
+  color: var(--matcha);
+}
+
+.work-reply-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.work-reply-actions button {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--matcha);
+  cursor: pointer;
+}
+
+.work-reply-actions button:hover {
+  text-decoration: underline;
+}
+
 
 .work-node-head {
   display: flex;

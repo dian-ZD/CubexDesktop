@@ -6,7 +6,7 @@ import { BrowserWindow, desktopCapturer, shell } from 'electron'
 import { buildSearchUrl, pluginManifestSchema, type PluginInfo, type PluginManifest, type Settings, type ToolCall } from '../shared/schema'
 import type { ToolSpec } from './llm'
 import type { McpManager } from './mcp'
-import { captureIsolatedDesktop, clickIsolatedDesktop, ensureIsolatedShell, ISOLATED_DESKTOP_NAME, keyIsolatedDesktop, launchOnIsolatedDesktop, typeIsolatedDesktop, waitForUserIdle } from './computer'
+import { browserLaunchCommand, captureIsolatedDesktop, clickIsolatedDesktop, ensureIsolatedShell, ISOLATED_DESKTOP_NAME, keyIsolatedDesktop, launchIsolatedCommandLine, launchOnIsolatedDesktop, typeIsolatedDesktop, waitForUserIdle } from './computer'
 import { browserEngine, type BrowserAction } from './browser'
 import { killTree, spawnDetached } from './platform/proc'
 import { desktopCaptureSupported } from './platform/capture'
@@ -46,24 +46,151 @@ export interface ExtensionDeps {
   onControl?: (control: { active: true; kind: 'computer' | 'browser'; label: string; threadId: string } | { active: false }) => void
 }
 
+/** 内置插件统一用 Node 内置模块写成，零依赖、跨平台；每个都是可独立复制修改的范例：
+ * hello —— 最小示例（协议与 slash 用法）
+ * texttools —— 一个脚本服务多个工具（CUBEX_TOOL 分发）
+ * sysinfo —— 只读系统探测（AI 排查环境）
+ * croncalc —— 纯计算工具（解析 cron 下次执行时间）
+ */
 export const EXAMPLE_PLUGIN = {
   'plugin.json': JSON.stringify({
     name: 'hello',
     description: '示例插件：回显参数并返回当前时间。复制此目录即可编写自己的插件。',
-    version: '1.0.0',
-    tools: [{ name: 'echo', description: '回显传入的 text 参数', command: 'node index.js', parameters: { type: 'object', properties: { text: { type: 'string', description: '要回显的文本' } }, required: ['text'] } }],
+    version: '1.1.0',
+    // slash: true + 工具级 slashCommand = 该工具可出现在输入框 / 菜单里（默认关闭，由插件开发者决定）
+    slash: true,
+    tools: [{ name: 'echo', description: '回显传入的 text 参数', command: 'node index.js', slashCommand: 'echo', slashTemplate: '把 {args} 原样回显', parameters: { type: 'object', properties: { text: { type: 'string', description: '要回显的文本' } }, required: ['text'] } }],
   }, null, 2),
   'index.js': [
-    "// Cubex 插件协议：参数以 JSON 形式通过标准输入与环境变量 CUBEX_ARGS 传入；",
-    "// CUBEX_TOOL 为被调用的工具名，CUBEX_PROJECT_ROOT 为当前项目根目录；标准输出即返回给模型的结果。",
+    "// Cubex 插件协议：参数以 JSON 形式通过环境变量 CUBEX_ARGS 传入；",
+    "// CUBEX_TOOL 为被调用的工具名，CUBEX_PLUGIN 为插件名，CUBEX_PROJECT_ROOT 为当前项目根目录；标准输出即返回给模型的结果。",
     "const args = JSON.parse(process.env.CUBEX_ARGS || '{}')",
     "console.log(`[${process.env.CUBEX_TOOL}] ${args.text ?? ''} @ ${new Date().toLocaleString('zh-CN')}`)",
     '',
   ].join('\n'),
 }
 
+/** 多工具插件范例：一个脚本服务多个工具，按 CUBEX_TOOL 分发 */
+export const TEXT_TOOLS_PLUGIN = {
+  'plugin.json': JSON.stringify({
+    name: 'texttools',
+    description: '文本工具箱：字数统计、Base64 编解码、JSON 校验格式化、大小写转换。',
+    version: '1.0.0',
+    slash: true,
+    tools: [
+      { name: 'count', description: '统计文本的字符数、词数、行数', command: 'node index.js', parameters: { type: 'object', properties: { text: { type: 'string', description: '要统计的文本' } }, required: ['text'] } },
+      { name: 'base64', description: 'Base64 编码或解码文本', command: 'node index.js', slashCommand: 'b64', slashTemplate: '对 {args} 做 Base64 编码', parameters: { type: 'object', properties: { text: { type: 'string', description: '文本' }, decode: { type: 'boolean', description: 'true 为解码，默认编码' } }, required: ['text'] } },
+      { name: 'json', description: '校验并格式化 JSON 字符串', command: 'node index.js', parameters: { type: 'object', properties: { text: { type: 'string', description: 'JSON 字符串' } }, required: ['text'] } },
+      { name: 'case', description: '转换大小写：upper / lower / title', command: 'node index.js', parameters: { type: 'object', properties: { text: { type: 'string' }, mode: { type: 'string', enum: ['upper', 'lower', 'title'], description: '转换模式，默认 upper' } }, required: ['text'] } },
+    ],
+  }, null, 2),
+  'index.js': [
+    "// 一个脚本服务多个工具：用 CUBEX_TOOL 区分当前被调用的工具",
+    "const args = JSON.parse(process.env.CUBEX_ARGS || '{}')",
+    "const fail = (message) => { console.error(message); process.exit(1) }",
+    "try {",
+    "  switch (process.env.CUBEX_TOOL) {",
+    "    case 'count': {",
+    "      if (typeof args.text !== 'string') fail('缺少 text 参数')",
+    "      const words = args.text.trim() ? args.text.trim().split(/\\s+/).length : 0",
+    "      console.log(JSON.stringify({ characters: [...args.text].length, words, lines: args.text.split('\\n').length }))",
+    "      break",
+    "    }",
+    "    case 'base64': {",
+    "      if (typeof args.text !== 'string') fail('缺少 text 参数')",
+    "      console.log(args.decode ? Buffer.from(args.text, 'base64').toString('utf8') : Buffer.from(args.text, 'utf8').toString('base64'))",
+    "      break",
+    "    }",
+    "    case 'json': {",
+    "      if (typeof args.text !== 'string') fail('缺少 text 参数')",
+    "      console.log(JSON.stringify(JSON.parse(args.text), null, 2))",
+    "      break",
+    "    }",
+    "    case 'case': {",
+    "      if (typeof args.text !== 'string') fail('缺少 text 参数')",
+    "      const mode = args.mode || 'upper'",
+    "      console.log(mode === 'lower' ? args.text.toLowerCase() : mode === 'title' ? args.text.replace(/\\S+/g, (word) => word[0].toUpperCase() + word.slice(1).toLowerCase()) : args.text.toUpperCase())",
+    "      break",
+    "    }",
+    "    default: fail(`未知工具：${process.env.CUBEX_TOOL}`)",
+    "  }",
+    "} catch (error) {",
+    "  fail(`执行失败：${error instanceof Error ? error.message : String(error)}`)",
+    "}",
+    '',
+  ].join('\n'),
+}
+
+/** 只读系统探测范例：跨平台 os 模块，AI 排查环境问题常用 */
+export const SYSINFO_PLUGIN = {
+  'plugin.json': JSON.stringify({
+    name: 'sysinfo',
+    description: '查看本机系统信息：CPU、内存、操作系统版本、Node 版本、运行时长。',
+    version: '1.0.0',
+    tools: [
+      { name: 'info', description: '返回本机系统信息概览（系统/CPU/内存/Node/运行时长）', command: 'node index.js', parameters: { type: 'object', properties: {} } },
+    ],
+  }, null, 2),
+  'index.js': [
+    "const os = require('node:os')",
+    "const gb = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GB`",
+    "const lines = [",
+    "  `系统：${os.type()} ${os.release()}（${os.arch()}）`,",
+    "  `主机名：${os.hostname()}`,",
+    "  `CPU：${os.cpus()[0]?.model ?? '未知'} × ${os.cpus().length} 核`,",
+    "  `内存：已用 ${gb(os.totalmem() - os.freemem())} / 共 ${gb(os.totalmem())}`,",
+    "  `Node：${process.version}`,",
+    "  `运行时长：${Math.floor(os.uptime() / 3600)} 小时 ${Math.floor((os.uptime() % 3600) / 60)} 分钟`,",
+    "]",
+    "console.log(lines.join('\\n'))",
+    '',
+  ].join('\n'),
+}
+
+/** 纯计算工具范例：解析 cron 表达式接下来几次执行时间 */
+export const CRON_PLUGIN = {
+  'plugin.json': JSON.stringify({
+    name: 'croncalc',
+    description: '解析 cron 表达式（5 段）：校验格式并计算接下来几次执行时间。',
+    version: '1.0.0',
+    slash: true,
+    tools: [
+      { name: 'next', description: '解析 cron 表达式（分 时 日 月 周），返回接下来 5 次执行时间', command: 'node index.js', slashCommand: 'cron', slashTemplate: '解析 cron 表达式 {args}', parameters: { type: 'object', properties: { expr: { type: 'string', description: '5 段 cron 表达式，如 */5 * * * *' } }, required: ['expr'] } },
+    ],
+  }, null, 2),
+  'index.js': [
+    "const args = JSON.parse(process.env.CUBEX_ARGS || '{}')",
+    "if (typeof args.expr !== 'string') { console.error('缺少 expr 参数'); process.exit(1) }",
+    "const parts = args.expr.trim().split(/\\s+/)",
+    "if (parts.length !== 5) { console.error('cron 表达式需要 5 段：分 时 日 月 周'); process.exit(1) }",
+    "const maxFor = [59, 23, 31, 12, 6]",
+    "const match = (piece, value, field) => {",
+    "  if (field === 4 && piece === '7') piece = '0' // 周日 7 与 0 等价",
+    "  return piece.split(',').some((item) => {",
+    "    const [range, stride] = item.includes('/') ? item.split('/') : [item, '1']",
+    "    const [lo, hi] = range === '*' ? [0, maxFor[field]] : range.includes('-') ? range.split('-').map(Number) : [Number(range), Number(range)]",
+    "    for (let i = lo; i <= hi; i += Number(stride)) if (i === value) return true",
+    "    return false",
+    "  })",
+    "}",
+    "for (const [index, part] of parts.entries()) if (!/^[0-9*,\\/-]+$/.test(part)) { console.error(`第 ${index + 1} 段「${part}」格式非法`); process.exit(1) }",
+    "const results = []",
+    "const cursor = new Date()",
+    "cursor.setSeconds(0, 0)",
+    "for (let count = 0; count < 527040 && results.length < 5; count++) { // 最多往后找一年",
+    "  cursor.setMinutes(cursor.getMinutes() + 1)",
+    "  if (match(parts[0], cursor.getMinutes(), 0) && match(parts[1], cursor.getHours(), 1) && match(parts[2], cursor.getDate(), 2) && match(parts[3], cursor.getMonth() + 1, 3) && match(parts[4], cursor.getDay(), 4)) results.push(cursor.toLocaleString('zh-CN'))",
+    "}",
+    "console.log(results.length ? `表达式「${args.expr}」接下来 ${results.length} 次执行：\\n${results.map((time, index) => `${index + 1}. ${time}`).join('\\n')}` : '一年内没有匹配的执行时间，请检查表达式的日/月/周限制')",
+    '',
+  ].join('\n'),
+}
+
 export const BUILTIN_PLUGINS: Record<string, Record<string, string>> = {
   hello: EXAMPLE_PLUGIN,
+  texttools: TEXT_TOOLS_PLUGIN,
+  sysinfo: SYSINFO_PLUGIN,
+  croncalc: CRON_PLUGIN,
 }
 
 export class ExtensionHost {
@@ -96,12 +223,24 @@ export class ExtensionHost {
   }
 
   private async seedBuiltins(): Promise<void> {
-    const existing = new Set((await readdir(this.deps.pluginsDir, { withFileTypes: true }).catch(() => [])).filter((entry) => entry.isDirectory()).map((entry) => entry.name))
+    const entries = await readdir(this.deps.pluginsDir, { withFileTypes: true }).catch(() => [])
+    const existing = new Set(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name))
     for (const [name, files] of Object.entries(BUILTIN_PLUGINS)) {
-      if (existing.has(name)) continue
       const dir = join(this.deps.pluginsDir, name)
-      await mkdir(dir, { recursive: true })
-      for (const [file, content] of Object.entries(files)) await writeFile(join(dir, file), content, 'utf8')
+      if (!existing.has(name)) {
+        await mkdir(dir, { recursive: true })
+        for (const [file, content] of Object.entries(files)) await writeFile(join(dir, file), content, 'utf8')
+        continue
+      }
+      // 内置插件随应用升级：仅当目录里仍是内置模板（无用户改动标记 _customized）且版本落后时刷新，
+      // 保证新协议字段（如 slash）能同步到已安装的示例插件；用户改过的插件不动。
+      try {
+        const current = JSON.parse(await readFile(join(dir, 'plugin.json'), 'utf8')) as { version?: string; _customized?: boolean }
+        const fresh = JSON.parse(files['plugin.json']) as { version?: string }
+        if (current.version && !current._customized && fresh.version && current.version !== fresh.version) {
+          for (const [file, content] of Object.entries(files)) await writeFile(join(dir, file), content, 'utf8')
+        }
+      } catch { /* 保留现状 */ }
     }
   }
 
@@ -189,7 +328,7 @@ export class ExtensionHost {
         const limit = Math.max(1, Math.min(10, Number(call.args.limit) || 6))
         this.deps.onControl?.({ active: true, kind: 'browser', label: `正在联网搜索：${query}`, threadId: context.threadId ?? '' })
         try {
-          const results = await webSearch(query, limit, context.signal)
+          const results = await webSearch(query, limit, context.signal, settings)
           if (!results.length) return { output: `未找到与「${query}」相关的结果。` }
           const body = results.map((item, i) => `${i + 1}. ${item.title}\n   ${item.url}${item.snippet ? `\n   ${item.snippet}` : ''}`).join('\n\n')
           const marker = `\n\n[CUBEX_SEARCH]${JSON.stringify({ query, results })}`
@@ -693,7 +832,7 @@ export async function crawlWeb(options: CrawlOptions): Promise<CrawlOutcome> {
   if (query) {
     onProgress({ done: 0, total: 0, url: `正在搜索种子：${query}` })
     try {
-      const hits = await webSearch(query, Math.min(20, Math.max(maxPages * 2, 10)), signal)
+      const hits = await webSearch(query, Math.min(20, Math.max(maxPages * 2, 10)), signal, { browser: { searchEngine, searchTemplate } } as Settings)
       seeds.push(...hits.map((hit) => ({ url: hit.url })))
     } catch {
       // 主用引擎失败时退化为配置的搜索引擎结果页
@@ -785,8 +924,30 @@ export async function crawlWeb(options: CrawlOptions): Promise<CrawlOutcome> {
   return { pages, tried: queue.length, failed, truncated }
 }
 
-export async function webSearch(query: string, limit: number, signal: AbortSignal): Promise<SearchResult[]> {
-  const target = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=cn-zh`
+export async function webSearch(query: string, limit: number, signal: AbortSignal, settings?: Settings): Promise<SearchResult[]> {
+  // 按用户设置的引擎构造搜索页；每个引擎有独立的抓取解析器。
+  // 降级顺序：设置引擎 → DuckDuckGo（最稳定的可抓取源）；都失败时把最后一个错误抛给模型，
+  // 让它知道是网络/引擎问题而不是静默空结果。
+  const engine = settings?.browser?.searchEngine ?? 'duckduckgo'
+  const template = settings?.browser?.searchTemplate ?? ''
+  const order: Array<Settings['browser']['searchEngine']> = engine === 'duckduckgo' ? ['duckduckgo'] : [engine, 'duckduckgo']
+  const errors: string[] = []
+  for (const candidate of order) {
+    try {
+      const results = await searchWithEngine(query, limit, candidate, template, signal)
+      if (results.length > 0) return results
+      errors.push(`「${candidate}」未返回结果`)
+    } catch (error) {
+      if (signal.aborted) throw error
+      errors.push(`「${candidate}」：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  throw new Error(`搜索引擎全部失败（${errors.join('；')}）。可能是当前网络无法访问这些搜索引擎，请检查网络或换一个搜索引擎设置。`)
+}
+
+/** 按引擎抓取搜索结果页（离屏窗口 + DOM 解析） */
+async function searchWithEngine(query: string, limit: number, engine: Settings['browser']['searchEngine'], template: string, signal: AbortSignal): Promise<SearchResult[]> {
+  const url = buildSearchUrl(query, engine, template)
   const win = new BrowserWindow({ width: 1024, height: 768, show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, partition: 'cubex-browser', offscreen: true } })
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   const browserSession = win.webContents.session
@@ -799,24 +960,11 @@ export async function webSearch(query: string, limit: number, signal: AbortSigna
   signal.addEventListener('abort', abort, { once: true })
   try {
     await Promise.race([
-      win.loadURL(target),
+      win.loadURL(url),
       new Promise((_, reject) => setTimeout(() => reject(new Error('搜索超时（20 秒）')), 20_000)),
     ])
     await new Promise((resolve) => setTimeout(resolve, 400))
-    const script = `(() => {
-      const out = [];
-      const nodes = Array.from(document.querySelectorAll('.result__body, .web-result'));
-      for (const node of nodes) {
-        const link = node.querySelector('a.result__a, a.result__url');
-        if (!link) continue;
-        let href = link.getAttribute('href') || '';
-        const m = href.match(/[?&]uddg=([^&]+)/);
-        if (m) { try { href = decodeURIComponent(m[1]); } catch (e) {} }
-        const snippetEl = node.querySelector('.result__snippet');
-        out.push({ title: (link.innerText || '').trim(), url: href, snippet: snippetEl ? (snippetEl.innerText || '').trim() : '' });
-      }
-      return out;
-    })()`
+    const script = SEARCH_PARSERS[engine] ?? SEARCH_PARSERS.duckduckgo ?? ''
     const raw = await win.webContents.executeJavaScript(script, true) as SearchResult[]
     const seen = new Set<string>()
     const results: SearchResult[] = []
@@ -832,6 +980,61 @@ export async function webSearch(query: string, limit: number, signal: AbortSigna
     signal.removeEventListener('abort', abort)
     if (!win.isDestroyed()) win.destroy()
   }
+}
+
+/** 各引擎结果页的 DOM 解析脚本（在页面内执行） */
+const SEARCH_PARSERS: Partial<Record<Settings['browser']['searchEngine'], string>> = {
+  // DuckDuckGo HTML 版：结果在 .web-result，真实地址藏在 uddg= 参数
+  duckduckgo: `(() => {
+      const out = [];
+      const nodes = Array.from(document.querySelectorAll('.result__body, .web-result'));
+      for (const node of nodes) {
+        const link = node.querySelector('a.result__a, a.result__url');
+        if (!link) continue;
+        let href = link.getAttribute('href') || '';
+        const m = href.match(/[?&]uddg=([^&]+)/);
+        if (m) { try { href = decodeURIComponent(m[1]); } catch (e) {} }
+        const snippetEl = node.querySelector('.result__snippet');
+        out.push({ title: (link.innerText || '').trim(), url: href, snippet: snippetEl ? (snippetEl.innerText || '').trim() : '' });
+      }
+      return out;
+    })()`,
+  // Bing：#b_results 下 .b_algo；cite 标签存真实地址，h2 a 是标题链接
+  bing: `(() => {
+      const out = [];
+      for (const node of document.querySelectorAll('#b_results li.b_algo')) {
+        const a = node.querySelector('h2 a');
+        if (!a) continue;
+        const href = a.getAttribute('href') || '';
+        const cite = node.querySelector('cite');
+        const snippet = node.querySelector('.b_caption p, p');
+        out.push({ title: (a.innerText || '').trim(), url: href, snippet: snippet ? (snippet.innerText || '').trim() : (cite ? (cite.innerText || '').trim() : '') });
+      }
+      return out;
+    })()`,
+  // Google：div.g / div.tF2Cxc；href 通常已是真实地址
+  google: `(() => {
+      const out = [];
+      for (const node of document.querySelectorAll('div.g, div.tF2Cxc')) {
+        const a = node.querySelector('a[href^="http"]');
+        if (!a) continue;
+        const snippet = node.querySelector('div.VwiC3b, span.aCOpRe');
+        out.push({ title: (a.querySelector('h3')?.innerText || a.innerText || '').trim(), url: a.href, snippet: snippet ? (snippet.innerText || '').trim() : '' });
+      }
+      return out;
+    })()`,
+  // 百度：#content_left .result；真实地址常在 mu 属性或需要解析 link
+  baidu: `(() => {
+      const out = [];
+      for (const node of document.querySelectorAll('#content_left .result, #content_left .c-container')) {
+        const a = node.querySelector('h3 a');
+        if (!a) continue;
+        const href = node.getAttribute('mu') || a.getAttribute('href') || '';
+        const snippet = node.querySelector('.c-abstract, [class*=content-right]');
+        out.push({ title: (a.innerText || '').trim(), url: href, snippet: snippet ? (snippet.innerText || '').trim() : '' });
+      }
+      return out;
+    })()`,
 }
 
 function powershell(script: string): Promise<string> {
@@ -917,9 +1120,9 @@ export async function computerAction(args: Record<string, unknown>, root: string
         // 先确保独立桌面有 explorer 壳进程：单实例应用（浏览器等）会把窗口开到已有实例所在桌面，
         // 没有壳进程时可能落到你的当前桌面上（操作影响双方的主要来源）
         await ensureIsolatedShell()
-        const command = /^https?:\/\//i.test(raw) ? 'msedge' : raw
-        const argument = /^https?:\/\//i.test(raw) ? raw : ''
-        const pid = await launchOnIsolatedDesktop(command, argument)
+        const pid = /^https?:\/\//i.test(raw)
+          ? await launchIsolatedCommandLine(await browserLaunchCommand(raw))
+          : await launchOnIsolatedDesktop(raw)
         return { output: `已在独立桌面「${ISOLATED_DESKTOP_NAME}」启动 ${raw}（进程 ${pid}）。该桌面与你的当前桌面互不干扰，可在设置里关闭实时镜像。` }
       }
       if (/^https?:\/\//i.test(raw)) { await shell.openExternal(raw); return { output: `已在默认浏览器打开 ${raw}` } }

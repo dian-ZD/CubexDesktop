@@ -511,6 +511,7 @@ export const nodeConfigFields: Record<WorkflowNodeKind, NodeConfigField[]> = {
   response: [
     { key: 'format', label: '输出格式', type: 'select', options: ['自动', 'Markdown', '纯文本', '分点列表', '表格'] },
     { key: 'audience', label: '面向对象', type: 'text', placeholder: '如：非技术用户 / 团队评审' },
+    { key: 'style', label: '回复类型', type: 'select', options: ['自动', '总结', '分析', '清单', '表格', '代码'] },
   ],
   image: [
     { key: 'size', label: '图片尺寸', type: 'select', options: ['默认', '1024x1024', '1024x1536', '1536x1024', '512x512', '768x768'] },

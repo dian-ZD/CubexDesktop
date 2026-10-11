@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, Sparkles, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
+import { AppWindow, CircleHelp, Copy, Crosshair, Eye, FileCode2, FileText, GitBranch, Globe, Hourglass, Image, LayoutGrid, ListChecks, ListOrdered, LoaderCircle, Maximize, Minus, Monitor, Play, Plus, Puzzle, Redo2, Save, Search, Server, ShieldCheck, Sparkles, StickyNote, Terminal, Trash2, Undo2, Video, Workflow as WorkflowIcon, X, Zap } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Project, Settings, Workflow, WorkflowNode, WorkflowNodeKind } from '../../shared/schema'
 import { nodeConfigFields } from '../../shared/schema'
+import { mindMapLayout } from '../../shared/workflowLayout'
 import { api, isDesktop } from './bridge'
 import { Select, useUi } from './ui'
 import { useI18n } from './i18n'
@@ -36,6 +37,15 @@ const kindMeta: Record<WorkflowNodeKind, { label: string; icon: LucideIcon; hint
   wait: { label: '等待确认', icon: Hourglass, hint: '确认外部条件就绪后再继续' },
   ask: { label: '询问用户', icon: CircleHelp, hint: '向用户提问以确认关键信息' },
 }
+// 回复节点的回复类型图标（config.style）：AI 可选，回复框按类型显示对应图标（思维导图式的类型标识）
+const replyStyleIcons: Record<string, LucideIcon> = {
+  总结: ListOrdered,
+  分析: Search,
+  清单: ListChecks,
+  表格: LayoutGrid,
+  代码: FileCode2,
+}
+const replyIconOf = (node: WorkflowNode): LucideIcon => replyStyleIcons[node.config?.style?.trim() ?? ''] ?? WorkflowIcon
 const kindOf = (node: WorkflowNode): WorkflowNodeKind => node.kind ?? 'task'
 
 type TemplateStep = { title: string; prompt: string; kind?: WorkflowNodeKind }
@@ -125,21 +135,10 @@ const orderNodes = (workflow: Workflow): WorkflowNode[] => {
 }
 
 const autoLayout = (workflow: Workflow): Workflow => {
-  const ordered = orderNodes(workflow)
-  const depth = new Map<string, number>()
-  for (const node of ordered) {
-    let max = 0
-    for (const edge of workflow.edges) if (edge.to === node.id && depth.has(edge.from)) max = Math.max(max, (depth.get(edge.from) ?? 0) + 1)
-    depth.set(node.id, max)
-  }
-  const rows = new Map<number, number>()
-  const nodes = ordered.map((node) => {
-    const column = depth.get(node.id) ?? 0
-    const row = rows.get(column) ?? 0
-    rows.set(column, row + 1)
-    return { ...node, x: 60 + column * (NODE_W + 90), y: 80 + row * (NODE_H + 48) }
-  })
-  return { ...workflow, nodes }
+  // 思维导图式树状排版（与 AI 生成共用 shared/workflowLayout）；用户手拖过的位置不覆盖
+  const existing = new Map(workflow.nodes.map((node) => [node.id, { x: node.x, y: node.y }]))
+  const positions = mindMapLayout(workflow.nodes, workflow.edges, existing)
+  return { ...workflow, nodes: workflow.nodes.map((node) => ({ ...node, x: positions.get(node.id)!.x, y: positions.get(node.id)!.y })) }
 }
 
 const curve = (x1: number, y1: number, x2: number, y2: number) => {
@@ -147,7 +146,7 @@ const curve = (x1: number, y1: number, x2: number, y2: number) => {
   return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`
 }
 
-export function WorkflowCanvas({ project, workflows, settings, panelOpen = true, onOpenThread, onToggleAutoSwitch, onError }: { project: Project | null; workflows: Workflow[]; settings: Settings; panelOpen?: boolean; onOpenThread: (threadId: string) => void; onToggleAutoSwitch: (value: boolean) => void; onError: (message: string) => void }) {
+export function WorkflowCanvas({ project, workflows, runs, settings, panelOpen = true, onOpenThread, onToggleAutoSwitch, onError }: { project: Project | null; workflows: Workflow[]; runs?: Map<string, { steps: Array<{ nodeId: string; status: string; output?: string; error?: string }>; threadId: string; startedAt?: string }>; settings: Settings; panelOpen?: boolean; onOpenThread: (threadId: string) => void; onToggleAutoSwitch: (value: boolean) => void; onError: (message: string) => void }) {
   const ui = useUi()
   const { tr } = useI18n()
   const own = useMemo(() => workflows.filter((item) => item.projectId === project?.id), [workflows, project?.id])
@@ -569,8 +568,14 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
                   const kind = kindOf(item)
                   const Icon = kindMeta[kind].icon
                   const order = orderIndex.get(item.id)
+                  // 回复节点：运行后把 AI 的回复展示在节点卡下方的回复框（重跑时 runner 会清空 output）
+                  const runStep = runs?.get(draft.id)?.steps.find((step) => step.nodeId === item.id)
+                  const reply = kind === 'response' && runStep?.status === 'done' ? runStep.output ?? '' : ''
+                  const replyBusy = kind === 'response' && runStep?.status === 'running'
+                  const replyError = kind === 'response' && runStep?.status === 'failed' ? runStep.error ?? '' : ''
+                  const ReplyIcon = replyIconOf(item)
                   return (
-                    <div key={item.id} className={`work-node k-${kind}${item.id === selected ? ' selected' : ''}${item.prompt.trim() ? '' : ' incomplete'}`} style={{ left: item.x, top: item.y, width: NODE_W, height: NODE_H }}>
+                    <div key={item.id} className={`work-node k-${kind}${item.id === selected ? ' selected' : ''}${item.prompt.trim() ? '' : ' incomplete'}`} style={{ left: item.x, top: item.y, width: NODE_W, minHeight: NODE_H }}>
                       <button type="button" className="work-port in" aria-label={tr('连接到 {title}', { title: item.title })} title={linking ? tr('连接到此节点') : tr('输入')} onClick={() => connect(item.id)} />
                       <div className="work-node-head" onPointerDown={(event) => startDrag(event, item)}>
                         <span className="work-node-index" title={tr(kindMeta[kind].label)}>{kind === 'note' ? <Icon size={11} /> : order ?? <Icon size={11} />}</span>
@@ -582,6 +587,18 @@ export function WorkflowCanvas({ project, workflows, settings, panelOpen = true,
                         const summary = filled.length ? filled.map((field) => `${tr(field.label)}：${item.config![field.key]!.trim()}`).join('；') : ''
                         return summary || item.prompt.trim() || tr('点击填写内容…')
                       })()}</p>
+                      {replyBusy && <p className="work-reply busy"><LoaderCircle size={12} className="spin" />{tr('正在生成回复…')}</p>}
+                      {replyError && <p className="work-reply error">{replyError}</p>}
+                      {reply && (
+                        <div className="work-reply" role="note" aria-label={tr('模型回复')}>
+                          <p className="work-reply-text"><ReplyIcon size={12} className="work-reply-icon" />{reply.length > 400 ? `${reply.slice(0, 400)}…` : reply}</p>
+                          <div className="work-reply-actions">
+                            {reply.length > 400 && <button type="button" onClick={() => setSelected(item.id)}>{tr('展开全文')}</button>}
+                            <button type="button" onClick={() => void navigator.clipboard.writeText(reply)}>{tr('复制')}</button>
+                            <button type="button" onClick={() => onOpenThread(runs!.get(draft!.id)!.threadId)}>{tr('去对话')}</button>
+                          </div>
+                        </div>
+                      )}
                       <button type="button" className={`work-port out${linking === item.id ? ' active' : ''}`} aria-label={tr('从 {title} 连线', { title: item.title })} title={tr('拖出连线：点击后再点击目标节点左侧圆点')} onClick={() => setLinking((current) => current === item.id ? null : item.id)} />
                     </div>
                   )

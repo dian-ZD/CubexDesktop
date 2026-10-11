@@ -6,6 +6,7 @@ import { answerInputSchema, approvalInputSchema, automationInputSchema, browserB
 import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
 import { captureIsolatedDesktop, closeIsolatedDesktop, closeIsolatedShell, ISOLATED_DESKTOP_NAME } from './computer'
+import { applyNativeRoundedCorners } from './native'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, saveProjectFile, runShellCommand } from './tools'
@@ -428,13 +429,18 @@ function createWindow() {
     show: false,
     frame: false,
     // 不透明窗口（transparent 会让 Windows 把它当 layered window，shell 不认为它是全屏应用，
-    // 任务栏自动隐藏与其他应用的全屏检测都会失效）；圆角由 CSS 承担，窗口背景色随主题更新。
+    // 任务栏自动隐藏与其他应用的全屏检测都会失效）；圆角由系统 DWM 承担（roundedCorners），
+    // CSS 不再画圆角——不透明背景色会把 CSS 圆角的四角填成方角。
+    roundedCorners: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e2025' : '#ffffff',
     title: 'CubexDesktop',
     ...(appIcon && !appIcon.isEmpty() ? { icon: appIcon } : {}),
     webPreferences: webPreferences(),
   })
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    applyNativeRoundedCorners(mainWindow)
+    mainWindow?.show()
+  })
   bindWindowStateEvents(mainWindow)
   mainWindow.webContents.on('did-finish-load', broadcastWindowState)
   guardNavigation(mainWindow)

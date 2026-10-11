@@ -44,7 +44,7 @@ export class WorkflowRunner {
         workflowId: workflow.id,
         name: workflow.name,
         status: 'running',
-        steps: plan.map((step) => ({ ...step, status: 'pending' as const })),
+        steps: plan.map((step) => ({ ...step, status: 'pending' as const, output: undefined })),
         startedAt: new Date().toISOString(),
       }
       target.updatedAt = new Date().toISOString()
@@ -76,7 +76,7 @@ export class WorkflowRunner {
     const step = run.steps.find((item) => item.nodeId === nodeId)
     if (!step) throw new Error('步骤不存在')
     if (step.status !== 'failed') throw new Error('只能重试失败的步骤')
-    await this.patchStep(threadId, nodeId, { status: 'pending', error: undefined, startedAt: undefined, finishedAt: undefined })
+    await this.patchStep(threadId, nodeId, { status: 'pending', output: undefined, error: undefined, startedAt: undefined, finishedAt: undefined })
     await this.patchRun(threadId, { status: 'running' })
     this.launch(threadId)
   }

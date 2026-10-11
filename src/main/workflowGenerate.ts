@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { workflowNodeKinds, nodeConfigFields, workflowSchema, type Message, type Settings, type Workflow, type WorkflowNodeKind } from '../shared/schema'
+import { mindMapLayout } from '../shared/workflowLayout'
 import { streamChat } from './llm'
 
 /** 让 LLM 把自然语言需求转成 Work 画布工作流的提示词；输出严格 JSON。 */
@@ -10,9 +11,9 @@ const GENERATE_SYSTEM = [
   '{"name":"工作流名称","nodes":[{"title":"节点标题","kind":"task|response|image|video|check|review|note|computer|browser|launch|command|search|file|git|plugin|mcp|wait|ask","prompt":"该节点的具体指令","config":{}}],"edges":[{"from":0,"to":1}]}',
   '',
   '规则：',
-  '- 节点数 1–20；edges 的 from/to 是 nodes 从 0 开始的序号；连线不得成环。',
+  '- 节点数 1–20；edges 的 from/to 是 nodes 从 0 开始的序号；连线不得成环。画布按思维导图排布：根在左、分支向右展开——一个节点可连出多个下游（并行分支），多个上游完成后汇入同一下游；不要把所有节点串成一条直线，有并行可能就分支。',
   '- 每个节点 prompt 非空且自包含（写清输入、动作与期望产出）。',
-  '- config 是节点类型的专属参数（可选）：browser 填 url/extract；command 填 command；git 填 message/push；search 填 query/scope；file 填 path/action；image 填 size/count；video 填 size/seconds；check 填 command/onFail；ask 填 question/options；launch 填 target；其余类型可留空对象。确定的具体参数放 config 而不是 prompt。',
+  '- config 是节点类型的专属参数（可选，确定的具体参数放 config 而不是 prompt）：browser 填 url/extract；command 填 command；git 填 message/push；search 填 query/scope；file 填 path/action；image 填 size/count；video 填 size/seconds；check 填 command/onFail；ask 填 question/options；launch 填 target；response 可填 format/audience/style（style 决定回复框图标：总结/分析/清单/表格/代码）；其余类型可留空对象。',
   '- 把目标拆成有清晰输入与产出的步骤，并在关键改动后安排 check/review 验证步骤。',
   '- 只需要产出最终给用户看的文字时用 response；生图用 image；生视频用 video，不要伪装成 task。',
   '- 涉及电脑、浏览器、命令、文件写入、Git 推送等副作用时用对应专用类型，prompt 中写明确认与安全要求。',
@@ -31,7 +32,7 @@ export function extractJson(text: string): unknown {
   return JSON.parse(trimmed.slice(start, end + 1))
 }
 
-/** 把模型的 nodes/edges（按序号）转换为带坐标排布的 Workflow：从左到右每列 4 个、列距 300。 */
+/** 把模型的 nodes/edges（按序号）转换为带坐标排布的 Workflow：思维导图式树状布局。 */
 export function layout(projectId: string, generated: { name?: unknown; nodes?: unknown; edges?: unknown }): Workflow {
   if (!Array.isArray(generated.nodes) || generated.nodes.length === 0) throw new Error('生成的工作流没有任何节点')
   if (generated.nodes.length > 20) throw new Error('生成的工作流超过 20 个节点，请简化需求')
@@ -49,9 +50,7 @@ export function layout(projectId: string, generated: { name?: unknown; nodes?: u
         if (typeof value === 'string' && value.trim()) config[field.key] = value.trim().slice(0, 4000)
       }
     }
-    const x = 80 + Math.floor(index / 4) * 300
-    const y = 80 + (index % 4) * 160
-    return { id: `node-${randomUUID().slice(0, 8)}`, title, prompt, x, y, ...(kind !== 'task' ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
+    return { id: `node-${randomUUID().slice(0, 8)}`, title, prompt, x: 0, y: 0, ...(kind !== 'task' ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
   })
   const edges = (Array.isArray(generated.edges) ? generated.edges : [])
     .map((raw) => {
@@ -64,8 +63,11 @@ export function layout(projectId: string, generated: { name?: unknown; nodes?: u
     .filter((edge): edge is { from: string; to: string } => edge !== null)
   // 无边时按顺序串成链，保证工作流可执行
   const finalEdges = edges.length ? edges : nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id }))
+  // 思维导图式排布：根在左、分支向右展开（shared/workflowLayout 与画布自动排版共用同一算法）
+  const positions = mindMapLayout(nodes, finalEdges)
+  const placed = nodes.map((node) => ({ ...node, x: positions.get(node.id)!.x, y: positions.get(node.id)!.y }))
   const name = typeof generated.name === 'string' && generated.name.trim() ? generated.name.trim().slice(0, 60) : '生成的工作流'
-  const workflow: Workflow = { id: randomUUID(), projectId, name, nodes, edges: finalEdges, updatedAt: new Date().toISOString() }
+  const workflow: Workflow = { id: randomUUID(), projectId, name, nodes: placed, edges: finalEdges, updatedAt: new Date().toISOString() }
   const parsed = workflowSchema.safeParse(workflow)
   if (!parsed.success) throw new Error('生成的工作流未通过校验，请重试或调整描述')
   return workflow

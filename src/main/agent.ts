@@ -867,27 +867,41 @@ export class AgentRunner {
     if (!name) return { callId: call.id, name: call.name, ok: false, output: '缺少 name（工作流名称）' }
     if (raw.length < 1 || raw.length > 20) return { callId: call.id, name: call.name, ok: false, output: 'nodes 必须包含 1–20 个节点' }
     const thread = this.find(threadId)
+    const { nodeConfigFields, workflowNodeKinds } = await import('../shared/schema')
+    const { mindMapLayout } = await import('../shared/workflowLayout')
     const nodes = raw.map((item, index) => {
       const node = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
       const title = typeof node.title === 'string' && node.title.trim() ? node.title.trim().slice(0, 60) : `步骤 ${index + 1}`
       const prompt = typeof node.prompt === 'string' ? node.prompt.trim().slice(0, 8000) : ''
-      const kind = typeof node.kind === 'string' ? node.kind : undefined
-      return { id: randomUUID(), title, prompt, x: 0, y: index * 160, ...(kind ? { kind: kind as never } : {}) }
+      const kind = typeof node.kind === 'string' && (workflowNodeKinds as readonly string[]).includes(node.kind) ? node.kind as never : undefined
+      // 节点专属配置：只保留该类型已定义字段里的非空字符串值（与 AI 生成工作流一致）
+      const config: Record<string, string> = {}
+      if (node.config && typeof node.config === 'object' && !Array.isArray(node.config) && kind) {
+        for (const field of nodeConfigFields[kind as keyof typeof nodeConfigFields]) {
+          const value = (node.config as Record<string, unknown>)[field.key]
+          if (typeof value === 'string' && value.trim()) config[field.key] = value.trim().slice(0, 4000)
+        }
+      }
+      return { id: randomUUID(), title, prompt, x: 0, y: 0, ...(kind ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
     })
     if (nodes.some((node) => !node.prompt)) return { callId: call.id, name: call.name, ok: false, output: '每个节点都需要 prompt（该步骤的完整执行指令）' }
+    const edges = nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id }))
+    // 思维导图式排布（根在左、分支向右展开），与画布自动排版共用同一算法
+    const positions = mindMapLayout(nodes, edges)
+    const placed = nodes.map((node) => ({ ...node, x: positions.get(node.id)!.x, y: positions.get(node.id)!.y }))
     const workflow = {
       id: randomUUID(),
       projectId: thread.projectId,
       name,
-      nodes,
-      edges: nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id })),
+      nodes: placed,
+      edges,
       updatedAt: new Date().toISOString(),
     }
     try {
       const { workflowSchema } = await import('../shared/schema')
       const parsed = workflowSchema.parse(workflow)
       await this.store.update((draft) => { draft.workflows = [...(draft.workflows ?? []), parsed].slice(-50) })
-      return { callId: call.id, name: call.name, ok: true, output: `已保存工作流「${name}」（${nodes.length} 个步骤，线性串联）。用户可在 Work 画布中查看、编辑和运行它。` }
+      return { callId: call.id, name: call.name, ok: true, output: `已保存工作流「${name}」（${placed.length} 个步骤，思维导图式排布）。用户可在 Work 画布中查看、编辑和运行它；回复类节点的回复会显示在节点卡的回复框里。` }
     } catch (error) {
       return { callId: call.id, name: call.name, ok: false, output: `工作流校验失败：${error instanceof Error ? error.message : String(error)}` }
     }
