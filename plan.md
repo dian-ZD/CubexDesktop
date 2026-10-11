@@ -15,7 +15,7 @@
 - [x] Node20 警告（gh-release）：softprops/action-gh-release 升 v3（Node24）。
 - [x] ubuntu-latest→Ubuntu26 迁移警告：固定 ubuntu-24.04。
 - [x] 校验 typecheck / lint 0 error / 187 passed。
-- [ ] 打包 0.3.8-dev + 冒烟 + 推送 + 打 tag。
+- [x] 打包 0.3.8-dev + 冒烟 + 推送 + 打 tag（adac44c，tag v0.3.8-dev 已推）。
 
 ### 当前任务：0.3.7-dev（技能列表刷新 + CI 测试修复）
 
