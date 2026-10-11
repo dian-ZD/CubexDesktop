@@ -15,7 +15,7 @@
 - [x] Actions Node20 弃用警告：checkout/setup-node 升 v5。
 - [x] 修复 reloadSkills 单行 eslint parse error（改多行带花括号）。
 - [x] 校验 typecheck / lint 0 error / 187 passed。
-- [ ] 打包 0.3.7-dev + 冒烟 + 推送 + 打 tag。
+- [x] 打包 0.3.7-dev + 冒烟 + 推送 + 打 tag（ba76077，tag v0.3.7-dev 已推，Actions 构建中）。
 
 ### 当前任务：0.3.6-dev（技能占位交互修正 + 技能自选 + create_workflow + 独立桌面/全屏修复）
 
