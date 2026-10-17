@@ -99,7 +99,8 @@ describe('AgentRunner', () => {
 
     expect(requests).toHaveLength(2)
     expect(requests[0].messages.map((message) => message.role)).toEqual(['user'])
-    expect(requests[1].messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool'])
+    // 第二次请求末尾会带一条仅随请求发送的自查复盘（step>=1 每 3 步注入，不写入存储历史）
+    expect(requests[1].messages.map((message) => message.role)).toEqual(['user', 'assistant', 'tool', 'user'])
   })
 
   it('逐项确认模式下拒绝写入不会修改文件', async () => {

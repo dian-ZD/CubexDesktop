@@ -1,6 +1,6 @@
 {
   "name": "cubex-desktop",
-  "version": "0.3.9",
+  "version": "0.3.10-dev",
   "private": true,
   "description": "CubexDesktop 智能体协作工作站",
   "author": "dian-ZD <liangdianhs@163.com>",

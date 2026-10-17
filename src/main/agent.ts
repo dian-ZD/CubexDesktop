@@ -489,6 +489,7 @@ export class AgentRunner {
     let noToolCount = 0
     let pendingNudge = ''
     const callCounts = new Map<string, number>()
+    const callNameCounts = new Map<string, number>()
     const failureCounts = new Map<string, number>()
     let blockedStreak = 0
     for (let step = 0; step < maxSteps && !signal.aborted; step++) {
@@ -519,10 +520,11 @@ export class AgentRunner {
         autoCompactions = 3
       }
       const steeringSeen = new Set(thread.messages.filter((item) => item.role === 'user' && item.steering).map((item) => item.id))
-      // 计划复盘：从第 3 步起偶尔注入一句轻量自查，抑制无效探索/跑偏（随请求发送，不写入历史）。
+      // 计划复盘：从第 2 步起更频繁注入轻量自查，抑制无效探索/跑偏（随请求发送，不写入历史）。
+      // 模型来回不收敛的主要形态是「每轮变一点参数继续试」，所以从早期就开始提醒收敛。
       let retrospective = ''
-      if (step >= 2 && step % 4 === 2) {
-        retrospective = '自查：目前完成了什么、与目标还差什么？是否存在在重复读取或偏离计划的步骤？接下来用最少步骤推进到目标；若目标已达成，直接给出结论并结束，不要再调用无关工具。'
+      if (step >= 1 && step % 3 === 1) {
+        retrospective = '自查：目前完成了什么、与目标还差什么？是否在重复读取或反复尝试相似操作（只改一点参数也算）？接下来用最少步骤推进到目标；若目标已达成，直接给出结论并结束；若当前方法连续 2 次没有实质进展，必须换一种完全不同的思路，不要再微调参数重试。'
       }
 
       const messageId = randomUUID()
@@ -661,9 +663,16 @@ export class AgentRunner {
         const signature = signatureOf(call)
         const seen = (callCounts.get(signature) ?? 0) + 1
         callCounts.set(signature, seen)
-        if (seen > 3) {
+        if (seen > 2) {
           blockedCount++
-          return { callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与参数已执行多次，本次已拦截。请更换方法或直接给出结论。' }
+          return { callId: call.id, name: call.name, ok: false, output: '检测到重复调用：相同工具与相同参数已执行多次，本次已拦截。请更换方法或直接给出结论。' }
+        }
+        // 同名工具总次数上限（防「每次改一点参数」绕过重复检测）：一个工具一轮任务里最多 12 次
+        const nameCount = (callNameCounts.get(call.name) ?? 0) + 1
+        callNameCounts.set(call.name, nameCount)
+        if (nameCount > 12) {
+          blockedCount++
+          return { callId: call.id, name: call.name, ok: false, output: `检测到「${call.name}」已调用 ${nameCount - 1} 次：疑似陷入循环。请停下来总结已知信息，换一种完全不同的方法，或直接给出结论。` }
         }
         return null
       }

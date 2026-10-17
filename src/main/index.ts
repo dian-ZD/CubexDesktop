@@ -421,6 +421,7 @@ function applyBrowserOptions() {
 }
 
 function createWindow() {
+  const isWin11 = process.platform === 'win32' && parseInt(process.getSystemVersion().split('.')[2] ?? '0', 10) >= 22000
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -428,11 +429,11 @@ function createWindow() {
     minHeight: 680,
     show: false,
     frame: false,
-    // 不透明窗口（transparent 会让 Windows 把它当 layered window，shell 不认为它是全屏应用，
-    // 任务栏自动隐藏与其他应用的全屏检测都会失效）；圆角由系统 DWM 承担（roundedCorners），
-    // CSS 不再画圆角——不透明背景色会把 CSS 圆角的四角填成方角。
-    roundedCorners: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e2025' : '#ffffff',
+    // Win11：不透明窗口 + DWM 原生圆角（applyNativeRoundedCorners）。transparent 会让 Windows 把窗口当
+    // layered window，任务栏自动隐藏与其它应用的全屏检测都会失效，能不用就不用。
+    // Win10：没有 DWM 圆角 API（DWMWA_WINDOW_CORNER_PREFERENCE 是 Win11 才有的），唯一可行方案是
+    // 透明窗口 + CSS 圆角（.shell 的 12px border-radius），否则不透明背景会把四角填成方角。
+    ...(isWin11 ? { roundedCorners: true, backgroundColor: nativeTheme.shouldUseDarkColors ? '#1e2025' : '#ffffff' } : { transparent: true }),
     title: 'CubexDesktop',
     ...(appIcon && !appIcon.isEmpty() ? { icon: appIcon } : {}),
     webPreferences: webPreferences(),

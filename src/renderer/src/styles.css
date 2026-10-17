@@ -221,6 +221,8 @@
   background-size: cover;
   background-position: center;
   opacity: var(--bg-image-opacity, 0.35);
+  /* 透明窗口（Win10 圆角方案）下背景图不能铺满整个矩形，否则四角被填满、圆角失效 */
+  border-radius: 12px;
 }
 
 :root[data-background='true'] #root {
@@ -236,6 +238,10 @@
 :root[data-background='true'] .sidebar,
 :root[data-background='true'] .main {
   background: transparent;
+}
+
+:root[data-maximized='true'] body::before {
+  border-radius: 0;
 }
 
 :root[data-density='compact'] {
