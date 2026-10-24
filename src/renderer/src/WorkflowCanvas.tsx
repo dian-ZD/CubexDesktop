@@ -450,7 +450,10 @@ export function WorkflowCanvas({ project, workflows, runs, settings, panelOpen =
     if (!draft) return
     const runnable = draft.nodes.filter((node) => kindOf(node) !== 'note')
     if (runnable.length === 0) { onError(tr('至少需要一个可执行节点（备注节点不会被执行）')); return }
-    if (draft.nodes.some((node) => !node.prompt.trim())) { onError(tr('还有节点没有填写内容')); return }
+    // 只校验可执行节点（备注不执行，空备注不拦运行）：指令与专属配置二选一即为有效节点
+    const hasContent = (node: WorkflowNode) => node.prompt.trim().length > 0 || Object.values(node.config ?? {}).some((value) => value.trim())
+    const emptyNodes = runnable.filter((node) => !hasContent(node))
+    if (emptyNodes.length > 0) { onError(tr('以下节点还没有填写指令或专属配置：{titles}', { titles: emptyNodes.map((node) => node.title).join('、') })); return }
     if (settings.work.confirmBeforeRun && !(await ui.confirm({ title: tr('运行工作流'), message: tr('将依次执行「{name}」的 {n} 个节点，确定开始？', { name: draft.name, n: runnable.length }), confirmLabel: tr('运行') }))) return
     setBusy('run')
     try {
@@ -575,7 +578,7 @@ export function WorkflowCanvas({ project, workflows, runs, settings, panelOpen =
                   const replyError = kind === 'response' && runStep?.status === 'failed' ? runStep.error ?? '' : ''
                   const ReplyIcon = replyIconOf(item)
                   return (
-                    <div key={item.id} className={`work-node k-${kind}${item.id === selected ? ' selected' : ''}${item.prompt.trim() ? '' : ' incomplete'}`} style={{ left: item.x, top: item.y, width: NODE_W, minHeight: NODE_H }}>
+                    <div key={item.id} className={`work-node k-${kind}${item.id === selected ? ' selected' : ''}${kind !== 'note' && !item.prompt.trim() && !Object.values(item.config ?? {}).some((value) => value.trim()) ? ' incomplete' : ''}`} style={{ left: item.x, top: item.y, width: NODE_W, minHeight: NODE_H }}>
                       <button type="button" className="work-port in" aria-label={tr('连接到 {title}', { title: item.title })} title={linking ? tr('连接到此节点') : tr('输入')} onClick={() => connect(item.id)} />
                       <div className="work-node-head" onPointerDown={(event) => startDrag(event, item)}>
                         <span className="work-node-index" title={tr(kindMeta[kind].label)}>{kind === 'note' ? <Icon size={11} /> : order ?? <Icon size={11} />}</span>

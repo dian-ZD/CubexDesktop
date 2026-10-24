@@ -1,11 +1,11 @@
 # CubexDesktop
 
-[![version](https://img.shields.io/badge/version-0.3.10--dev-blue)](https://github.com/dian-ZD/CubexDesktop/releases) [![license](https://img.shields.io/badge/license-FSL--1.1--MIT-lightgrey)](vendor/aoci/LICENSE)
+[![version](https://img.shields.io/badge/version-1.0.0--dev-blue)](https://github.com/dian-ZD/CubexDesktop/releases) [![license](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
 CubexDesktop 是一个面向本地项目的 **AI 智能体协作工作站**。它集对话式编码、工作流画布、可视化浏览器、文件预览与编辑、多子智能体、技能与插件系统、本地语音输入和外部 MCP 工具于一体，帮助你在熟悉的桌面环境中完成复杂开发任务。
 
-> 当前版本：`0.3.10-dev`
-> 产物：`release\Cubex Setup 0.3.10-dev.exe`（由本机打出；未数字签名）
+> 当前版本：`1.0.0-dev`（CubexDesktop-v1.0.0-dev by HIGHLIGHT STUDIO）
+> 产物：`release\Cubex Setup 1.0.0-dev.exe`（由本机打出；未数字签名）
 > 上下文文档：`goal.md` / `plan.md` / `memory.md` / `agents.md`
 
 ## 功能总览
@@ -158,7 +158,11 @@ vendor/aoci/  # 内置 AOCI 二进制与许可文件
 
 ## 许可
 
-CubexDesktop 及内置 AOCI 相关二进制遵循随仓库提供的许可文件；`vendor/aoci/` 与 `LICENSE`/`NOTICE`/`THIRD-PARTY-NOTICES` 请保留随附文件。
+CubexDesktop 采用 **[Apache-2.0](LICENSE)** 开源协议：
+
+- 允许个人与商业使用、修改、分发（需保留版权与许可声明）
+- 「Cubex」名称与图标等品牌元素不受协议授权，商业/教育目的使用需作者书面许可（见 [NOTICE](NOTICE)）
+- `vendor/aoci/` 目录下的第三方组件遵循其自带许可（LICENSE/NOTICE/PATENTS/THIRD-PARTY-NOTICES）
 
 ---
 

@@ -52,7 +52,8 @@ describe('项目上下文文件', () => {
     const project = { id: 'p1', name: '演示', path: root, createdAt: new Date().toISOString() }
     const prompt = buildSystemPrompt(settings, project, { projectContext: '# 项目上下文文件（自动引用）\n\n## goal.md\n\n做一个待办应用' })
     expect(prompt).toContain(PROJECT_FILE_RULES[0])
-    expect(prompt.endsWith('做一个待办应用')).toBe(true)
+    expect(prompt).toContain('做一个待办应用')
+    expect(prompt).toContain('spec ')
     const readOnly = buildSystemPrompt({ ...settings, permissions: { ...settings.permissions, readOnly: true } }, project)
     expect(readOnly).not.toContain(PROJECT_FILE_RULES[0])
   })

@@ -1996,6 +1996,14 @@ kbd {
   font-size: 15px;
 }
 
+/* 欢迎标语副标题（时段问候作为第二行出现时） */
+.welcome-greeting-sub {
+  margin: 2px 0 8px !important;
+  font-size: 13px !important;
+  color: var(--text-dim);
+  opacity: 0.85;
+}
+
 .center-scroll {
   flex: 1;
   min-height: 0;

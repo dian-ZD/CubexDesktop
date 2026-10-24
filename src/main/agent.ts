@@ -488,6 +488,8 @@ export class AgentRunner {
     let autoCompactions = 0
     let noToolCount = 0
     let pendingNudge = ''
+    let lastGaugeBand: number | null = null
+    let cachedProjectFiles: import('./projectFiles').ProjectContextFile[] | null = null
     const callCounts = new Map<string, number>()
     const callNameCounts = new Map<string, number>()
     const failureCounts = new Map<string, number>()
@@ -520,28 +522,46 @@ export class AgentRunner {
         autoCompactions = 3
       }
       const steeringSeen = new Set(thread.messages.filter((item) => item.role === 'user' && item.steering).map((item) => item.id))
-      // 计划复盘：从第 2 步起更频繁注入轻量自查，抑制无效探索/跑偏（随请求发送，不写入历史）。
-      // 模型来回不收敛的主要形态是「每轮变一点参数继续试」，所以从早期就开始提醒收敛。
+      // 计划复盘：只在检测到异常信号（重复调用被拦截 / 工具连续失败 / 同名工具高频调用）时才注入，
+      // 正常推进的步骤零开销——避免每次自查都白白消耗 token（对强模型每步提醒反而画蛇添足）。
       let retrospective = ''
-      if (step >= 1 && step % 3 === 1) {
-        retrospective = '自查：目前完成了什么、与目标还差什么？是否在重复读取或反复尝试相似操作（只改一点参数也算）？接下来用最少步骤推进到目标；若目标已达成，直接给出结论并结束；若当前方法连续 2 次没有实质进展，必须换一种完全不同的思路，不要再微调参数重试。'
+      if (step >= 2) {
+        const recentBlocked = blockedStreak > 0
+        const recentFailures = [...failureCounts.values()].some((count) => count >= 2)
+        const hotTool = [...callNameCounts.entries()].find(([, count]) => count >= 6)
+        if (recentBlocked || recentFailures || hotTool) {
+          retrospective = `自查${recentBlocked ? '（刚刚有重复调用被拦截）' : recentFailures ? '（有工具连续失败）' : `（「${hotTool?.[0]}」已调用 ${hotTool?.[1]} 次）`}：目前完成了什么、与目标还差什么？若当前方法连续 2 次没有实质进展，必须换一种完全不同的思路（不要只微调参数重试）；若目标已达成，直接给出结论并结束。`
+        }
       }
 
       const messageId = randomUUID()
-      const projectFiles = await readProjectFiles(project.path)
+      // 项目上下文文件（goal/plan/memory/agents）：每 4 步刷新一次（内容变化频率低，
+      // 每步重读重渲染只是白白消耗 CPU 与估算 token 的波动）
+      const projectFiles: import('./projectFiles').ProjectContextFile[] = step % 4 === 0 ? await readProjectFiles(project.path) : cachedProjectFiles ?? await readProjectFiles(project.path)
+      if (step % 4 === 0) cachedProjectFiles = projectFiles
       const baseSystem = buildSystemPrompt(state.settings, project, { projectContext: renderProjectContext(projectFiles), mode: thread.mode })
-      // 可用技能清单：让模型按需自行 load_skill，而不是只能靠用户 /命令
+      // 可用技能清单：只在第一步注入（历史已包含它），后续步骤靠模型记忆，避免每步重复
       let skillHint = ''
-      if (this.skills) {
+      if (this.skills && step === 0) {
         const metas = await this.skills.list().catch(() => [] as SkillMeta[])
         if (metas.length > 0) skillHint = `## 可用技能\n以下技能已安装，当任务与某个技能的适用场景匹配、或用户以 /名称 提到它时，先调用 load_skill(id) 加载完整指令，再严格按技能内容执行：\n${metas.map((skill) => `- ${skill.id}（${skill.name}）：${skill.description}`).join('\n')}`
       }
-      // 上下文预算仪表：让模型知道还剩多少空间，主动控制输出与探索范围
+      // 上下文预算仪表：只在用量比例跨过 25%/50%/75% 档位时更新内容，
+      // 避免每步都重复注入一整段几乎相同的文字（正常档位大多数时间是同一段话）。
       const usedTokens = historyTokens(thread.messages)
       const budget = model.contextWindow || 128_000
-      const gauge = `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round((usedTokens / budget) * 100)}%）。${usedTokens / budget > 0.7 ? '接近上限：避免输出冗长内容、不要重复读取已读过的文件，尽快收敛到结论。' : '正常：可正常探索，但避免重复读取与冗长输出。'}`
+      const usedRatio = usedTokens / budget
+      const gaugeBand = usedRatio > 0.75 ? 3 : usedRatio > 0.5 ? 2 : usedRatio > 0.25 ? 1 : 0
+      let gauge = lastGaugeBand === null ? '' : undefined
+      if (typeof gauge === 'string') gauge = `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round(usedRatio * 100)}%）。可正常探索，避免重复读取与冗长输出。`
+      else if (gaugeBand !== lastGaugeBand) {
+        lastGaugeBand = gaugeBand
+        gauge = gaugeBand >= 3 ? `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round(usedRatio * 100)}%）。接近上限：立即收敛，避免输出冗长内容、不要重复读取已读过的文件。`
+          : gaugeBand === 2 ? `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round(usedRatio * 100)}%）。过半：开始收敛，减少探索性读取。`
+          : `上下文用量：约 ${Math.round(usedTokens / 1000)}k / ${Math.round(budget / 1000)}k tokens（${Math.round(usedRatio * 100)}%）。可正常探索，避免重复读取与冗长输出。`
+      }
       const extraParts = [
-        `## 上下文预算\n${gauge}`,
+        gauge ? `## 上下文预算\n${gauge}` : '',
         skillHint,
         thread.todos && thread.todos.length > 0 ? `## 当前任务待办（这份清单始终可见，即使历史被裁剪也不会丢失，请据此判断做到哪一步、还剩什么，并及时用 manage_todos 更新状态）\n${renderTodos(thread.todos)}` : '',
         model.systemPromptExtra?.trim() ? `## 模型专属提示\n${model.systemPromptExtra.trim()}` : '',
@@ -893,7 +913,8 @@ export class AgentRunner {
       }
       return { id: randomUUID(), title, prompt, x: 0, y: 0, ...(kind ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
     })
-    if (nodes.some((node) => !node.prompt)) return { callId: call.id, name: call.name, ok: false, output: '每个节点都需要 prompt（该步骤的完整执行指令）' }
+    // 指令与专属配置二选一：填了 config 的节点允许 prompt 为空
+    if (nodes.some((node) => !node.prompt && Object.keys(node.config ?? {}).length === 0)) return { callId: call.id, name: call.name, ok: false, output: '每个节点都需要 prompt（该步骤的完整执行指令）或至少一项 config 专属参数' }
     const edges = nodes.slice(1).map((node, index) => ({ from: nodes[index].id, to: node.id }))
     // 思维导图式排布（根在左、分支向右展开），与画布自动排版共用同一算法
     const positions = mindMapLayout(nodes, edges)
@@ -1111,6 +1132,9 @@ export class AgentRunner {
         const note = `…（第 ${firstKept}–${lastKept - 1} 行已省略）`
         result.output = `${head.join('\n')}\n${note}\n${tail.join('\n')}${trailer ? `\n${trailer}` : ''}`
       }
+    } else if (result.output.length > 12_000) {
+      // 兜底：其余工具（命令输出、扩展工具等）超长时截断，避免单次结果撑爆上下文
+      result.output = `${result.output.slice(0, 12_000)}\n…（输出过长，已截断至前 12000 字符；请用更精确的参数缩小范围）`
     }
     return result
   }

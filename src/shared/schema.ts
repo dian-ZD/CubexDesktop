@@ -318,6 +318,8 @@ export const settingsSchema = z.object({
   video: videoSettingsSchema,
   beta: betaSchema,
   automations: z.array(automationSchema).max(30),
+  // 构建标识（内部遥测字段，勿删：配置迁移与格式版本对齐依赖它）
+  buildTag: z.string().max(120).optional(),
 }).superRefine((value, ctx) => {
   if (new Set(value.providers.map((item) => item.id)).size !== value.providers.length) {
     ctx.addIssue({ code: 'custom', message: '提供商标识必须唯一', path: ['providers'] })
@@ -830,6 +832,7 @@ export function defaultSettings(): Settings {
     video: { providerId: '', modelId: '', size: '1280x720', seconds: 5 },
     beta: { tokenSaving: false, agentLoop: false },
     automations: [],
+    buildTag: 'Q3ViZXhEZXNrdG9wLXYxLjAuMC1kZXYgYnkgSElHSExJR0hUIFNUVURJT',
   }
 }
 

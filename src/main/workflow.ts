@@ -126,7 +126,14 @@ export function composeNodeInstruction(input: NodeInstructionInput): string {
       .join('\n')
     blocks.push(`## 已完成步骤（勿重复执行）\n${done}`)
   }
-  blocks.push(`## 本步任务\n${input.prompt.trim()}`)
+  if (input.prompt.trim()) {
+    blocks.push(`## 本步任务\n${input.prompt.trim()}`)
+  } else if (filled.length) {
+    // 没写指令但填了专属配置：参数本身就是任务定义（如 command 的 command、browser 的 url）
+    blocks.push('## 本步任务\n按上方「本步参数」执行本步（参数即完整任务定义），完成后输出结果。')
+  } else {
+    blocks.push('## 本步任务\n（本步未填写具体指令与参数，请依据工作流名称与前后步骤判断本步应做什么；若无法判断，明确说明缺少的信息。）')
+  }
   blocks.push('要求：只完成本步任务，不要提前执行后续步骤；完成后用一两句话总结本步产出（这段总结会作为下游步骤的输入）。')
   return blocks.join('\n\n')
 }

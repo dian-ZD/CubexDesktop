@@ -40,7 +40,6 @@ export function layout(projectId: string, generated: { name?: unknown; nodes?: u
     const item = raw as { title?: unknown; kind?: unknown; prompt?: unknown; config?: unknown }
     const title = typeof item.title === 'string' && item.title.trim() ? item.title.trim().slice(0, 60) : `步骤 ${index + 1}`
     const prompt = typeof item.prompt === 'string' ? item.prompt.trim().slice(0, 8000) : ''
-    if (!prompt) throw new Error(`节点「${title}」没有填写指令，请重试生成`)
     const kind = typeof item.kind === 'string' && allowedKinds.has(item.kind) ? item.kind as WorkflowNodeKind : 'task'
     // config：只保留该类型已定义字段里的非空字符串值
     const config: Record<string, string> = {}
@@ -50,6 +49,8 @@ export function layout(projectId: string, generated: { name?: unknown; nodes?: u
         if (typeof value === 'string' && value.trim()) config[field.key] = value.trim().slice(0, 4000)
       }
     }
+    // 指令与专属配置二选一：填了 config 时允许 prompt 为空（参数即任务定义）
+    if (!prompt && Object.keys(config).length === 0) throw new Error(`节点「${title}」没有填写指令或专属参数，请重试生成`)
     return { id: `node-${randomUUID().slice(0, 8)}`, title, prompt, x: 0, y: 0, ...(kind !== 'task' ? { kind } : {}), ...(Object.keys(config).length ? { config } : {}) }
   })
   const edges = (Array.isArray(generated.edges) ? generated.edges : [])

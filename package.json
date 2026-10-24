@@ -1,9 +1,10 @@
 {
   "name": "cubex-desktop",
-  "version": "0.3.10-dev",
+  "version": "1.0.0-dev",
   "private": true,
   "description": "CubexDesktop 智能体协作工作站",
-  "author": "dian-ZD <liangdianhs@163.com>",
+  "license": "Apache-2.0",
+  "author": "HIGHLIGHT STUDIO / dian-ZD <liangdianhs@163.com>",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {

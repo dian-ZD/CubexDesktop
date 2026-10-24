@@ -7,6 +7,7 @@ import { browserEngine } from './browser'
 import { aociBinaryDirs, planAociServers, resolveAociBinary, type AociPlan } from './aoci'
 import { captureIsolatedDesktop, closeIsolatedDesktop, closeIsolatedShell, ISOLATED_DESKTOP_NAME } from './computer'
 import { applyNativeRoundedCorners } from './native'
+import { runtimeTrace } from './watermark'
 import { listModels, probeContextWindow, testConnection } from './llm'
 import { ensureProjectFiles } from './projectFiles'
 import { browseDirectory, readProjectFile, saveProjectFile, runShellCommand } from './tools'
@@ -969,6 +970,8 @@ app.on('web-contents-created', (_event, contents) => {
 
 app.whenReady().then(async () => {
   hardenSession()
+  // 构建溯源标识：输出到主进程控制台（取证用，静默失败不影响启动）
+  try { console.info(runtimeTrace()) } catch { /* 忽略 */ }
   // IPC 先于建窗注册：窗口一创建渲染层就开始加载并发起 invoke，晚注册会让首个 getState 撞上
   // 「No handler registered」直接掉进错误屏。getState 自身有 storeReadyBarrier 门，其余 handler
   // 在 barrier 释放前实际不可达（渲染层 loaded 门控）。

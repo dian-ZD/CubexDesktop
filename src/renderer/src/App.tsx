@@ -3,6 +3,7 @@ import { Archive, ArrowUp, ArrowUpRight, Check, ChevronDown, ChevronRight, Chevr
 import { approvalLabels, approvalModes, createInitialState, uiLanguages, type AgentActivity, type AppState, type ControlState, type Message, type MessageCard, type MessageImage, type PendingQuestion, type Project, type Settings, type SlashEntry, type Thread, type ThinkingLevel, type ToolCall, type ToolResult } from '../../shared/schema'
 import { historyTokens } from '../../shared/tokens'
 import { api, isDesktop } from './bridge'
+import { welcomeGreeting, type WelcomeGreeting } from './greetings'
 import { loadEnglishPhrases } from './phrases-en'
 import { Logo } from './components/Logo'
 import { Markdown, OpenTargetContext, type OpenTarget } from './components/Markdown'
@@ -274,6 +275,9 @@ export function App() {
   useEffect(() => { try { if (sideWidth) localStorage.setItem('cubex.sideWidth', String(sideWidth)); else localStorage.removeItem('cubex.sideWidth') } catch { /* 忽略 */ } }, [sideWidth])
   useEffect(() => { try { if (rightWidth) localStorage.setItem('cubex.rightWidth', String(rightWidth)); else localStorage.removeItem('cubex.rightWidth') } catch { /* 忽略 */ } }, [rightWidth])
   const [queueGuideOpen, setQueueGuideOpen] = useState(false)
+  // 欢迎标语：进入无消息会话时抽取一次，会话切换/刷新才重抽（避免输入过程跳变）
+  const [greeting, setGreeting] = useState<WelcomeGreeting>(() => welcomeGreeting())
+  const lastGreetingThread = useRef<string | null>(null)
   const [openRequest, setOpenRequest] = useState<OpenRequest | null>(null)
   const requestOpen = useCallback((target: OpenTarget) => {
     if (target.kind === 'url' && !isDesktop) { void api.openExternal({ url: target.value }); return }
@@ -341,6 +345,14 @@ export function App() {
     return map
   }, [state.threads])
   const thread = state.threads.find((item) => item.id === threadId) ?? null
+  // 会话切换时重抽欢迎标语（thread 变化即重抽；同一会话内不重复）
+  useEffect(() => {
+    const id = thread?.id ?? null
+    if (lastGreetingThread.current !== id) {
+      lastGreetingThread.current = id
+      setGreeting(welcomeGreeting())
+    }
+  }, [thread?.id])
   const running = state.threads.filter((item) => item.status !== 'idle').length
   const models = state.settings.models
   const modelId = modelOverride || thread?.modelId || state.settings.defaultModelId || models[0]?.id || ''
@@ -1367,7 +1379,14 @@ export function App() {
                   ) : (
                     <div className="welcome content-column">
                       <div className="welcome-mark" aria-hidden="true"><Logo size={48} /></div>
-                      <h1>{project ? tr('准备好，开始新的会话。') : tr('从一个项目开始。')}</h1>
+                      {project ? (
+                        <>
+                          <h1>{tr(greeting.title)}</h1>
+                          {greeting.subtitle && <p className="welcome-greeting-sub">{tr(greeting.subtitle)}</p>}
+                        </>
+                      ) : (
+                        <h1>{tr('从一个项目开始。')}</h1>
+                      )}
                       <p>{project ? tr('在 {name} 中与 Cubex 协作：读代码、改文件、跑命令。', { name: project.name }) : tr('打开你的项目，让思路在这里继续。')}</p>
                     </div>
                   )}

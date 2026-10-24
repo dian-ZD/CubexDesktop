@@ -19,7 +19,7 @@ export const toolSpecs: ToolSpec[] = [
   { name: 'list_directory', description: '列出目录内容（跳过 node_modules、.git 等）。depth 控制递归层数，默认 2。', parameters: { type: 'object', properties: { path: { type: 'string', description: '相对路径，默认根目录' }, depth: { type: 'integer' } }, required: [] } },
   { name: 'search_files', description: '在项目文件中按正则搜索文本，返回 文件:行号:内容。', parameters: { type: 'object', properties: { pattern: { type: 'string', description: '正则表达式' }, path: { type: 'string', description: '限定的相对目录' }, glob: { type: 'string', description: '文件名后缀过滤，如 .ts' } }, required: ['pattern'] } },
   { name: 'write_file', description: '创建或整体覆盖一个文件。', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-  { name: 'edit_file', description: '把文件中 old_text 的首次出现替换为 new_text。old_text 必须在文件中唯一出现。', parameters: { type: 'object', properties: { path: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' } }, required: ['path', 'old_text', 'new_text'] } },
+  { name: 'edit_file', description: '把文件中 old_text 的首次出现替换为 new_text。old_text 必须在文件中唯一出现；要替换全部相同片段时传 replace_all=true（如批量改名、统一变量名）。', parameters: { type: 'object', properties: { path: { type: 'string' }, old_text: { type: 'string' }, new_text: { type: 'string' }, replace_all: { type: 'boolean', description: 'true 时替换文件中所有相同片段，默认 false' } }, required: ['path', 'old_text', 'new_text'] } },
   { name: 'run_command', description: '在项目根目录执行 shell 命令，返回 stdout/stderr 与退出码。超时由设置决定，可用 timeout_ms 缩短。', parameters: { type: 'object', properties: { command: { type: 'string' }, timeout_ms: { type: 'integer' } }, required: ['command'] } },
   { name: 'ask_user', description: '当缺少必要信息或存在需要用户决定的关键分歧时，提出一个明确问题，给出 2–6 个候选选项。能够根据任务判断最佳方案时，用 recommended 指定一个推荐项，并在问题中简述理由。用户也可以自由输入；开启自动选择推荐项时，系统会直接采用有效推荐项。不要为未知事实、凭据或必须由用户完成的操作编造推荐答案。', parameters: { type: 'object', properties: { question: { type: 'string', description: '问题及推荐理由，一句话说清' }, options: { type: 'array', items: { type: 'string' }, description: '候选选项，2–6 个；标题不添加推荐后缀，界面会显示推荐标记' }, recommended: { type: 'string', description: '推荐选项的完整标题，必须与 options 中一项完全相同；无法合理推荐时省略' }, multiple: { type: 'boolean', description: '是否允许多选；自动推荐选择只采用 recommended 指定的那一项' } }, required: ['question'] } },
   { name: 'manage_todos', description: '维护当前任务的待办清单，用于把复杂任务拆成有序步骤并逐项推进，防止在长任务中丢失进度。action=set：用 items 数组整体设置清单（每项 content 为一句话步骤）；action=start：把某项标记为进行中（同一时刻只应有一项进行中）；action=complete：把某项标记为已完成；action=clear：清空清单。除“只是回答一个简单问题/查询”外，动手前都应先用 set 建立待办，之后每完成一步就用 complete 更新。返回最新的清单与进度。', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['set', 'start', 'complete', 'clear'], description: 'set/start/complete/clear' }, items: { type: 'array', items: { type: 'string' }, description: 'action=set 时的步骤文本数组，按顺序排列' }, index: { type: 'integer', description: 'action=start/complete 时要操作的待办序号（从 1 开始）' } }, required: ['action'] } },
@@ -130,7 +130,7 @@ async function dispatch(call: ToolCall, context: ToolContext): Promise<{ output:
     }
     case 'edit_file': {
       if (a.new_text === undefined || a.new_text === null) throw new Error('缺少 new_text 参数（可能因输出过长被截断），未编辑。请重新调用 edit_file 并提供完整内容。')
-      return editTool(context.root, str(a.path), str(a.old_text), str(a.new_text))
+      return editTool(context.root, str(a.path), str(a.old_text), str(a.new_text), a.replace_all === true)
     }
     case 'run_command': return { output: await commandTool(context.root, str(a.command), num(a.timeout_ms), context.signal, context.commandTimeoutMs ?? MAX_COMMAND_MS, context.shell ?? 'auto', context.sandbox) }
     case 'ask_user': throw new Error('ask_user 需要由会话层处理')
@@ -253,14 +253,15 @@ async function writeTool(root: string, path: string, content: string): Promise<{
   return { output: `${before === null ? '已创建' : '已覆盖'} ${path}（${content.split('\n').length} 行）`, diff }
 }
 
-async function editTool(root: string, path: string, oldText: string, newText: string): Promise<{ output: string; diff: string }> {
+async function editTool(root: string, path: string, oldText: string, newText: string, replaceAll = false): Promise<{ output: string; diff: string }> {
   if (!oldText) throw new Error('old_text 不能为空')
   const file = await resolveInside(root, path)
   const before = await readFile(file, 'utf8')
   const first = before.indexOf(oldText)
   if (first === -1) throw new Error(`在 ${path} 中找不到 old_text，请先 read_file 确认内容`)
-  if (before.indexOf(oldText, first + oldText.length) !== -1) throw new Error('old_text 在文件中出现多次，请提供更长的唯一片段')
-  const after = before.slice(0, first) + newText + before.slice(first + oldText.length)
+  const repeated = before.indexOf(oldText, first + oldText.length) !== -1
+  if (repeated && !replaceAll) throw new Error('old_text 在文件中出现多次：如需全部替换请传 replace_all=true，否则请提供更长的唯一片段')
+  const after = replaceAll && repeated ? before.split(oldText).join(newText) : before.slice(0, first) + newText + before.slice(first + oldText.length)
   await writeFile(file, after, 'utf8')
   return { output: `已编辑 ${path}`, diff: makeDiff(path, before, after) }
 }

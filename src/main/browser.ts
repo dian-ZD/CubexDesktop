@@ -1,5 +1,6 @@
-import { BrowserWindow, WebContentsView, shell, type Rectangle } from 'electron'
+import { BrowserWindow, WebContentsView, app, shell, type Rectangle } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { wmFingerprint } from './watermark'
 
 export const BROWSER_PARTITION = 'persist:cubex-agent-browser'
 
@@ -205,7 +206,9 @@ export class BrowserEngine {
     // 默认 WebContentsView 底色是纯白，页面加载前/透明页面会露出突兀的白框；置为透明后透出应用底色。
     view.setBackgroundColor('#00000000')
     const wc = view.webContents
+    // UA 尾缀：桌面外壳标识（携带构建指纹，便于服务端识别流量来源）；自定义 UA 优先
     if (this.options.userAgent) wc.setUserAgent(this.options.userAgent)
+    else if (typeof wc.getUserAgent === 'function') wc.setUserAgent(`${wc.getUserAgent().split(' CubexDesktop')[0]} CubexDesktop/${app.getVersion()}+${wmFingerprint()}`)
     // 页面内新窗口链接（window.open / target=_blank / Ctrl+点击）一律拦截，改为在本会话内开一个新标签。
     wc.setWindowOpenHandler(({ url: target }) => {
       if (isHttp(target)) this.newTab(threadId, target)
